@@ -1,0 +1,291 @@
+services:
+  # === Infrastructure ===
+  postgres:
+    image: postgres:16-alpine
+    container_name: lumina-postgres
+    environment:
+      POSTGRES_DB: lumina_ci
+      POSTGRES_USER: lumina
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lumina_dev_2024}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumina -d lumina_ci"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lumina-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: lumina-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lumina-network
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: lumina-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: lumina
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - lumina-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: lumina-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-luminaadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-lumina_minio_2024}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lumina-network
+
+  # === Application Services ===
+  api-gateway:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Lumina.ApiGateway.Dockerfile
+    container_name: lumina-api-gateway
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5000
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - Redis__ConnectionString=redis:6379
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=lumina
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - Services__BuildService=http://build-service:5001
+      - Services__SecurityService=http://security-service:5002
+      - Services__ScannerService=http://scanner-service:5003
+      - Services__RepositoryService=http://repository-service:5004
+      - Ldap__Host=${LDAP_HOST:-localhost}
+      - Ldap__Port=${LDAP_PORT:-389}
+      - Ldap__BaseDn=${LDAP_BASE_DN:-dc=lumina,dc=1t,dc=ru}
+      - Ldap__BindDn=${LDAP_BIND_DN:-cn=admin,dc=lumina,dc=1t,dc=ru}
+      - Ldap__BindPassword=${LDAP_BIND_PASSWORD:-}
+      - Jwt__Secret=${JWT_SECRET:-lumina_jwt_dev_secret_key_2024_min32chars!!}
+      - Jwt__Issuer=LuminaCI
+      - Jwt__Audience=LuminaCI
+      - Jwt__ExpiryHours=8
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - lumina-network
+
+  build-service:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Lumina.BuildService.Dockerfile
+    container_name: lumina-build-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5001
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - Redis__ConnectionString=redis:6379
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=lumina
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
+      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - Docker__SocketPath=/var/run/docker.sock
+    ports:
+      - "5001:5001"
+    user: "root"
+    security_opt:
+      - label=disable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - build_data:/app/builds
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - lumina-network
+
+  security-service:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Lumina.SecurityService.Dockerfile
+    container_name: lumina-security-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5002
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - Redis__ConnectionString=redis:6379
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=lumina
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
+      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - Gpg__KeyStorePath=/app/keys
+    ports:
+      - "5002:5002"
+    volumes:
+      - gpg_keys:/app/keys
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - lumina-network
+
+  scanner-service:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Lumina.ScannerService.Dockerfile
+    container_name: lumina-scanner-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5003
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - Redis__ConnectionString=redis:6379
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=lumina
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
+      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - Trivy__Endpoint=http://trivy:8080
+    ports:
+      - "5003:5003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - lumina-network
+
+  trivy:
+    image: aquasec/trivy:latest
+    container_name: lumina-trivy
+    command: server --listen :8080
+    ports:
+      - "8081:8080"
+    volumes:
+      - trivy_cache:/root/.cache/trivy
+    networks:
+      - lumina-network
+
+  repository-service:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Lumina.RepositoryService.Dockerfile
+    container_name: lumina-repository-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5004
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - Redis__ConnectionString=redis:6379
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=lumina
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
+      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - Repository__BasePath=/app/repos
+    ports:
+      - "5004:5004"
+    volumes:
+      - repo_data:/app/repos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - lumina-network
+
+  webapp:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Lumina.WebApp.Dockerfile
+    container_name: lumina-webapp
+    ports:
+      - "5005:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - lumina-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: lumina-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
+      - ../deploy/nginx/conf.d:/etc/nginx/conf.d:ro,z
+      - repo_data:/srv/packages:ro
+    depends_on:
+      - api-gateway
+      - webapp
+    networks:
+      - lumina-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  minio_data:
+  build_data:
+  gpg_keys:
+  trivy_cache:
+  repo_data:
+
+networks:
+  lumina-network:
+    driver: bridge

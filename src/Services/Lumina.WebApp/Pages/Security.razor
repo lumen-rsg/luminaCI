@@ -1,0 +1,149 @@
+@page "/security"
+@using Lumina.Shared.DTOs
+@inject Lumina.WebApp.Services.LuminaApiService Api
+@inject ILogger<Security> Logger
+
+<PageTitle>Security — Lumina CI</PageTitle>
+
+<h1 class="mb-4">🔐 Security</h1>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h3 class="mb-0">🔑 PGP Signing</h3>
+            </div>
+            <div class="card-body">
+                <p>Sign packages with PGP keys to ensure authenticity and integrity.</p>
+                <div class="mb-3">
+                    <label class="form-label">Artifact ID</label>
+                    <input type="text" class="form-control" @bind="_signArtifactId" placeholder="Guid" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Key ID</label>
+                    <input type="text" class="form-control" @bind="_signKeyId" placeholder="Guid" />
+                </div>
+                <button class="btn btn-warning" @onclick="SignPackage" disabled="@(_signing)">
+                    @if (_signing)
+                    {
+                        <span class="spinner-border spinner-border-sm"></span>
+                    }
+                    Sign Package
+                </button>
+                @if (_signResult != null)
+                {
+                    <div class="alert @(string.IsNullOrEmpty(_signResult.Error) ? "alert-success" : "alert-danger") mt-3">
+                        @(string.IsNullOrEmpty(_signResult.Error) ? _signResult.Message ?? "Package signed successfully" : _signResult.Error)
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <h3 class="mb-0">📋 Hash Records</h3>
+            </div>
+            <div class="card-body">
+                @if (_hashes?.Data?.Hashes != null && _hashes.Data.Hashes.Any())
+                {
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Artifact</th>
+                                <th>SHA256</th>
+                                <th>MD5</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var hash in _hashes.Data.Hashes.Take(20))
+                            {
+                                <tr>
+                                    <td><code>@hash.ArtifactId.ToString()[..8]</code></td>
+                                    <td><small class="text-muted" title="@hash.HashSha256">@hash.HashSha256?[..Math.Min(32, hash.HashSha256?.Length ?? 0)]...</small></td>
+                                    <td><small class="text-muted">@hash.HashMd5</small></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else
+                {
+                    <p class="text-muted">No hash records yet.</p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-header bg-danger text-white">
+        <h3 class="mb-0">🛡️ CVE Scan Reports</h3>
+    </div>
+    <div class="card-body">
+        @if (_scans?.Data?.Scans != null && _scans.Data.Scans.Any())
+        {
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Scan ID</th>
+                        <th>Artifact</th>
+                        <th>Scanner</th>
+                        <th>Status</th>
+                        <th>Started</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var scan in _scans.Data.Scans)
+                    {
+                        <tr>
+                            <td><code>@scan.Id.ToString()[..8]</code></td>
+                            <td><code>@scan.ArtifactId.ToString()[..8]</code></td>
+                            <td>@scan.ScannerType</td>
+                            <td><span class="badge @(scan.Status == Lumina.Shared.Models.Enums.ScanStatus.Completed ? "bg-success" : "bg-warning text-dark")">@scan.Status</span></td>
+                            <td>@scan.StartedAt.ToLocalTime().ToString("g")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <p class="text-muted">No CVE scans yet. Artifacts are scanned automatically after build.</p>
+        }
+    </div>
+</div>
+
+@code {
+    private ApiResponse<HashListResponse>? _hashes;
+    private ApiResponse<ScanListResponse>? _scans;
+    private ApiResponse<object>? _signResult;
+    private bool _signing = false;
+    private string _signArtifactId = "";
+    private string _signKeyId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await Task.WhenAll(LoadHashes(), LoadScans());
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Failed to load security data"); }
+    }
+
+    private async Task LoadHashes() => _hashes = await Api.GetHashRecordsAsync(1);
+    private async Task LoadScans() => _scans = await Api.GetScansAsync(1);
+
+    private async Task SignPackage()
+    {
+        if (!Guid.TryParse(_signArtifactId, out var artifactId) || !Guid.TryParse(_signKeyId, out var keyId)) return;
+        _signing = true;
+        try
+        {
+            _signResult = await Api.SignPackageAsync(new SignPackageRequest(artifactId, keyId));
+            await LoadHashes();
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Failed to sign package"); }
+        finally { _signing = false; }
+    }
+}

@@ -1,0 +1,118 @@
+@page "/builds"
+@using Lumina.Shared.DTOs
+@using Lumina.Shared.Models.Enums
+@inject Lumina.WebApp.Services.LuminaApiService Api
+@inject ILogger<Builds> Logger
+
+<PageTitle>Builds — Lumina CI</PageTitle>
+
+<h1 class="mb-4">📦 Builds</h1>
+
+@if (_builds?.Data?.Builds != null && _builds.Data.Builds.Any())
+{
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Spec Name</th>
+                    <th>Status</th>
+                    <th>Pipeline</th>
+                    <th>Triggered By</th>
+                    <th>Created</th>
+                    <th>Completed</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var build in _builds.Data.Builds)
+                {
+                    <tr class="@GetRowClass(build.Status)">
+                        <td><code>@build.Id.ToString()[..8]</code></td>
+                        <td><strong>@build.SpecName</strong></td>
+                        <td>
+                            <span class="@GetStatusBadge(build.Status)">
+                                @GetStatusIcon(build.Status) @build.Status
+                            </span>
+                        </td>
+                        <td><code>@build.PipelineId.ToString()[..8]</code></td>
+                        <td>@build.TriggeredBy</td>
+                        <td>@build.CreatedAt.ToLocalTime().ToString("g")</td>
+                        <td>—</td>
+                        <td>
+                            <a href="/builds/@build.Id" class="btn btn-sm btn-outline-primary">Details</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mt-3">
+        <span class="text-muted">
+            Showing @((_page - 1) * 20 + 1)—@Math.Min(_page * 20, _builds.Data.TotalCount) of @_builds.Data.TotalCount
+        </span>
+        <div class="btn-group">
+            <button class="btn btn-outline-secondary" disabled="@(_page <= 1)" @onclick="() => ChangePage(-1)">← Prev</button>
+            <button class="btn btn-outline-secondary" disabled="@(_page * 20 >= _builds.Data.TotalCount)" @onclick="() => ChangePage(1)">Next →</button>
+        </div>
+    </div>
+}
+else if (_loading)
+{
+    <div class="text-center p-5"><div class="spinner-border"></div></div>
+}
+else
+{
+    <div class="text-center p-5 text-muted">
+        <h3>No builds</h3>
+        <p>Trigger a pipeline to start your first build.</p>
+    </div>
+}
+
+@code {
+    private ApiResponse<BuildListResponse>? _builds;
+    private bool _loading = true;
+    private int _page = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadBuilds();
+    }
+
+    private async Task LoadBuilds()
+    {
+        try { _builds = await Api.GetBuildsAsync(_page, 20); }
+        catch (Exception ex) { Logger.LogError(ex, "Failed to load builds"); }
+        finally { _loading = false; }
+    }
+
+    private async Task ChangePage(int delta)
+    {
+        _page += delta;
+        _loading = true;
+        await LoadBuilds();
+    }
+
+    private string GetStatusBadge(BuildStatus s) => s switch
+    {
+        BuildStatus.Queued => "badge bg-warning text-dark",
+        BuildStatus.Building => "badge bg-primary",
+        BuildStatus.Success => "badge bg-success",
+        BuildStatus.Failed => "badge bg-danger",
+        BuildStatus.Cancelled => "badge bg-secondary",
+        _ => "badge bg-light text-dark"
+    };
+
+    private string GetStatusIcon(BuildStatus s) => s switch
+    {
+        BuildStatus.Queued => "⏳",
+        BuildStatus.Building => "🔨",
+        BuildStatus.Success => "✅",
+        BuildStatus.Failed => "❌",
+        BuildStatus.Cancelled => "🚫",
+        _ => "❓"
+    };
+
+    private string GetRowClass(BuildStatus s) => s == BuildStatus.Failed ? "table-danger" : "";
+}

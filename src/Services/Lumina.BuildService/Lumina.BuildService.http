@@ -1,0 +1,6 @@
+@Lumina.BuildService_HostAddress = http://localhost:5175
+
+GET {{Lumina.BuildService_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

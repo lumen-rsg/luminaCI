@@ -1,0 +1,50 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.vs/
+.vs/
+
+## Build outputs
+[Dd]ebug/
+[Rr]elease/
+x64/
+bld/
+[Bb]in/
+[Oo]bj/
+
+## NuGet
+**/packages/*
+*.nupkg
+**/[Pp]ackages/**
+nuget.exe
+
+## IDE
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+## Environment
+.env.local
+.env.production
+
+## Docker volumes
+postgres_data/
+redis_data/
+rabbitmq_data/
+minio_data/
+seq_data/
+
+## Logs
+*.log
+logs/
+
+## Keys (NEVER commit)
+*.gpg
+*.pem
+*.key.env
+*.env

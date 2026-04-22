@@ -1,0 +1,87 @@
+using Lumina.BuildService.Data;
+using Lumina.BuildService.Services;
+using MassTransit;
+using Microsoft.EntityFrameworkCore;
+using Serilog;
+
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
+
+try
+{
+    Log.Information("Starting Lumina Build Service");
+
+    var builder = WebApplication.CreateBuilder(args);
+
+    builder.Host.UseSerilog((ctx, config) => config
+        .ReadFrom.Configuration(ctx.Configuration)
+        .WriteTo.Console());
+
+    // Database
+    builder.Services.AddDbContext<BuildDbContext>(options =>
+        options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
+
+    // Services
+    builder.Services.AddScoped<DockerBuildService>();
+    builder.Services.AddScoped<PipelineEngine>();
+
+    // MassTransit
+    builder.Services.AddMassTransit(x =>
+    {
+        x.UsingRabbitMq((ctx, cfg) =>
+        {
+            cfg.Host(builder.Configuration["RabbitMQ:Host"] ?? "rabbitmq", "/", h =>
+            {
+                h.Username(builder.Configuration["RabbitMQ:Username"] ?? "lumina");
+                h.Password(builder.Configuration["RabbitMQ:Password"] ?? "lumina_rmq_2024");
+            });
+        });
+    });
+
+    builder.Services.AddControllers();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen();
+    builder.Services.AddHealthChecks();
+
+    var app = builder.Build();
+
+    // Create tables if not exist
+    using (var scope = app.Services.CreateScope())
+    {
+        var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
+        await CreateTablesWithScriptAsync(db);
+    }
+
+    if (app.Environment.IsDevelopment())
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI();
+    }
+
+    app.MapControllers();
+    app.MapHealthChecks("/health");
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Build Service terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}
+
+static async Task CreateTablesWithScriptAsync(DbContext db)
+{
+    var script = db.Database.GenerateCreateScript();
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(script);
+        Log.Information("Database tables created/verified successfully");
+    }
+    catch (Exception ex)
+    {
+        Log.Warning(ex, "Table creation skipped (tables may already exist)");
+    }
+}

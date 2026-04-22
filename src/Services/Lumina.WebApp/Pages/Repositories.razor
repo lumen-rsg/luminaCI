@@ -1,0 +1,129 @@
+@page "/repositories"
+@using Lumina.Shared.DTOs
+@inject Lumina.WebApp.Services.LuminaApiService Api
+@inject ILogger<Repositories> Logger
+
+<PageTitle>Repositories — Lumina CI</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>📂 Repositories</h1>
+    <button class="btn btn-primary" @onclick="() => _showCreate = true">+ New Repository</button>
+</div>
+
+@if (_showCreate)
+{
+    <div class="card mb-4 border-primary">
+        <div class="card-header bg-primary text-white">
+            <h4 class="mb-0">Create Repository</h4>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Name</label>
+                    <input type="text" class="form-control" @bind="_newName" placeholder="el9-baseos" />
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Display Name</label>
+                    <input type="text" class="form-control" @bind="_newDisplayName" placeholder="Enterprise Linux 9 BaseOS" />
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Base Path</label>
+                    <input type="text" class="form-control" @bind="_newBasePath" placeholder="/el/9/baseos" />
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Architecture</label>
+                    <select class="form-select" @bind="_newArch">
+                        <option value="x86_64">x86_64</option>
+                        <option value="aarch64">aarch64</option>
+                        <option value="noarch">noarch</option>
+                    </select>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Distribution</label>
+                    <input type="text" class="form-control" @bind="_newDist" placeholder="el9" />
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-success" @onclick="CreateRepo">Create</button>
+                <button class="btn btn-outline-secondary" @onclick="() => _showCreate = false">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_repos?.Data?.Repositories != null && _repos.Data.Repositories.Any())
+{
+    <div class="row">
+        @foreach (var repo in _repos.Data.Repositories)
+        {
+            <div class="col-md-6 col-lg-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">@repo.DisplayName</h5>
+                        <span class="badge @(repo.IsActive ? "bg-success" : "bg-secondary")">
+                            @(repo.IsActive ? "Active" : "Inactive")
+                        </span>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted"><code>@repo.BasePath</code></p>
+                        <div class="d-flex justify-content-between">
+                            <span>Architecture: <strong>@repo.Arch</strong></span>
+                            <span>Packages: <strong>@repo.PackageCount</strong></span>
+                        </div>
+                        <div class="mt-2">
+                            <small class="text-muted">Distribution: @repo.Distribution</small>
+                        </div>
+                        <div class="mt-2">
+                            <small class="text-muted">URL: <code>packages.lumina.1t.ru@repo.BasePath</code></small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+else if (_loading)
+{
+    <div class="text-center p-5"><div class="spinner-border"></div></div>
+}
+else
+{
+    <div class="text-center p-5 text-muted">
+        <h3>No repositories</h3>
+        <p>Create a repository to start publishing packages.</p>
+    </div>
+}
+
+@code {
+    private ApiResponse<RepositoryListResponse>? _repos;
+    private bool _loading = true;
+    private bool _showCreate = false;
+    private string _newName = "";
+    private string _newDisplayName = "";
+    private string _newBasePath = "";
+    private string _newArch = "x86_64";
+    private string _newDist = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _repos = await Api.GetRepositoriesAsync(); }
+        catch (Exception ex) { Logger.LogError(ex, "Failed to load repositories"); }
+        finally { _loading = false; }
+    }
+
+    private async Task CreateRepo()
+    {
+        try
+        {
+            var result = await Api.CreateRepositoryAsync(new CreateRepositoryRequest(
+                _newName, _newDisplayName, _newBasePath, _newArch, _newDist, "admin"));
+            if (result?.Success == true)
+            {
+                _showCreate = false;
+                _newName = _newDisplayName = _newBasePath = _newDist = "";
+                _repos = await Api.GetRepositoriesAsync();
+            }
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Failed to create repository"); }
+    }
+}

@@ -1,0 +1,299 @@
+@page "/pipelines"
+@using Lumina.Shared.DTOs
+@using Lumina.Shared.Models.Enums
+@inject Lumina.WebApp.Services.LuminaApiService Api
+@inject ILogger<Pipelines> Logger
+
+<PageTitle>Pipelines — Lumina CI</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>🔄 Pipelines</h1>
+    <button class="btn btn-primary" @onclick="ShowCreateDialog">+ New Pipeline</button>
+</div>
+
+@if (_showCreate)
+{
+    <div class="card mb-4 border-primary">
+        <div class="card-header bg-primary text-white">
+            <h4 class="mb-0">Create Pipeline</h4>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label">Name</label>
+                <input type="text" class="form-control" @bind="_newName" placeholder="my-package-build" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Description</label>
+                <input type="text" class="form-control" @bind="_newDescription" placeholder="Build pipeline for..." />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Tags (comma-separated)</label>
+                <input type="text" class="form-control" @bind="_newTags" placeholder="rpm, production" />
+            </div>
+            <hr />
+            <h6>🔗 Git Integration (optional)</h6>
+            <div class="mb-3">
+                <label class="form-label">Git Repository URL</label>
+                <input type="text" class="form-control" @bind="_newGitRepoUrl" placeholder="https://github.com/example/my-package.git" />
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">Branch</label>
+                    <input type="text" class="form-control" @bind="_newGitBranch" placeholder="main" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Spec File Path</label>
+                    <input type="text" class="form-control" @bind="_newSpecPath" placeholder="my-package.spec" />
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Webhook Secret</label>
+                <input type="text" class="form-control" @bind="_newWebhookSecret" placeholder="Secret for webhook verification" />
+                <div class="form-text">Used to verify incoming webhook requests from GitHub/GitLab/Forgejo</div>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-success" @onclick="CreatePipeline">Create</button>
+                <button class="btn btn-outline-secondary" @onclick="() => _showCreate = false">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showTrigger)
+{
+    <div class="card mb-4 border-success">
+        <div class="card-header bg-success text-white">
+            <h4 class="mb-0">▶ Trigger Build — @_triggerPipelineName</h4>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label">Package Spec Name</label>
+                <input type="text" class="form-control" @bind="_triggerSpecName" placeholder="my-package" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Source URL</label>
+                <input type="text" class="form-control" @bind="_triggerSourceUrl" placeholder="https://github.com/example/my-package/archive/v1.0.tar.gz" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">RPM Spec Content</label>
+                <textarea class="form-control font-monospace" rows="14" @bind="_triggerSpecContent" style="font-size: 0.85rem"></textarea>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Triggered By</label>
+                <input type="text" class="form-control" @bind="_triggeredBy" placeholder="admin" />
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-success" @onclick="TriggerPipeline">▶ Run Build</button>
+                <button class="btn btn-outline-secondary" @onclick="() => _showTrigger = false">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_triggerMessage != null)
+{
+    <div class="alert @(IsSuccess ? "alert-success" : "alert-danger") alert-dismissible fade show mb-4">
+        @_triggerMessage
+        <button type="button" class="btn-close" @onclick="() => _triggerMessage = null"></button>
+    </div>
+}
+
+@if (_pipelines?.Data?.Pipelines != null && _pipelines.Data.Pipelines.Any())
+{
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Description</th>
+                    <th>Status</th>
+                    <th>Steps</th>
+                    <th>Created By</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var pipeline in _pipelines.Data.Pipelines)
+                {
+                    <tr>
+                        <td><strong>@pipeline.Name</strong></td>
+                        <td class="text-muted">@pipeline.Description</td>
+                        <td><span class="@GetPipelineStatusBadge(pipeline.Status)">@pipeline.Status</span></td>
+                        <td><span class="badge bg-info">@pipeline.StepCount</span></td>
+                        <td>@pipeline.CreatedBy</td>
+                        <td>@pipeline.CreatedAt.ToLocalTime().ToString("g")</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-success me-1" @onclick="() => ShowTriggerDialog(pipeline.Id, pipeline.Name)" title="Trigger Build">
+                                ▶ Run
+                            </button>
+                            <a href="/builds" class="btn btn-sm btn-outline-primary" title="View Builds">
+                                📋
+                            </a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else if (_loading)
+{
+    <div class="text-center p-5">
+        <div class="spinner-border" role="status"></div>
+    </div>
+}
+else
+{
+    <div class="text-center p-5 text-muted">
+        <h3>No pipelines yet</h3>
+        <p>Click "New Pipeline" to create your first build pipeline.</p>
+    </div>
+}
+
+<div class="mt-3 text-muted">
+    Total: @(_pipelines?.Data?.TotalCount ?? 0) pipeline(s)
+</div>
+
+@code {
+    private ApiResponse<PipelineListResponse>? _pipelines;
+    private bool _loading = true;
+    private bool _showCreate = false;
+    private string _newName = "";
+    private string _newDescription = "";
+    private string _newTags = "";
+    private string _newGitRepoUrl = "";
+    private string _newGitBranch = "main";
+    private string _newSpecPath = "";
+    private string _newWebhookSecret = "";
+
+    // Trigger build dialog
+    private bool _showTrigger = false;
+    private Guid _triggerPipelineId;
+    private string _triggerPipelineName = "";
+    private string _triggerSpecName = "lumina-hello";
+    private string _triggerSourceUrl = "";
+    private string _triggeredBy = "admin";
+    private string? _triggerMessage;
+    private bool IsSuccess;
+
+    private readonly string _defaultSpec = @"Name:           lumina-hello
+Version:        1.0.0
+Release:        1%{?dist}
+Summary:        Hello World from Lumina CI
+
+License:        MIT
+Source0:        %{name}-%{version}.tar.gz
+
+%description
+A simple test package built by Lumina CI.
+
+%prep
+%setup -q
+
+%install
+mkdir -p %{buildroot}/usr/bin
+echo ""#!/bin/bash"" > %{buildroot}/usr/bin/lumina-hello
+echo ""echo Hello from Lumina CI! v1.0.0"" >> %{buildroot}/usr/bin/lumina-hello
+chmod +x %{buildroot}/usr/bin/lumina-hello
+
+%files
+/usr/bin/lumina-hello
+";
+
+    private string _triggerSpecContent = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _pipelines = await Api.GetPipelinesAsync(1, 50); }
+        catch (Exception ex) { Logger.LogError(ex, "Failed to load pipelines"); }
+        finally { _loading = false; }
+    }
+
+    private async Task ShowCreateDialog()
+    {
+        _showCreate = true;
+        await Task.CompletedTask;
+    }
+
+    private async Task CreatePipeline()
+    {
+        var tags = _newTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        var steps = new List<CreatePipelineStepRequest>
+        {
+            new(StepType.Build, "Build RPM", 1, new Dictionary<string, string>()),
+            new(StepType.Scan, "CVE Scan", 2, new Dictionary<string, string>()),
+            new(StepType.Sign, "PGP Sign", 3, new Dictionary<string, string>()),
+            new(StepType.Publish, "Publish", 4, new Dictionary<string, string>())
+        };
+
+        var result = await Api.CreatePipelineAsync(new CreatePipelineRequest(
+            _newName, _newDescription, steps, tags,
+            string.IsNullOrWhiteSpace(_newGitRepoUrl) ? null : _newGitRepoUrl,
+            string.IsNullOrWhiteSpace(_newGitBranch) ? null : _newGitBranch,
+            string.IsNullOrWhiteSpace(_newSpecPath) ? null : _newSpecPath,
+            string.IsNullOrWhiteSpace(_newWebhookSecret) ? null : _newWebhookSecret));
+        if (result?.Success == true)
+        {
+            _showCreate = false;
+            _newName = "";
+            _newDescription = "";
+            _newTags = "";
+            _newGitRepoUrl = "";
+            _newGitBranch = "main";
+            _newSpecPath = "";
+            _newWebhookSecret = "";
+            _pipelines = await Api.GetPipelinesAsync(1, 50);
+        }
+    }
+
+    private void ShowTriggerDialog(Guid pipelineId, string pipelineName)
+    {
+        _triggerPipelineId = pipelineId;
+        _triggerPipelineName = pipelineName;
+        _triggerSpecContent = _defaultSpec;
+        _triggerMessage = null;
+        _showTrigger = true;
+    }
+
+    private async Task TriggerPipeline()
+    {
+        try
+        {
+            var request = new TriggerBuildRequest(
+                _triggerSpecName,
+                _triggerSpecContent,
+                _triggerSourceUrl,
+                _triggeredBy
+            );
+
+            var result = await Api.TriggerPipelineWithRequestAsync(_triggerPipelineId, request);
+            if (result?.Success == true)
+            {
+                _triggerMessage = $"✅ Build triggered successfully! Job ID: {result.Data?.Id}";
+                IsSuccess = true;
+                _showTrigger = false;
+            }
+            else
+            {
+                _triggerMessage = $"❌ Failed: {result?.Error ?? "Unknown error"}";
+                IsSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _triggerMessage = $"❌ Error: {ex.Message}";
+            IsSuccess = false;
+            Logger.LogError(ex, "Failed to trigger pipeline");
+        }
+    }
+
+    private string GetPipelineStatusBadge(PipelineStatus status) => status switch
+    {
+        PipelineStatus.Active => "badge bg-success",
+        PipelineStatus.Draft => "badge bg-warning text-dark",
+        PipelineStatus.Paused => "badge bg-secondary",
+        PipelineStatus.Archived => "badge bg-dark",
+        _ => "badge bg-light text-dark"
+    };
+}

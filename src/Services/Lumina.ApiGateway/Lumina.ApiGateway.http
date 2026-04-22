@@ -1,0 +1,6 @@
+@Lumina.ApiGateway_HostAddress = http://localhost:5228
+
+GET {{Lumina.ApiGateway_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

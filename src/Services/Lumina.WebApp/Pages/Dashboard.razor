@@ -1,0 +1,139 @@
+@page "/"
+@using Lumina.Shared.DTOs
+@using Lumina.Shared.Models.Enums
+@inject Lumina.WebApp.Services.LuminaApiService Api
+@inject ILogger<Dashboard> Logger
+
+<PageTitle>Dashboard — Lumina CI</PageTitle>
+
+<h1 style="margin-bottom: 1.5rem;">🏗️ Lumina CI Dashboard</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">📦</div>
+        <div class="stat-value">@(_buildQueue?.Data?.QueuedCount ?? 0)</div>
+        <div class="stat-label">In Queue</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">⚡</div>
+        <div class="stat-value">@(_buildQueue?.Data?.RunningCount ?? 0)</div>
+        <div class="stat-label">Building</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">✅</div>
+        <div class="stat-value">@(_builds?.Data?.Builds.Count(b => b.Status == BuildStatus.Success) ?? 0)</div>
+        <div class="stat-label">Completed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">❌</div>
+        <div class="stat-value">@(_builds?.Data?.Builds.Count(b => b.Status == BuildStatus.Failed) ?? 0)</div>
+        <div class="stat-label">Failed</div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h3>Recent Builds</h3>
+            </div>
+            <div class="card-body">
+                @if (_builds?.Data?.Builds != null && _builds.Data.Builds.Any())
+                {
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Spec</th>
+                                <th>Status</th>
+                                <th>Triggered By</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var build in _builds.Data.Builds.Take(10))
+                            {
+                                <tr>
+                                    <td><code>@build.SpecName</code></td>
+                                    <td><span class="@GetStatusBadgeClass(build.Status)">@build.Status</span></td>
+                                    <td>@build.TriggeredBy</td>
+                                    <td>@build.CreatedAt.ToLocalTime().ToString("g")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else
+                {
+                    <p class="text-muted">No builds yet. Create a pipeline and trigger a build!</p>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h3>Build Queue</h3>
+            </div>
+            <div class="card-body">
+                @if (_buildQueue?.Data != null)
+                {
+                    <h5>Running (@_buildQueue.Data.RunningCount)</h5>
+                    foreach (var b in _buildQueue.Data.Running)
+                    {
+                        <div class="queue-item running">
+                            <strong>@b.SpecName</strong>
+                            <small>started @b.CreatedAt.ToLocalTime().ToString("t")</small>
+                        </div>
+                    }
+                    <h5 class="mt-3">Queued (@_buildQueue.Data.QueuedCount)</h5>
+                    foreach (var b in _buildQueue.Data.Queued)
+                    {
+                        <div class="queue-item queued">
+                            <strong>@b.SpecName</strong>
+                            <small>queued @b.CreatedAt.ToLocalTime().ToString("t")</small>
+                        </div>
+                    }
+                    if (_buildQueue.Data.QueuedCount == 0 && _buildQueue.Data.RunningCount == 0)
+                    {
+                        <p class="text-muted">Queue is empty</p>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private ApiResponse<BuildListResponse>? _builds;
+    private ApiResponse<BuildQueueResponse>? _buildQueue;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var tasks = new List<Task>
+            {
+                LoadBuildsAsync(),
+                LoadQueueAsync()
+            };
+            await Task.WhenAll(tasks);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load dashboard data");
+        }
+    }
+
+    private async Task LoadBuildsAsync() => _builds = await Api.GetBuildsAsync(1, 20);
+    private async Task LoadQueueAsync() => _buildQueue = await Api.GetBuildQueueAsync();
+
+    private string GetStatusBadgeClass(BuildStatus status) => status switch
+    {
+        BuildStatus.Queued => "badge bg-warning text-dark",
+        BuildStatus.Building => "badge bg-primary",
+        BuildStatus.Success => "badge bg-success",
+        BuildStatus.Failed => "badge bg-danger",
+        BuildStatus.Cancelled => "badge bg-secondary",
+        _ => "badge bg-light text-dark"
+    };
+}
