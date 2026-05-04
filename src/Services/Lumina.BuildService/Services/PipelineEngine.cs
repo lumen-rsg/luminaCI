@@ -33,6 +33,7 @@ public class PipelineEngine
             GitBranch = request.GitBranch ?? "main",
             SpecPath = request.SpecPath,
             WebhookSecret = request.WebhookSecret,
+            BuildImage = request.BuildImage,
             Steps = request.Steps.Select((s, i) => new PipelineStep
             {
                 Id = Guid.NewGuid(),
@@ -82,7 +83,7 @@ public class PipelineEngine
         {
             try
             {
-                await _dockerBuild.StartBuildAsync(job, request.SpecContent, request.SourceUrl);
+                await _dockerBuild.StartBuildAsync(job, request.SpecContent, request.SourceUrl, pipeline.BuildImage);
             }
             catch (Exception ex)
             {

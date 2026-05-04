@@ -51,6 +51,16 @@
                 <input type="text" class="form-control" @bind="_newWebhookSecret" placeholder="Secret for webhook verification" />
                 <div class="form-text">Used to verify incoming webhook requests from GitHub/GitLab/Forgejo</div>
             </div>
+            <hr />
+            <h6>🐳 Build Environment</h6>
+            <div class="mb-3">
+                <label class="form-label">Build Image</label>
+                <select class="form-select" @bind="_newBuildImage">
+                    <option value="">Default (rpm-build — Fedora + RPM tools)</option>
+                    <option value="lumina-dotnet-build:latest">.NET / NativeAOT (Fedora + .NET 10 SDK + clang)</option>
+                </select>
+                <div class="form-text">Select the Docker image used for building packages. The .NET image includes dotnet-sdk-10.0, clang, gcc, make.</div>
+            </div>
             <div class="d-flex gap-2">
                 <button class="btn btn-success" @onclick="CreatePipeline">Create</button>
                 <button class="btn btn-outline-secondary" @onclick="() => _showCreate = false">Cancel</button>
@@ -166,6 +176,7 @@ else
     private string _newGitBranch = "main";
     private string _newSpecPath = "";
     private string _newWebhookSecret = "";
+    private string _newBuildImage = "";
 
     // Trigger build dialog
     private bool _showTrigger = false;
@@ -232,7 +243,8 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             string.IsNullOrWhiteSpace(_newGitRepoUrl) ? null : _newGitRepoUrl,
             string.IsNullOrWhiteSpace(_newGitBranch) ? null : _newGitBranch,
             string.IsNullOrWhiteSpace(_newSpecPath) ? null : _newSpecPath,
-            string.IsNullOrWhiteSpace(_newWebhookSecret) ? null : _newWebhookSecret));
+            string.IsNullOrWhiteSpace(_newWebhookSecret) ? null : _newWebhookSecret,
+            string.IsNullOrWhiteSpace(_newBuildImage) ? null : _newBuildImage));
         if (result?.Success == true)
         {
             _showCreate = false;
@@ -243,6 +255,7 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             _newGitBranch = "main";
             _newSpecPath = "";
             _newWebhookSecret = "";
+            _newBuildImage = "";
             _pipelines = await Api.GetPipelinesAsync(1, 50);
         }
     }

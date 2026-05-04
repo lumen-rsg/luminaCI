@@ -5,20 +5,23 @@
 # Environment variables:
 #   SPEC_CONTENT  — .spec file content (base64 encoded)
 #   SPEC_NAME     — Name of the spec file
-#   SOURCE_URL    — URL to download source tarball (optional)
+#   SOURCE_URL    — URL to download source tarball (optional, or git://... format)
 #   ARTIFACTS_DIR — Output directory for built RPMs
 #   BUILD_JOB_ID  — Build job ID for tracking
+#   AUTO_DOWNLOAD — Set to "true" to auto-download Source0/Source1 from spec (default: true)
 
 set -euo pipefail
 
 SPEC_NAME="${SPEC_NAME:-package.spec}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-/artifacts}"
 BUILD_DIR="/root/rpmbuild"
+AUTO_DOWNLOAD="${AUTO_DOWNLOAD:-true}"
 
 echo "=== Lumina CI RPM Build ==="
 echo "Spec: ${SPEC_NAME}"
 echo "Artifacts dir: ${ARTIFACTS_DIR}"
 echo "Job ID: ${BUILD_JOB_ID:-N/A}"
+echo "Auto-download sources: ${AUTO_DOWNLOAD}"
 echo "============================"
 
 # Decode spec file if base64 encoded
@@ -33,23 +36,101 @@ else
     exit 1
 fi
 
+echo "--- spec content ---"
 cat "${BUILD_DIR}/SPECS/${SPEC_NAME}"
 echo "--- end spec ---"
 
-# Download source if URL provided
+# ─── Helper: expand RPM macros in a string ───
+# Reads Name, Version, URL, Epoch from spec and substitutes %{name}, %{version}, etc.
+expand_spec_macros() {
+    local input="$1"
+    local spec_file="${BUILD_DIR}/SPECS/${SPEC_NAME}"
+
+    # Extract key values from spec
+    local pkg_name pkg_version pkg_url pkg_epoch
+    pkg_name=$(grep -i "^Name:" "$spec_file" 2>/dev/null | head -1 | sed 's/^Name:[[:space:]]*//' | tr -d '[:space:]')
+    pkg_version=$(grep -i "^Version:" "$spec_file" 2>/dev/null | head -1 | sed 's/^Version:[[:space:]]*//' | tr -d '[:space:]')
+    pkg_url=$(grep -i "^URL:" "$spec_file" 2>/dev/null | head -1 | sed 's/^URL:[[:space:]]*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    pkg_epoch=$(grep -i "^Epoch:" "$spec_file" 2>/dev/null | head -1 | sed 's/^Epoch:[[:space:]]*//' | tr -d '[:space:]')
+
+    # Expand macros (case-insensitive, handle both %{macro} and %%{macro})
+    local result="$input"
+    result="${result//\%\{name\}/$pkg_name}"
+    result="${result//\%\{Name\}/$pkg_name}"
+    result="${result//\%\{NAME\}/$pkg_name}"
+    result="${result//\%\{version\}/$pkg_version}"
+    result="${result//\%\{Version\}/$pkg_version}"
+    result="${result//\%\{VERSION\}/$pkg_version}"
+    result="${result//\%\{url\}/$pkg_url}"
+    result="${result//\%\{URL\}/$pkg_url}"
+    result="${result//\%\{epoch\}/$pkg_epoch}"
+    result="${result//\%\{dist\}/}"
+    result="${result//\%\{?dist\}/}"
+
+    echo "$result"
+}
+
+# ─── Helper: download a source URL to SOURCES with correct filename ───
+download_source() {
+    local source_tag="$1"  # e.g. "Source0: https://..."
+    local spec_file="${BUILD_DIR}/SPECS/${SPEC_NAME}"
+
+    # Extract the value after SourceN:
+    local source_value
+    source_value=$(echo "$source_tag" | sed 's/^Source[0-9]*:[[:space:]]*//')
+
+    # Expand macros
+    local expanded_url
+    expanded_url=$(expand_spec_macros "$source_value")
+
+    echo "  Source reference: ${source_value}"
+    echo "  Expanded:         ${expanded_url}"
+
+    # Skip if it's not a URL (just a filename — we'll handle it later)
+    if [[ ! "${expanded_url}" =~ ^https?:// ]] && [[ ! "${expanded_url}" =~ ^ftp:// ]]; then
+        echo "  → Not a URL, skipping download (will look for local file)"
+        return
+    fi
+
+    # Determine the target filename — use the basename portion of the expanded value
+    # For URLs like .../archive/v2.1/aurora.net-2.1.tar.gz → aurora.net-2.1.tar.gz
+    local target_filename
+    target_filename=$(basename "${expanded_url}")
+
+    # Also check if spec references a specific name pattern
+    # e.g. Source0: %{name}-%{version}.tar.gz → myapp-1.0.tar.gz
+    local spec_filename
+    spec_filename=$(expand_spec_macros "$(echo "$source_value" | sed 's/.*\///')")
+
+    # Use the expanded spec filename if it looks reasonable
+    if [ -n "$spec_filename" ] && [[ "$spec_filename" == *.* ]]; then
+        target_filename="$spec_filename"
+    fi
+
+    echo "  → Downloading to SOURCES/${target_filename}"
+
+    curl -L -f -o "${BUILD_DIR}/SOURCES/${target_filename}" "${expanded_url}" 2>&1 || {
+        echo "  WARNING: Failed to download ${expanded_url}"
+        return 1
+    }
+
+    echo "  ✓ Downloaded: ${target_filename} ($(stat -c%s "${BUILD_DIR}/SOURCES/${target_filename}" 2>/dev/null || echo '?') bytes)"
+}
+
+# ─── Step 1: Download source if SOURCE_URL is provided ───
 if [ -n "${SOURCE_URL:-}" ]; then
     if [[ "${SOURCE_URL}" == git://* ]]; then
         # Git clone source — format: git://https://repo.url#branch=main&specPath=pkg/package.spec&commit=abc123
-        echo "Git clone source detected"
+        echo "=== Git Clone Source ==="
         GIT_FULL="${SOURCE_URL#git://}"
         GIT_REPO="${GIT_FULL%%#*}"
         GIT_PARAMS="${GIT_FULL#*#}"
-        
+
         # Parse parameters
         GIT_BRANCH="main"
         SPEC_PATH_IN_REPO=""
         GIT_COMMIT=""
-        
+
         IFS='&' read -ra PARAMS <<< "${GIT_PARAMS}"
         for param in "${PARAMS[@]}"; do
             KEY="${param%%=*}"
@@ -60,19 +141,19 @@ if [ -n "${SOURCE_URL:-}" ]; then
                 commit) GIT_COMMIT="$VALUE" ;;
             esac
         done
-        
+
         echo "Cloning: ${GIT_REPO} (branch: ${GIT_BRANCH}, commit: ${GIT_COMMIT:-latest})"
         CLONE_DIR=$(mktemp -d)
         git clone --depth 50 --branch "${GIT_BRANCH}" "${GIT_REPO}" "${CLONE_DIR}/repo" || {
             echo "ERROR: git clone failed"
             exit 1
         }
-        
+
         if [ -n "${GIT_COMMIT}" ]; then
             cd "${CLONE_DIR}/repo" && git checkout "${GIT_COMMIT}" 2>/dev/null || echo "Warning: could not checkout ${GIT_COMMIT}"
             cd /
         fi
-        
+
         # Find and copy spec file from cloned repo
         if [ -n "${SPEC_PATH_IN_REPO}" ] && [ -f "${CLONE_DIR}/repo/${SPEC_PATH_IN_REPO}" ]; then
             cp "${CLONE_DIR}/repo/${SPEC_PATH_IN_REPO}" "${BUILD_DIR}/SPECS/${SPEC_NAME}"
@@ -88,12 +169,12 @@ if [ -n "${SOURCE_URL:-}" ]; then
                 exit 1
             fi
         fi
-        
+
         # Copy all source files from repo to SOURCES
         if [ -d "${CLONE_DIR}/repo" ]; then
             # Copy tarballs, patches, and other source files
             find "${CLONE_DIR}/repo" -maxdepth 1 \( -name "*.tar.gz" -o -name "*.tar.bz2" -o -name "*.tar.xz" -o -name "*.patch" -o -name "*.diff" \) -exec cp {} "${BUILD_DIR}/SOURCES/" \;
-            
+
             # Also check for a sources/ or SOURCES/ directory in repo
             for srcdir in "${CLONE_DIR}/repo/sources" "${CLONE_DIR}/repo/SOURCES" "${CLONE_DIR}/repo/dist"; do
                 if [ -d "$srcdir" ]; then
@@ -101,9 +182,8 @@ if [ -n "${SOURCE_URL:-}" ]; then
                     echo "Copied sources from ${srcdir}"
                 fi
             done
-            
+
             # Create source tarball from repo if Source0 expects one
-            REPO_BASENAME=$(basename "${GIT_REPO}" .git)
             PKG_NAME_FROM_SPEC=$(grep -i "^Name:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
             PKG_VERSION_FROM_SPEC=$(grep -i "^Version:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
             if [ -n "${PKG_NAME_FROM_SPEC}" ] && [ -n "${PKG_VERSION_FROM_SPEC}" ]; then
@@ -116,45 +196,54 @@ if [ -n "${SOURCE_URL:-}" ]; then
                 fi
             fi
         fi
-        
+
         rm -rf "${CLONE_DIR}"
         echo "Git clone source preparation completed"
     else
-        echo "Downloading source from: ${SOURCE_URL}"
+        echo "=== Downloading source from URL ==="
         curl -L -f -o "${BUILD_DIR}/SOURCES/$(basename "${SOURCE_URL}")" "${SOURCE_URL}" || {
-            echo "WARNING: Failed to download source, creating dummy tarball"
+            echo "WARNING: Failed to download source"
         }
     fi
 fi
 
-# Create dummy source tarball if spec uses Source0 but no source was provided
-# This handles the common case where %setup -q expects a tarball
+# ─── Step 2: Auto-download Source0/Source1/... from spec ───
+if [ "${AUTO_DOWNLOAD}" = "true" ]; then
+    echo "=== Auto-downloading sources from spec ==="
+    SPEC_FILE="${BUILD_DIR}/SPECS/${SPEC_NAME}"
+
+    # Find all Source lines (Source0, Source1, ..., Source)
+    SOURCE_LINES=$(grep -iE "^Source[0-9]*:" "$SPEC_FILE" 2>/dev/null || true)
+    if [ -n "${SOURCE_LINES}" ]; then
+        echo "$SOURCE_LINES" | while IFS= read -r line; do
+            echo "Processing: $line"
+            download_source "$line" || true
+        done
+    else
+        echo "No Source entries found in spec"
+    fi
+fi
+
+# ─── Step 3: Create dummy tarball if needed ───
+# If Source0 references a file that doesn't exist yet, create a dummy
 SOURCE0_LINE=$(grep -i "^Source0:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null || true)
-if [ -n "${SOURCE0_LINE}" ] && [ -z "${SOURCE_URL:-}" ]; then
-    # Extract the source filename from spec
-    SOURCE_FILE=$(echo "${SOURCE0_LINE}" | sed 's/^Source0:[[:space:]]*//' | sed 's/%{name}/ lumina-hello/g; s/%{version}/1.0.0/g; s/%%{Name}/lumina-hello/g; s/%%{Version}/1.0.0/g')
-    # Get Name and Version from spec
-    PKG_NAME=$(grep -i "^Name:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" | awk '{print $2}' | tr -d '[:space:]')
-    PKG_VERSION=$(grep -i "^Version:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" | awk '{print $2}' | tr -d '[:space:]')
-    
-    if [ -n "${PKG_NAME}" ] && [ -n "${PKG_VERSION}" ]; then
-        TARBALL_NAME="${PKG_NAME}-${PKG_VERSION}.tar.gz"
-        if [ ! -f "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" ]; then
+if [ -n "${SOURCE0_LINE}" ]; then
+    SOURCE0_FILENAME=$(expand_spec_macros "$(echo "$SOURCE0_LINE" | sed 's/^Source0:[[:space:]]*//' | sed 's/.*\///')")
+    if [ -n "${SOURCE0_FILENAME}" ] && [ ! -f "${BUILD_DIR}/SOURCES/${SOURCE0_FILENAME}" ]; then
+        PKG_NAME=$(grep -i "^Name:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" | awk '{print $2}' | tr -d '[:space:]')
+        PKG_VERSION=$(grep -i "^Version:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" | awk '{print $2}' | tr -d '[:space:]')
+
+        if [ -n "${PKG_NAME}" ] && [ -n "${PKG_VERSION}" ]; then
+            TARBALL_NAME="${SOURCE0_FILENAME}"
             echo "Creating dummy source tarball: ${TARBALL_NAME}"
             TMP_DIR=$(mktemp -d)
             mkdir -p "${TMP_DIR}/${PKG_NAME}-${PKG_VERSION}"
-            # Create a minimal README so the dir isn't empty
             echo "Lumina CI build: ${PKG_NAME}-${PKG_VERSION}" > "${TMP_DIR}/${PKG_NAME}-${PKG_VERSION}/README"
             tar -czf "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" -C "${TMP_DIR}" "${PKG_NAME}-${PKG_VERSION}"
             rm -rf "${TMP_DIR}"
             echo "Dummy tarball created successfully"
         fi
     fi
-fi
-
-# Copy any additional sources from /sources directory
-if [ -d "/sources" ]; then
-    cp /sources/* "${BUILD_DIR}/SOURCES/" 2>/dev/null || true
 fi
 
 # Install build dependencies (best-effort)

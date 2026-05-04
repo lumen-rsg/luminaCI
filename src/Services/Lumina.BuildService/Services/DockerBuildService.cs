@@ -29,9 +29,10 @@ public class DockerBuildService
         _docker = new DockerClientConfiguration(new Uri(dockerUrl)).CreateClient();
     }
 
-    public async Task<BuildJob> StartBuildAsync(BuildJob job, string specContent, string? sourceUrl)
+    public async Task<BuildJob> StartBuildAsync(BuildJob job, string specContent, string? sourceUrl, string? buildImage = null)
     {
-        _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName})", job.Id, job.SpecName);
+        var imageName = !string.IsNullOrWhiteSpace(buildImage) ? buildImage : "lumina-rpm-build:latest";
+        _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName}) with image {Image}", job.Id, job.SpecName, imageName);
 
         try
         {
@@ -45,7 +46,8 @@ public class DockerBuildService
             {
                 $"SPEC_NAME={job.SpecName}",
                 $"ARTIFACTS_DIR=/artifacts",
-                $"BUILD_JOB_ID={job.Id}"
+                $"BUILD_JOB_ID={job.Id}",
+                "AUTO_DOWNLOAD=true"
             };
 
             if (!string.IsNullOrEmpty(specContent))
@@ -56,7 +58,7 @@ public class DockerBuildService
 
             var createParams = new CreateContainerParameters
             {
-                Image = "lumina-rpm-build:latest",
+                Image = imageName,
                 Env = envVars,
                 HostConfig = new HostConfig
                 {

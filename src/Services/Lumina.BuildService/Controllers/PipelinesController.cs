@@ -35,7 +35,7 @@ public class PipelinesController : ControllerBase
         var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
         var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
             p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
-            p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl);
+            p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage);
         return Ok(new ApiResponse<PipelineResponse>(true, response, null, null));
     }
 
@@ -46,7 +46,7 @@ public class PipelinesController : ControllerBase
         var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
         var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
             p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
-            p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl);
+            p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage);
         return CreatedAtAction(nameof(Get), new { id = p.Id }, new ApiResponse<PipelineResponse>(true, response, null, "Pipeline created"));
     }
 

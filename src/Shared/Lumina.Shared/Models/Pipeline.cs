@@ -19,4 +19,7 @@ public class Pipeline
     public string? GitBranch { get; set; }
     public string? SpecPath { get; set; }  // Path to .spec file in repo, e.g. "pkg/my-package.spec"
     public string? WebhookSecret { get; set; }
+
+    // Build configuration
+    public string? BuildImage { get; set; }  // Docker image for builds, e.g. "lumina-rpm-build:latest" or "lumina-dotnet-build:latest"
 }

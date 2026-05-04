@@ -260,6 +260,23 @@ services:
     networks:
       - lumina-network
 
+  # === Build Images (pre-built, used by build-service for RPM containers) ===
+  rpm-build-image:
+    build:
+      context: ../
+      dockerfile: deploy/docker/rpm-build.Dockerfile
+    image: lumina-rpm-build:latest
+    profiles:
+      - build-images
+
+  dotnet-build-image:
+    build:
+      context: ../
+      dockerfile: deploy/docker/dotnet-build.Dockerfile
+    image: lumina-dotnet-build:latest
+    profiles:
+      - build-images
+
   nginx:
     image: nginx:alpine
     container_name: lumina-nginx

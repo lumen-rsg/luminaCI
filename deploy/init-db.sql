@@ -40,4 +40,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='build' AND table_name='pipelines' AND column_name='WebhookSecret') THEN
         ALTER TABLE build.pipelines ADD COLUMN "WebhookSecret" text NULL;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='build' AND table_name='pipelines' AND column_name='BuildImage') THEN
+        ALTER TABLE build.pipelines ADD COLUMN "BuildImage" text NULL;
+    END IF;
 END$$;
