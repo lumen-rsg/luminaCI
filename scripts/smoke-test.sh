@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Lumina CI — Smoke Test Script
+#  Lumina CI — Comprehensive Smoke Test
+#  Tests all API endpoints matching frontend actions
 #  Usage: ./scripts/smoke-test.sh
 # ============================================================
 
@@ -11,11 +12,29 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+DIM='\033[2m'
+NC='\033[0m'
 
 PASS=0
 FAIL=0
+SKIP=0
 TOTAL=0
+
+# API base URLs (direct service ports — no auth required)
+BUILD_URL="${BUILD_URL:-http://localhost:5001}"
+SECURITY_URL="${SECURITY_URL:-http://localhost:5002}"
+SCANNER_URL="${SCANNER_URL:-http://localhost:5003}"
+REPO_URL="${REPO_URL:-http://localhost:5004}"
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:5000}"
+WEBAPP_URL="${WEBAPP_URL:-http://localhost:5005}"
+NGINX_URL="${NGINX_URL:-http://localhost:80}"
+
+# JWT token (obtained from gateway login)
+JWT_TOKEN=""
+
+# ============================================================
+# Helpers
+# ============================================================
 
 check() {
     local desc="$1"
@@ -30,16 +49,126 @@ check() {
     fi
 }
 
+check_contains() {
+    local desc="$1"
+    local haystack="$2"
+    local needle="$3"
+    TOTAL=$((TOTAL + 1))
+    if echo "$haystack" | grep -q "$needle"; then
+        echo -e "  ${GREEN}✅ $desc${NC}"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${RED}❌ $desc${NC} ${DIM}(expected to contain: $needle)${NC}"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+check_field() {
+    local desc="$1"
+    local json="$2"
+    local field="$3"
+    local expected="$4"
+    TOTAL=$((TOTAL + 1))
+    if [ -z "$json" ]; then
+        echo -e "  ${RED}❌ $desc${NC} ${DIM}(empty response)${NC}"
+        FAIL=$((FAIL + 1))
+        return
+    fi
+    local actual
+    actual=$(echo "$json" | jq -r "$field // empty" 2>/dev/null || echo "")
+    if [ "$actual" = "$expected" ]; then
+        echo -e "  ${GREEN}✅ $desc${NC}"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${RED}❌ $desc${NC} ${DIM}(expected: $expected, got: $actual)${NC}"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# Check field matches any of several values (e.g. enum as string OR int)
+check_field_oneof() {
+    local desc="$1"
+    local json="$2"
+    local field="$3"
+    shift 3
+    local actual
+    actual=$(echo "$json" | jq -r "$field // empty" 2>/dev/null || echo "")
+    TOTAL=$((TOTAL + 1))
+    for expected in "$@"; do
+        if [ "$actual" = "$expected" ]; then
+            echo -e "  ${GREEN}✅ $desc${NC}"
+            PASS=$((PASS + 1))
+            return
+        fi
+    done
+    echo -e "  ${RED}❌ $desc${NC} ${DIM}(got: $actual, expected one of: $*)${NC}"
+    FAIL=$((FAIL + 1))
+}
+
+skip() {
+    local desc="$1"
+    local reason="${2:-}"
+    TOTAL=$((TOTAL + 1))
+    echo -e "  ${YELLOW}⏭️  $desc ${DIM}($reason)${NC}"
+    SKIP=$((SKIP + 1))
+}
+
+section() {
+    echo ""
+    echo -e "${YELLOW}$1${NC}"
+}
+
+# HTTP helpers — sets HTTP_CODE and HTTP_BODY
+api_get() {
+    local url="$1"
+    local token="${2:-}"
+    local response
+    if [ -n "$token" ]; then
+        response=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $token" "$url" 2>/dev/null)
+    else
+        response=$(curl -s -w "\n%{http_code}" "$url" 2>/dev/null)
+    fi
+    HTTP_CODE=$(echo "$response" | tail -1)
+    HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+api_post() {
+    local url="$1"
+    local data="$2"
+    local token="${3:-}"
+    local response
+    if [ -n "$token" ]; then
+        response=$(curl -s -w "\n%{http_code}" -X POST "$url" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $token" \
+            -d "$data" 2>/dev/null)
+    else
+        response=$(curl -s -w "\n%{http_code}" -X POST "$url" \
+            -H "Content-Type: application/json" \
+            -d "$data" 2>/dev/null)
+    fi
+    HTTP_CODE=$(echo "$response" | tail -1)
+    HTTP_BODY=$(echo "$response" | sed '$d')
+}
+
+# ============================================================
+# Banner
+# ============================================================
 echo ""
-echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}   Lumina CI — Smoke Test${NC}"
-echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
-echo ""
+echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+echo -e "${CYAN}   Lumina CI — Comprehensive Smoke Test${NC}"
+echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+
+# Check jq dependency
+if ! command -v jq &>/dev/null; then
+    echo -e "${RED}Error: jq is required. Install with: sudo yum install jq${NC}"
+    exit 1
+fi
 
 # ============================================================
 # 1. Docker Containers
 # ============================================================
-echo -e "${YELLOW}📦 Docker Containers${NC}"
+section "📦 1. Docker Containers"
 
 REQUIRED_CONTAINERS=(
     "lumina-postgres"
@@ -61,261 +190,422 @@ for name in "${REQUIRED_CONTAINERS[@]}"; do
     check "Container $name" "$([ "$status" = "running" ] && echo true || echo false)"
 done
 
-echo ""
-
 # ============================================================
 # 2. Infrastructure Health
 # ============================================================
-echo -e "${YELLOW}🔧 Infrastructure Health${NC}"
+section "🔧 2. Infrastructure Health"
 
-# Postgres
 pg=$(docker exec lumina-postgres pg_isready -U lumina -d lumina_ci 2>&1)
 check "Postgres ready" "$([[ "$pg" == *"accepting connections"* ]] && echo true || echo false)"
 
-# Redis
 rd=$(docker exec lumina-redis redis-cli ping 2>&1)
 check "Redis ready" "$([[ "$rd" == *"PONG"* ]] && echo true || echo false)"
 
-# RabbitMQ
 rb=$(docker exec lumina-rabbitmq rabbitmq-diagnostics check_running 2>&1)
 check "RabbitMQ running" "$([[ "$rb" == *"completed successfully"* ]] || [[ "$rb" == *"is running"* ]] && echo true || echo false)"
 
-# MinIO
 mn=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9000/minio/health/live 2>/dev/null)
 check "MinIO healthy (HTTP $mn)" "$([ "$mn" = "200" ] && echo true || echo false)"
 
-echo ""
-
 # ============================================================
-# 3. API Gateway
+# 3. API Gateway Health & Auth
 # ============================================================
-echo -e "${YELLOW}🌐 API Gateway (port 5000)${NC}"
+section "🌐 3. API Gateway & Auth"
 
-gw_health=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health 2>/dev/null)
-check "Gateway /health (HTTP $gw_health)" "$([ "$gw_health" = "200" ] && echo true || echo false)"
+# 3a. Health (no auth)
+api_get "$GATEWAY_URL/health"
+check "Gateway /health (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
 
-gw_swagger=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/swagger/v1/swagger.json 2>/dev/null)
-check "Gateway /swagger (HTTP $gw_swagger)" "$([ "$gw_swagger" = "200" ] && echo true || echo false)"
-
-echo ""
-
-# ============================================================
-# 4. Auth
-# ============================================================
-echo -e "${YELLOW}🔐 Authentication${NC}"
-
-auth_response=$(curl -s -w "\n%{http_code}" -X POST http://localhost:5000/api/auth/login \
-    -H "Content-Type: application/json" \
-    -d '{"username":"admin","password":"admin"}' 2>/dev/null)
-auth_code=$(echo "$auth_response" | tail -1)
-auth_body=$(echo "$auth_response" | sed '$d')
-check "Login admin/admin (HTTP $auth_code)" "$([ "$auth_code" = "200" ] && echo true || echo false)"
-
-# Extract JWT token
-JWT_TOKEN=""
-if [ "$auth_code" = "200" ] && command -v jq &>/dev/null; then
-    JWT_TOKEN=$(echo "$auth_body" | jq -r '.token // empty' 2>/dev/null || echo "")
-fi
-check "JWT token received" "$([ -n "$JWT_TOKEN" ] && echo true || echo false)"
-
-# Test authenticated request
-if [ -n "$JWT_TOKEN" ]; then
-    auth_test=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/pipelines \
-        -H "Authorization: Bearer $JWT_TOKEN" 2>/dev/null)
-    check "Authenticated request (HTTP $auth_test)" "$([ "$auth_test" = "200" ] && echo true || echo false)"
+# 3b. Login as admin → get JWT
+api_post "$GATEWAY_URL/api/auth/login" '{"username":"admin","password":"admin"}'
+check "Auth login (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+if [ "$HTTP_CODE" = "200" ]; then
+    JWT_TOKEN=$(echo "$HTTP_BODY" | jq -r '.token // empty' 2>/dev/null || echo "")
+    check "JWT token received" "$([ -n "$JWT_TOKEN" ] && echo true || echo false)"
+else
+    JWT_TOKEN=""
+    echo -e "  ${RED}⚠️  No JWT — gateway proxy tests will be skipped${NC}"
 fi
 
-echo ""
+# 3c. Swagger (dev only — may be disabled in Production)
+api_get "$GATEWAY_URL/swagger/v1/swagger.json"
+check "Gateway /swagger (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "404" ] && echo true || echo false)"
 
 # ============================================================
-# 5. Build Service — Pipelines
+# 4. Pipelines — CRUD (direct to build-service, no auth)
 # ============================================================
-echo -e "${YELLOW}🔄 Build Service — Pipelines${NC}"
+section "🔄 4. Pipelines — CRUD"
 
-# Create pipeline
-create_pipe=$(curl -s -w "\n%{http_code}" -X POST http://localhost:5001/api/pipelines \
-    -H "Content-Type: application/json" \
-    -d '{
-        "name": "smoke-test-pipeline",
-        "description": "Pipeline created by smoke test",
-        "steps": [
-            {"type": 0, "name": "Build RPM", "order": 1, "configuration": {}},
-            {"type": 2, "name": "CVE Scan",   "order": 2, "configuration": {}},
-            {"type": 1, "name": "PGP Sign",   "order": 3, "configuration": {}},
-            {"type": 3, "name": "Publish",    "order": 4, "configuration": {}}
-        ],
-        "tags": ["smoke-test"]
-    }' 2>/dev/null)
-cp_code=$(echo "$create_pipe" | tail -1)
-cp_body=$(echo "$create_pipe" | sed '$d')
-check "Create pipeline (HTTP $cp_code)" "$([ "$cp_code" = "201" ] && echo true || echo false)"
-
-# Extract pipeline ID
-PIPELINE_ID=""
-if [ "$cp_code" = "201" ] && command -v jq &>/dev/null; then
-    PIPELINE_ID=$(echo "$cp_body" | jq -r '.data.id // empty' 2>/dev/null || echo "")
+# 4a. Create pipeline (simple, no git)
+api_post "$BUILD_URL/api/pipelines" '{
+    "name": "test-pipeline-simple",
+    "description": "Simple test pipeline",
+    "steps": [
+        {"type": 0, "name": "Build RPM", "order": 1, "configuration": {}},
+        {"type": 2, "name": "CVE Scan",   "order": 2, "configuration": {}},
+        {"type": 1, "name": "PGP Sign",   "order": 3, "configuration": {}}
+    ],
+    "tags": ["test", "simple"]
+}'
+check "Create simple pipeline (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "201" ] && echo true || echo false)"
+SIMPLE_PIPE_ID=""
+if [ "$HTTP_CODE" = "201" ]; then
+    SIMPLE_PIPE_ID=$(echo "$HTTP_BODY" | jq -r '.data.id // empty' 2>/dev/null || echo "")
+    check "Pipeline ID returned" "$([ -n "$SIMPLE_PIPE_ID" ] && echo true || echo false)"
 fi
 
-# List pipelines
-list_pipe=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/api/pipelines 2>/dev/null)
-check "List pipelines (HTTP $list_pipe)" "$([ "$list_pipe" = "200" ] && echo true || echo false)"
+# 4b. Create pipeline with git settings
+api_post "$BUILD_URL/api/pipelines" '{
+    "name": "test-pipeline-git",
+    "description": "Pipeline with git integration",
+    "steps": [
+        {"type": 0, "name": "Build RPM", "order": 1, "configuration": {}}
+    ],
+    "gitRepoUrl": "https://github.com/example/test-repo.git",
+    "gitBranch": "main",
+    "specPath": "package.spec",
+    "buildImage": "lumina/rpm-build:latest",
+    "gitUsername": "test-user",
+    "gitToken": "test-token-123",
+    "tags": ["test", "git"]
+}'
+check "Create git pipeline (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "201" ] && echo true || echo false)"
+GIT_PIPE_ID=""
+if [ "$HTTP_CODE" = "201" ]; then
+    GIT_PIPE_ID=$(echo "$HTTP_BODY" | jq -r '.data.id // empty' 2>/dev/null || echo "")
 
-echo ""
+    # Validate git fields in response (camelCase JSON)
+    check_field "Response has gitRepoUrl" "$HTTP_BODY" '.data.gitRepoUrl' "https://github.com/example/test-repo.git"
+    check_field "Response has gitBranch" "$HTTP_BODY" '.data.gitBranch' "main"
+    check_field "Response has specPath" "$HTTP_BODY" '.data.specPath' "package.spec"
+    check_field "Response has buildImage" "$HTTP_BODY" '.data.buildImage' "lumina/rpm-build:latest"
+    check_field "Response has gitUsername" "$HTTP_BODY" '.data.gitUsername' "test-user"
+    check_field "Response has hasGitToken=true" "$HTTP_BODY" '.data.hasGitToken' "true"
+    # webhookUrl is constructed by controller, not null
+    check_contains "Response has webhookUrl" "$HTTP_BODY" "webhookUrl"
+fi
+
+# 4c. Get pipeline by ID
+if [ -n "$SIMPLE_PIPE_ID" ]; then
+    api_get "$BUILD_URL/api/pipelines/$SIMPLE_PIPE_ID"
+    check "Get pipeline by ID (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+    check_field "Pipeline name matches" "$HTTP_BODY" '.data.name' "test-pipeline-simple"
+    check_field "Pipeline has 3 steps" "$HTTP_BODY" '.data.steps | length' "3"
+    # PipelineStatus enum: Active=1 (may serialize as "Active" or 1)
+    check_field_oneof "Pipeline status is Active" "$HTTP_BODY" '.data.status' "Active" "1"
+    check_field "Pipeline has 2 tags" "$HTTP_BODY" '.data.tags | length' "2"
+fi
+
+# 4d. List pipelines — response uses "pipelines" not "items"
+api_get "$BUILD_URL/api/pipelines"
+check "List pipelines (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+check_contains "Response has data.pipelines" "$HTTP_BODY" '"pipelines"'
+PIPE_COUNT=$(echo "$HTTP_BODY" | jq -r '.data.totalCount // 0' 2>/dev/null || echo "0")
+check "Pipelines count >= 2" "$([ "$PIPE_COUNT" -ge 2 ] && echo true || echo false)"
+
+# 4e. Pipeline list summary includes git fields
+if [ -n "$GIT_PIPE_ID" ]; then
+    GIT_PIPE_IN_LIST=$(echo "$HTTP_BODY" | jq -r ".data.pipelines[] | select(.id == \"$GIT_PIPE_ID\")" 2>/dev/null || echo "")
+    check "Git pipeline in list" "$([ -n "$GIT_PIPE_IN_LIST" ] && echo true || echo false)"
+    if [ -n "$GIT_PIPE_IN_LIST" ]; then
+        check_contains "List item has gitRepoUrl" "$GIT_PIPE_IN_LIST" "test-repo"
+        check_contains "List item has gitBranch" "$GIT_PIPE_IN_LIST" "main"
+    fi
+fi
+
+# 4f. Get non-existent pipeline
+api_get "$BUILD_URL/api/pipelines/00000000-0000-0000-0000-000000000000"
+check "Get non-existent pipeline → 404 (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "404" ] && echo true || echo false)"
 
 # ============================================================
-# 6. Build Service — Trigger Build
+# 5. Builds — Trigger & Lifecycle
 # ============================================================
-echo -e "${YELLOW}🔨 Build Service — Trigger Build${NC}"
+section "🔨 5. Builds — Trigger & Lifecycle"
 
-if [ -n "$PIPELINE_ID" ]; then
-    trigger=$(curl -s -w "\n%{http_code}" -X POST "http://localhost:5001/api/pipelines/$PIPELINE_ID/trigger" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "specName": "smoke-test-pkg",
-            "specContent": "Name: smoke-test\nVersion: 1.0.0\nRelease: 1",
-            "sourceUrl": "https://example.com/test.tar.gz",
-            "triggeredBy": "smoke-test"
-        }' 2>/dev/null)
-    tr_code=$(echo "$trigger" | tail -1)
-    tr_body=$(echo "$trigger" | sed '$d')
-    check "Trigger build (HTTP $tr_code)" "$([ "$tr_code" = "200" ] || [ "$tr_code" = "500" ] && echo true || echo false)"
-
-    BUILD_ID=""
-    if [ "$tr_code" = "200" ] && command -v jq &>/dev/null; then
-        BUILD_ID=$(echo "$tr_body" | jq -r '.data.id // empty' 2>/dev/null || echo "")
+# 5a. Trigger manual build
+BUILD_ID_1=""
+if [ -n "$SIMPLE_PIPE_ID" ]; then
+    api_post "$BUILD_URL/api/pipelines/$SIMPLE_PIPE_ID/trigger" '{
+        "specName": "test-pkg",
+        "specContent": "Name: test-pkg\nVersion: 1.0.0\nRelease: 1%{?dist}\nSummary: Test package\nLicense: MIT\n\n%description\nA test package for smoke testing.\n\n%prep\n%setup -q\n\n%build\n\n%install\nmkdir -p %{buildroot}/opt/test\necho hello > %{buildroot}/opt/test/hello.txt\n\n%files\n/opt/test/hello.txt",
+        "sourceUrl": "https://example.com/test-1.0.0.tar.gz",
+        "triggeredBy": "smoke-test"
+    }'
+    check "Trigger manual build (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+    if [ "$HTTP_CODE" = "200" ]; then
+        BUILD_ID_1=$(echo "$HTTP_BODY" | jq -r '.data.id // empty' 2>/dev/null || echo "")
+        # BuildStatus enum: Queued=0, but DockerBuildService may change it fast
+        check_field_oneof "Build status is Queued/Building/Failed" "$HTTP_BODY" '.data.status' "Queued" "0" "Building" "1" "Failed" "3"
+        check_field "Build specName matches" "$HTTP_BODY" '.data.specName' "test-pkg"
+        check_field "Build has sourceUrl" "$HTTP_BODY" '.data.sourceUrl' "https://example.com/test-1.0.0.tar.gz"
+        check_field "Build triggeredBy" "$HTTP_BODY" '.data.triggeredBy' "smoke-test"
     fi
 else
-    check "Trigger build" "false"
-    echo -e "    ${YELLOW}(skipped — no pipeline ID)${NC}"
+    skip "Trigger manual build" "no pipeline ID"
 fi
 
-# List builds
-list_builds=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/api/builds 2>/dev/null)
-check "List builds (HTTP $list_builds)" "$([ "$list_builds" = "200" ] && echo true || echo false)"
+# 5b. Trigger auto build on non-git pipeline → should fail (400)
+if [ -n "$SIMPLE_PIPE_ID" ]; then
+    api_post "$BUILD_URL/api/pipelines/$SIMPLE_PIPE_ID/trigger-auto" '{"triggeredBy":"smoke-test"}'
+    check "Auto-build on non-git pipeline → 400 (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "400" ] && echo true || echo false)"
+fi
 
-# Build queue
-queue=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/api/builds/queue 2>/dev/null)
-check "Build queue (HTTP $queue)" "$([ "$queue" = "200" ] && echo true || echo false)"
+# 5c. Trigger auto build on git pipeline
+BUILD_ID_2=""
+if [ -n "$GIT_PIPE_ID" ]; then
+    api_post "$BUILD_URL/api/pipelines/$GIT_PIPE_ID/trigger-auto" '{"triggeredBy":"smoke-test-auto"}'
+    check "Trigger auto build on git pipeline (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+    if [ "$HTTP_CODE" = "200" ]; then
+        BUILD_ID_2=$(echo "$HTTP_BODY" | jq -r '.data.id // empty' 2>/dev/null || echo "")
+        # SourceUrl should contain git:// prefix
+        check_contains "Auto build has git:// sourceUrl" "$HTTP_BODY" "git://"
+        check_contains "Auto build has correct repo" "$HTTP_BODY" "test-repo"
+    fi
+else
+    skip "Trigger auto build on git pipeline" "no git pipeline ID"
+fi
 
-echo ""
+# 5d. List builds — response uses "builds" not "items"
+api_get "$BUILD_URL/api/builds"
+check "List builds (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+check_contains "Response has data.builds" "$HTTP_BODY" '"builds"'
 
-# ============================================================
-# 7. Security Service
-# ============================================================
-echo -e "${YELLOW}🔒 Security Service (port 5002)${NC}"
+# 5e. Get build details
+if [ -n "$BUILD_ID_1" ]; then
+    api_get "$BUILD_URL/api/builds/$BUILD_ID_1"
+    check "Get build details (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+    check_field "Build detail: specName" "$HTTP_BODY" '.data.specName' "test-pkg"
+    check_field "Build detail: pipelineId" "$HTTP_BODY" '.data.pipelineId' "$SIMPLE_PIPE_ID"
+    check_field "Build detail: sourceUrl" "$HTTP_BODY" '.data.sourceUrl' "https://example.com/test-1.0.0.tar.gz"
+    check_field "Build detail: has artifacts array" "$HTTP_BODY" '.data.artifacts | length' "0"
+else
+    skip "Get build details" "no build ID"
+fi
 
-# Generate PGP key
-key_gen=$(curl -s -w "\n%{http_code}" -X POST http://localhost:5002/api/security/keys/generate \
-    -H "Content-Type: application/json" \
-    -d '{
-        "keyName": "smoke-test-key",
-        "email": "test@lumina.1t.ru",
-        "passphrase": "test-passphrase-123"
-    }' 2>/dev/null)
-kg_code=$(echo "$key_gen" | tail -1)
-check "Generate PGP key (HTTP $kg_code)" "$([ "$kg_code" = "201" ] && echo true || echo false)"
+# 5f. Get build logs
+if [ -n "$BUILD_ID_1" ]; then
+    api_get "$BUILD_URL/api/builds/$BUILD_ID_1/logs"
+    check "Get build logs (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+    check_contains "Logs response has success" "$HTTP_BODY" '"success"'
+else
+    skip "Get build logs" "no build ID"
+fi
 
-# List keys
-list_keys=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5002/api/security/keys 2>/dev/null)
-check "List PGP keys (HTTP $list_keys)" "$([ "$list_keys" = "200" ] && echo true || echo false)"
+# 5g. Download spec file
+if [ -n "$BUILD_ID_1" ]; then
+    SPEC_RESPONSE=$(curl -s -w "\n%{http_code}" "$BUILD_URL/api/builds/$BUILD_ID_1/spec" 2>/dev/null)
+    SPEC_CODE=$(echo "$SPEC_RESPONSE" | tail -1)
+    SPEC_BODY=$(echo "$SPEC_RESPONSE" | sed '$d')
+    check "Download spec file (HTTP $SPEC_CODE)" "$([ "$SPEC_CODE" = "200" ] && echo true || echo false)"
+    check_contains "Spec contains Name:" "$SPEC_BODY" "Name:"
+    check_contains "Spec contains Version:" "$SPEC_BODY" "Version:"
+else
+    skip "Download spec file" "no build ID"
+fi
 
-# Signing history
-sign_hist=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5002/api/security/signing/history 2>/dev/null)
-check "Signing history (HTTP $sign_hist)" "$([ "$sign_hist" = "200" ] && echo true || echo false)"
+# 5h. Build queue — uses "queued", "running", "queuedCount", "runningCount"
+api_get "$BUILD_URL/api/builds/queue"
+check "Build queue (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+check_contains "Queue has queued array" "$HTTP_BODY" '"queued"'
+check_contains "Queue has running array" "$HTTP_BODY" '"running"'
+check_contains "Queue has queuedCount" "$HTTP_BODY" '"queuedCount"'
+check_contains "Queue has runningCount" "$HTTP_BODY" '"runningCount"'
 
-echo ""
-
-# ============================================================
-# 8. Scanner Service
-# ============================================================
-echo -e "${YELLOW}🛡️ Scanner Service (port 5003)${NC}"
-
-# Recent reports
-scan_recent=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5003/api/scanner/reports/recent 2>/dev/null)
-check "Recent scan reports (HTTP $scan_recent)" "$([ "$scan_recent" = "200" ] && echo true || echo false)"
-
-# Trivy server
-trivy=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/api/v1/status 2>/dev/null)
-check "Trivy server (HTTP $trivy)" "$([ "$trivy" = "200" ] || [ "$trivy" = "404" ] && echo true || echo false)"
-
-echo ""
-
-# ============================================================
-# 9. Repository Service
-# ============================================================
-echo -e "${YELLOW}📁 Repository Service (port 5004)${NC}"
-
-# Create repository
-create_repo=$(curl -s -w "\n%{http_code}" -X POST http://localhost:5004/api/repository \
-    -H "Content-Type: application/json" \
-    -d '{
-        "name": "smoke-test-repo",
-        "displayName": "Smoke Test Repository",
-        "basePath": "/packages/smoke-test",
-        "arch": "x86_64",
-        "distribution": "el9",
-        "createdBy": "smoke-test"
-    }' 2>/dev/null)
-cr_code=$(echo "$create_repo" | tail -1)
-check "Create repository (HTTP $cr_code)" "$([ "$cr_code" = "201" ] || [ "$cr_code" = "409" ] && echo true || echo false)"
-
-# List repositories
-list_repos=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5004/api/repository 2>/dev/null)
-check "List repositories (HTTP $list_repos)" "$([ "$list_repos" = "200" ] && echo true || echo false)"
-
-echo ""
+# 5i. Get non-existent build
+api_get "$BUILD_URL/api/builds/00000000-0000-0000-0000-000000000000"
+check "Get non-existent build → 404 (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "404" ] && echo true || echo false)"
 
 # ============================================================
-# 10. Gateway Proxy Routes
+# 6. Webhooks
 # ============================================================
-echo -e "${YELLOW}🔀 API Gateway — Proxy Routes${NC}"
+section "🔔 6. Webhooks"
 
-gw_pipes=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/pipelines 2>/dev/null)
-check "Gateway → Pipelines (HTTP $gw_pipes)" "$([ "$gw_pipes" = "200" ] && echo true || echo false)"
-
-gw_builds=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/builds 2>/dev/null)
-check "Gateway → Builds (HTTP $gw_builds)" "$([ "$gw_builds" = "200" ] && echo true || echo false)"
-
-gw_keys=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/security/keys 2>/dev/null)
-check "Gateway → Security (HTTP $gw_keys)" "$([ "$gw_keys" = "200" ] && echo true || echo false)"
-
-gw_scans=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/scanner/reports/recent 2>/dev/null)
-check "Gateway → Scanner (HTTP $gw_scans)" "$([ "$gw_scans" = "200" ] && echo true || echo false)"
-
-gw_repos=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/repository 2>/dev/null)
-check "Gateway → Repositories (HTTP $gw_repos)" "$([ "$gw_repos" = "200" ] && echo true || echo false)"
-
-echo ""
+WEBHOOK_BUILD_ID=""
+if [ -n "$GIT_PIPE_ID" ]; then
+    # Simulate GitHub push webhook
+    api_post "$BUILD_URL/api/webhooks/$GIT_PIPE_ID" '{
+        "ref": "refs/heads/main",
+        "before": "abc123",
+        "after": "def456",
+        "repository": {
+            "clone_url": "https://github.com/example/test-repo.git",
+            "full_name": "example/test-repo"
+        },
+        "pusher": {
+            "name": "test-user",
+            "email": "test@example.com"
+        },
+        "head_commit": {
+            "id": "def456",
+            "message": "Update package spec",
+            "author": {
+                "name": "Test User",
+                "email": "test@example.com",
+                "username": "test-user"
+            }
+        }
+    }'
+    check "Webhook push event (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+    if [ "$HTTP_CODE" = "200" ]; then
+        WEBHOOK_BUILD_ID=$(echo "$HTTP_BODY" | jq -r '.data.id // empty' 2>/dev/null || echo "")
+        if [ -n "$WEBHOOK_BUILD_ID" ]; then
+            check_contains "Webhook build has git:// sourceUrl" "$HTTP_BODY" "git://"
+            check_contains "Webhook build references main branch" "$HTTP_BODY" "main"
+        fi
+    fi
+else
+    skip "Webhook push event" "no git pipeline ID"
+fi
 
 # ============================================================
-# 11. Web UI
+# 7. Security Service (direct, no auth)
 # ============================================================
-echo -e "${YELLOW}🖥️ Web UI${NC}"
+section "🔒 7. Security Service"
 
-webapp=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5005 2>/dev/null)
-check "WebApp (port 5005) (HTTP $webapp)" "$([ "$webapp" = "200" ] && echo true || echo false)"
+# 7a. Generate PGP key
+api_post "$SECURITY_URL/api/security/keys/generate" '{
+    "keyName": "smoke-test-key",
+    "email": "smoke-test@lumina.1t.ru",
+    "passphrase": "test-passphrase-12345"
+}'
+check "Generate PGP key (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "201" ] && echo true || echo false)"
+PGP_KEY_ID=""
+if [ "$HTTP_CODE" = "201" ]; then
+    PGP_KEY_ID=$(echo "$HTTP_BODY" | jq -r '.data.id // empty' 2>/dev/null || echo "")
+fi
 
-nginx_web=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80 2>/dev/null)
-check "Nginx (port 80) (HTTP $nginx_web)" "$([ "$nginx_web" = "200" ] && echo true || echo false)"
+# 7b. List PGP keys
+api_get "$SECURITY_URL/api/security/keys"
+check "List PGP keys (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+check_contains "Keys response has data" "$HTTP_BODY" '"data"'
 
-# API proxy through WebApp nginx
-webapp_api=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5005/api/pipelines 2>/dev/null)
-check "WebApp API proxy → /api/pipelines (HTTP $webapp_api)" "$([ "$webapp_api" = "200" ] && echo true || echo false)"
+# 7c. Signing history
+api_get "$SECURITY_URL/api/security/signing/history"
+check "Signing history (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
 
-rabbitmq_mgmt=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:15672 2>/dev/null)
-check "RabbitMQ Management (HTTP $rabbitmq_mgmt)" "$([ "$rabbitmq_mgmt" = "200" ] && echo true || echo false)"
+# ============================================================
+# 8. Scanner Service (direct, no auth)
+# ============================================================
+section "🛡️ 8. Scanner Service"
 
-minio_console=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9001 2>/dev/null)
-check "MinIO Console (HTTP $minio_console)" "$([ "$minio_console" = "200" ] || [ "$minio_console" = "302" ] || [ "$minio_console" = "403" ] && echo true || echo false)"
+# 8a. Recent reports
+api_get "$SCANNER_URL/api/scanner/reports/recent"
+check "Recent scan reports (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
 
-echo ""
+# 8b. Trivy server (port 8081 on host → 8080 in container)
+TRIVY_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/api/v1/status 2>/dev/null)
+check "Trivy server (HTTP $TRIVY_CODE)" "$([ "$TRIVY_CODE" = "200" ] || [ "$TRIVY_CODE" = "404" ] && echo true || echo false)"
+
+# ============================================================
+# 9. Repository Service (direct, no auth)
+# ============================================================
+section "📁 9. Repository Service"
+
+# 9a. Create repository
+api_post "$REPO_URL/api/repository" '{
+    "name": "smoke-test-repo",
+    "displayName": "Smoke Test Repository",
+    "basePath": "/packages/smoke-test",
+    "arch": "x86_64",
+    "distribution": "el9",
+    "createdBy": "smoke-test"
+}'
+check "Create repository (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "409" ] && echo true || echo false)"
+TEST_REPO_ID=""
+if [ "$HTTP_CODE" = "201" ]; then
+    TEST_REPO_ID=$(echo "$HTTP_BODY" | jq -r '.data.id // empty' 2>/dev/null || echo "")
+fi
+
+# 9b. List repositories
+api_get "$REPO_URL/api/repository"
+check "List repositories (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+check_contains "Repositories response has data" "$HTTP_BODY" '"data"'
+
+# ============================================================
+# 10. API Gateway — Proxy Routes (requires JWT)
+# ============================================================
+section "🔀 10. API Gateway — Proxy Routes"
+
+if [ -n "$JWT_TOKEN" ]; then
+    api_get "$GATEWAY_URL/api/pipelines" "$JWT_TOKEN"
+    check "Gateway → /api/pipelines (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+
+    api_get "$GATEWAY_URL/api/builds" "$JWT_TOKEN"
+    check "Gateway → /api/builds (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+
+    api_get "$GATEWAY_URL/api/security/keys" "$JWT_TOKEN"
+    check "Gateway → /api/security/keys (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+
+    api_get "$GATEWAY_URL/api/scanner/reports/recent" "$JWT_TOKEN"
+    check "Gateway → /api/scanner/reports/recent (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+
+    api_get "$GATEWAY_URL/api/repository" "$JWT_TOKEN"
+    check "Gateway → /api/repository (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+else
+    skip "Gateway → /api/pipelines" "no JWT token"
+    skip "Gateway → /api/builds" "no JWT token"
+    skip "Gateway → /api/security/keys" "no JWT token"
+    skip "Gateway → /api/scanner/reports/recent" "no JWT token"
+    skip "Gateway → /api/repository" "no JWT token"
+fi
+
+# Webhook route is anonymous (no auth needed)
+if [ -n "$GIT_PIPE_ID" ]; then
+    api_post "$GATEWAY_URL/api/webhooks/$GIT_PIPE_ID" '{
+        "ref": "refs/heads/main",
+        "repository": {"clone_url": "https://github.com/example/test-repo.git"},
+        "head_commit": {"id": "abc789", "author": {"username": "gw-test"}}
+    }'
+    check "Gateway → /api/webhooks (anonymous) (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+fi
+
+# Gateway without auth → should be 401
+api_get "$GATEWAY_URL/api/pipelines"
+check "Gateway without auth → 401 (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "401" ] && echo true || echo false)"
+
+# ============================================================
+# 11. Web UI & Nginx Proxy
+# ============================================================
+section "🖥️ 11. Web UI & Consoles"
+
+# 11a. Nginx (port 80) — serves Blazor via proxy to webapp container
+NGINX_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$NGINX_URL" 2>/dev/null)
+check "Nginx (port 80) (HTTP $NGINX_CODE)" "$([ "$NGINX_CODE" = "200" ] && echo true || echo false)"
+
+# 11b. WebApp container directly (serves Blazor static files)
+WEBAPP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$WEBAPP_URL" 2>/dev/null)
+check "WebApp (port 5005) (HTTP $WEBAPP_CODE)" "$([ "$WEBAPP_CODE" = "200" ] && echo true || echo false)"
+
+# 11c. Nginx API proxy (proxies /api/ to gateway, needs JWT)
+if [ -n "$JWT_TOKEN" ]; then
+    NGINX_API_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $JWT_TOKEN" "$NGINX_URL/api/pipelines" 2>/dev/null)
+    check "Nginx → /api/pipelines (with JWT) (HTTP $NGINX_API_CODE)" "$([ "$NGINX_API_CODE" = "200" ] && echo true || echo false)"
+else
+    skip "Nginx API proxy test" "no JWT token"
+fi
+
+# 11d. WebApp API proxy (proxies /api/ to gateway, needs JWT)
+if [ -n "$JWT_TOKEN" ]; then
+    WEBAPP_API_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $JWT_TOKEN" "$WEBAPP_URL/api/pipelines" 2>/dev/null)
+    check "WebApp → /api/pipelines (with JWT) (HTTP $WEBAPP_API_CODE)" "$([ "$WEBAPP_API_CODE" = "200" ] && echo true || echo false)"
+else
+    skip "WebApp API proxy test" "no JWT token"
+fi
+
+# 11e. Management consoles
+RABBIT_MGMT=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:15672 2>/dev/null)
+check "RabbitMQ Management (HTTP $RABBIT_MGMT)" "$([ "$RABBIT_MGMT" = "200" ] && echo true || echo false)"
+
+MINIO_CONSOLE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9001 2>/dev/null)
+check "MinIO Console (HTTP $MINIO_CONSOLE)" "$([ "$MINIO_CONSOLE" = "200" ] || [ "$MINIO_CONSOLE" = "302" ] || [ "$MINIO_CONSOLE" = "403" ] && echo true || echo false)"
 
 # ============================================================
 # Summary
 # ============================================================
-echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}   Results: ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}, $TOTAL total"
-echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
+echo ""
+echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+echo -e "${CYAN}   Results: ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}, ${YELLOW}$SKIP skipped${NC}, $TOTAL total"
+echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
 
 if [ "$FAIL" -gt 0 ]; then
     echo -e "${RED}   Some tests failed! Check logs above.${NC}"

@@ -64,6 +64,12 @@ public class LuminaApiService
         return await resp.Content.ReadFromJsonAsync<ApiResponse<BuildJobResponse>>();
     }
 
+    public async Task<ApiResponse<BuildJobResponse>?> TriggerAutoBuildAsync(Guid pipelineId, string triggeredBy = "auto")
+    {
+        var resp = await _http.PostAsJsonAsync($"/api/pipelines/{pipelineId}/trigger-auto", new TriggerAutoBuildRequest(triggeredBy));
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<BuildJobResponse>>();
+    }
+
     // === Security ===
     public async Task<ApiResponse<HashListResponse>?> GetHashRecordsAsync(int page = 1)
     {

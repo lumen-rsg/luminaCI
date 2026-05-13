@@ -43,4 +43,21 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='build' AND table_name='pipelines' AND column_name='BuildImage') THEN
         ALTER TABLE build.pipelines ADD COLUMN "BuildImage" text NULL;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='build' AND table_name='pipelines' AND column_name='GitUsername') THEN
+        ALTER TABLE build.pipelines ADD COLUMN "GitUsername" text NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='build' AND table_name='pipelines' AND column_name='GitToken') THEN
+        ALTER TABLE build.pipelines ADD COLUMN "GitToken" text NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='build' AND table_name='pipelines' AND column_name='Tags') THEN
+        ALTER TABLE build.pipelines ADD COLUMN "Tags" text[] DEFAULT '{}';
+    END IF;
+END$$;
+
+-- Add Configuration hstore column to pipeline_steps (idempotent)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='build' AND table_name='pipeline_steps' AND column_name='Configuration') THEN
+        ALTER TABLE build.pipeline_steps ADD COLUMN "Configuration" hstore DEFAULT '';
+    END IF;
 END$$;

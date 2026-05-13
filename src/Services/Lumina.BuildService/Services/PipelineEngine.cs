@@ -34,6 +34,9 @@ public class PipelineEngine
             SpecPath = request.SpecPath,
             WebhookSecret = request.WebhookSecret,
             BuildImage = request.BuildImage,
+            GitUsername = request.GitUsername,
+            GitToken = request.GitToken,
+            Tags = request.Tags ?? new List<string>(),
             Steps = request.Steps.Select((s, i) => new PipelineStep
             {
                 Id = Guid.NewGuid(),
@@ -60,14 +63,41 @@ public class PipelineEngine
         if (pipeline == null)
             throw new InvalidOperationException($"Pipeline {pipelineId} not found");
 
+        // Auto-populate SourceUrl from pipeline git config if not provided
+        var sourceUrl = request.SourceUrl;
+        var specContent = request.SpecContent;
+        var specName = request.SpecName;
+
+        if (string.IsNullOrWhiteSpace(sourceUrl) && !string.IsNullOrWhiteSpace(pipeline.GitRepoUrl))
+        {
+            var branch = pipeline.GitBranch ?? "main";
+            var specPath = pipeline.SpecPath ?? $"{pipeline.Name}.spec";
+            sourceUrl = $"git://{pipeline.GitRepoUrl}#branch={branch}&specPath={specPath}";
+            _logger.LogInformation("Auto-populated SourceUrl from pipeline config: {SourceUrl}", sourceUrl);
+        }
+
+        // Auto-determine spec name from pipeline config
+        if (string.IsNullOrWhiteSpace(specName) || specName == "package.spec")
+        {
+            specName = !string.IsNullOrEmpty(pipeline.SpecPath)
+                ? Path.GetFileName(pipeline.SpecPath)
+                : $"{pipeline.Name}.spec";
+        }
+
+        // If source is from git, spec content will be read from the cloned repo
+        if (!string.IsNullOrWhiteSpace(sourceUrl) && sourceUrl.StartsWith("git://") && string.IsNullOrWhiteSpace(specContent))
+        {
+            specContent = string.Empty; // Will be read from cloned repo
+        }
+
         var job = new BuildJob
         {
             Id = Guid.NewGuid(),
             PipelineId = pipelineId,
             Status = BuildStatus.Queued,
-            SpecName = request.SpecName,
-            SpecContent = request.SpecContent ?? string.Empty,
-            SourceUrl = request.SourceUrl ?? string.Empty,
+            SpecName = specName,
+            SpecContent = specContent ?? string.Empty,
+            SourceUrl = sourceUrl ?? string.Empty,
             TriggeredBy = request.TriggeredBy,
             CreatedAt = DateTime.UtcNow
         };
@@ -83,7 +113,8 @@ public class PipelineEngine
         {
             try
             {
-                await _dockerBuild.StartBuildAsync(job, request.SpecContent, request.SourceUrl, pipeline.BuildImage);
+                await _dockerBuild.StartBuildAsync(job, specContent, sourceUrl, pipeline.BuildImage,
+                    pipeline.GitUsername, pipeline.GitToken);
             }
             catch (Exception ex)
             {
@@ -95,14 +126,46 @@ public class PipelineEngine
         return job;
     }
 
-    public async Task<List<Pipeline>> ListPipelinesAsync(int page = 1, int pageSize = 20)
+    /// <summary>
+    /// Trigger a build using only the pipeline's configured git settings.
+    /// No spec content or source URL needed — everything comes from the git repo.
+    /// </summary>
+    public async Task<BuildJob> TriggerAutoBuildAsync(Guid pipelineId, string triggeredBy)
     {
-        return await _db.Pipelines
+        var pipeline = await _db.Pipelines
+            .Include(p => p.Steps)
+            .FirstOrDefaultAsync(p => p.Id == pipelineId);
+
+        if (pipeline == null)
+            throw new InvalidOperationException($"Pipeline {pipelineId} not found");
+
+        if (string.IsNullOrWhiteSpace(pipeline.GitRepoUrl))
+            throw new InvalidOperationException($"Pipeline {pipelineId} has no Git repository URL configured. Cannot auto-build.");
+
+        var branch = pipeline.GitBranch ?? "main";
+        var specPath = pipeline.SpecPath ?? $"{pipeline.Name}.spec";
+        var specName = Path.GetFileName(specPath);
+
+        var request = new Shared.DTOs.TriggerBuildRequest(
+            specName,
+            string.Empty,  // Spec will be read from cloned repo
+            $"git://{pipeline.GitRepoUrl}#branch={branch}&specPath={specPath}",
+            triggeredBy
+        );
+
+        return await TriggerBuildAsync(pipelineId, request);
+    }
+
+    public async Task<(List<Pipeline> Items, int TotalCount)> ListPipelinesAsync(int page = 1, int pageSize = 20)
+    {
+        var totalCount = await _db.Pipelines.CountAsync();
+        var items = await _db.Pipelines
             .Include(p => p.Steps)
             .OrderByDescending(p => p.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
+        return (items, totalCount);
     }
 
     public async Task<Pipeline?> GetPipelineAsync(Guid id)
@@ -119,13 +182,15 @@ public class PipelineEngine
             .FirstOrDefaultAsync(b => b.Id == id);
     }
 
-    public async Task<List<BuildJob>> ListBuildJobsAsync(int page = 1, int pageSize = 20)
+    public async Task<(List<BuildJob> Items, int TotalCount)> ListBuildJobsAsync(int page = 1, int pageSize = 20)
     {
-        return await _db.BuildJobs
+        var totalCount = await _db.BuildJobs.CountAsync();
+        var items = await _db.BuildJobs
             .OrderByDescending(b => b.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
+        return (items, totalCount);
     }
 
     public async Task<List<BuildJob>> GetActiveBuildsAsync()

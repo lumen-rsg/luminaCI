@@ -20,6 +20,10 @@ public class Pipeline
     public string? SpecPath { get; set; }  // Path to .spec file in repo, e.g. "pkg/my-package.spec"
     public string? WebhookSecret { get; set; }
 
+    // Git credentials (for private repositories)
+    public string? GitUsername { get; set; }
+    public string? GitToken { get; set; }  // Personal Access Token or deploy key password
+
     // Build configuration
     public string? BuildImage { get; set; }  // Docker image for builds, e.g. "lumina-rpm-build:latest" or "lumina-dotnet-build:latest"
 }

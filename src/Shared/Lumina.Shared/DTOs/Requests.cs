@@ -3,7 +3,7 @@ using Lumina.Shared.Models.Enums;
 namespace Lumina.Shared.DTOs;
 
 // Pipeline DTOs
-public record CreatePipelineRequest(string Name, string Description, List<CreatePipelineStepRequest> Steps, List<string> Tags, string? GitRepoUrl = null, string? GitBranch = null, string? SpecPath = null, string? WebhookSecret = null, string? BuildImage = null);
+public record CreatePipelineRequest(string Name, string Description, List<CreatePipelineStepRequest> Steps, List<string> Tags, string? GitRepoUrl = null, string? GitBranch = null, string? SpecPath = null, string? WebhookSecret = null, string? BuildImage = null, string? GitUsername = null, string? GitToken = null);
 
 public record UpdatePipelineRequest(string Name, string Description, List<CreatePipelineStepRequest> Steps, List<string> Tags);
 
@@ -11,6 +11,8 @@ public record CreatePipelineStepRequest(StepType Type, string Name, int Order, D
 
 // Build DTOs
 public record TriggerBuildRequest(string SpecName, string SpecContent, string? SourceUrl, string TriggeredBy);
+
+public record TriggerAutoBuildRequest(string TriggeredBy = "auto");
 
 public record CancelBuildRequest(string Reason);
 

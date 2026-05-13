@@ -35,6 +35,7 @@
             <div class="mb-3">
                 <label class="form-label">Git Repository URL</label>
                 <input type="text" class="form-control" @bind="_newGitRepoUrl" placeholder="https://github.com/example/my-package.git" />
+                <div class="form-text">If set, sources will be automatically cloned on each build</div>
             </div>
             <div class="row mb-3">
                 <div class="col-md-6">
@@ -50,6 +51,19 @@
                 <label class="form-label">Webhook Secret</label>
                 <input type="text" class="form-control" @bind="_newWebhookSecret" placeholder="Secret for webhook verification" />
                 <div class="form-text">Used to verify incoming webhook requests from GitHub/GitLab/Forgejo</div>
+            </div>
+            <hr />
+            <h6>🔐 Git Credentials (for private repositories)</h6>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">Git Username</label>
+                    <input type="text" class="form-control" @bind="_newGitUsername" placeholder="git-user or token name" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Git Token / Password</label>
+                    <input type="password" class="form-control" @bind="_newGitToken" placeholder="Personal Access Token" />
+                    <div class="form-text">Stored securely. Used for cloning private repositories.</div>
+                </div>
             </div>
             <hr />
             <h6>🐳 Build Environment</h6>
@@ -76,6 +90,13 @@
             <h4 class="mb-0">▶ Trigger Build — @_triggerPipelineName</h4>
         </div>
         <div class="card-body">
+            @if (_triggerPipelineHasGit)
+            {
+                <div class="alert alert-info">
+                    <strong>🔗 Git source configured!</strong> Sources will be automatically cloned from the git repository.
+                    You can override the Source URL below or leave it empty to use the pipeline's default.
+                </div>
+            }
             <div class="mb-3">
                 <label class="form-label">Package Spec Name</label>
                 <input type="text" class="form-control" @bind="_triggerSpecName" placeholder="my-package" />
@@ -83,10 +104,26 @@
             <div class="mb-3">
                 <label class="form-label">Source URL</label>
                 <input type="text" class="form-control" @bind="_triggerSourceUrl" placeholder="https://github.com/example/my-package/archive/v1.0.tar.gz" />
+                @if (_triggerPipelineHasGit)
+                {
+                    <div class="form-text">
+                        Leave empty to auto-clone from <code>@_triggerPipelineGitUrl</code> (branch: @_triggerPipelineGitBranch)
+                    </div>
+                }
+                else
+                {
+                    <div class="form-text">
+                        Git repository URL or direct link to source tarball. Leave empty if no external source needed.
+                    </div>
+                }
             </div>
             <div class="mb-3">
                 <label class="form-label">RPM Spec Content</label>
                 <textarea class="form-control font-monospace" rows="14" @bind="_triggerSpecContent" style="font-size: 0.85rem"></textarea>
+                @if (_triggerPipelineHasGit)
+                {
+                    <div class="form-text">Leave empty — spec will be read from the cloned git repository.</div>
+                }
             </div>
             <div class="mb-3">
                 <label class="form-label">Triggered By</label>
@@ -117,6 +154,7 @@
                     <th>Name</th>
                     <th>Description</th>
                     <th>Status</th>
+                    <th>Source</th>
                     <th>Steps</th>
                     <th>Created By</th>
                     <th>Created</th>
@@ -130,11 +168,29 @@
                         <td><strong>@pipeline.Name</strong></td>
                         <td class="text-muted">@pipeline.Description</td>
                         <td><span class="@GetPipelineStatusBadge(pipeline.Status)">@pipeline.Status</span></td>
-                        <td><span class="badge bg-info">@pipeline.StepCount</span></td>
+                        <td>
+                            @if (!string.IsNullOrEmpty(pipeline.GitRepoUrl))
+                            {
+                                <span class="badge bg-info" title="@pipeline.GitRepoUrl (@pipeline.GitBranch)">
+                                    🔗 @ExtractHost(pipeline.GitRepoUrl)
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">—</span>
+                            }
+                        </td>
+                        <td><span class="badge bg-secondary">@pipeline.StepCount</span></td>
                         <td>@pipeline.CreatedBy</td>
                         <td>@pipeline.CreatedAt.ToLocalTime().ToString("g")</td>
                         <td>
-                            <button class="btn btn-sm btn-outline-success me-1" @onclick="() => ShowTriggerDialog(pipeline.Id, pipeline.Name)" title="Trigger Build">
+                            @if (!string.IsNullOrEmpty(pipeline.GitRepoUrl))
+                            {
+                                <button class="btn btn-sm btn-success me-1" @onclick="() => AutoBuild(pipeline.Id, pipeline.Name)" title="Auto Build — fetch sources from git">
+                                    ⚡ Auto
+                                </button>
+                            }
+                            <button class="btn btn-sm btn-outline-success me-1" @onclick="() => ShowTriggerDialog(pipeline)" title="Manual Build">
                                 ▶ Run
                             </button>
                             <a href="/builds" class="btn btn-sm btn-outline-primary" title="View Builds">
@@ -177,11 +233,16 @@ else
     private string _newSpecPath = "";
     private string _newWebhookSecret = "";
     private string _newBuildImage = "";
+    private string _newGitUsername = "";
+    private string _newGitToken = "";
 
     // Trigger build dialog
     private bool _showTrigger = false;
     private Guid _triggerPipelineId;
     private string _triggerPipelineName = "";
+    private bool _triggerPipelineHasGit = false;
+    private string _triggerPipelineGitUrl = "";
+    private string _triggerPipelineGitBranch = "main";
     private string _triggerSpecName = "lumina-hello";
     private string _triggerSourceUrl = "";
     private string _triggeredBy = "admin";
@@ -244,7 +305,9 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             string.IsNullOrWhiteSpace(_newGitBranch) ? null : _newGitBranch,
             string.IsNullOrWhiteSpace(_newSpecPath) ? null : _newSpecPath,
             string.IsNullOrWhiteSpace(_newWebhookSecret) ? null : _newWebhookSecret,
-            string.IsNullOrWhiteSpace(_newBuildImage) ? null : _newBuildImage));
+            string.IsNullOrWhiteSpace(_newBuildImage) ? null : _newBuildImage,
+            string.IsNullOrWhiteSpace(_newGitUsername) ? null : _newGitUsername,
+            string.IsNullOrWhiteSpace(_newGitToken) ? null : _newGitToken));
         if (result?.Success == true)
         {
             _showCreate = false;
@@ -256,17 +319,83 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             _newSpecPath = "";
             _newWebhookSecret = "";
             _newBuildImage = "";
+            _newGitUsername = "";
+            _newGitToken = "";
             _pipelines = await Api.GetPipelinesAsync(1, 50);
         }
     }
 
-    private void ShowTriggerDialog(Guid pipelineId, string pipelineName)
+    private void ShowTriggerDialog(PipelineSummaryResponse pipeline)
     {
-        _triggerPipelineId = pipelineId;
-        _triggerPipelineName = pipelineName;
+        _triggerPipelineId = pipeline.Id;
+        _triggerPipelineName = pipeline.Name;
         _triggerSpecContent = _defaultSpec;
+        _triggerSourceUrl = "";
         _triggerMessage = null;
+
+        // We don't have full pipeline details in the summary — load them
+        _triggerPipelineHasGit = false;
+        _triggerPipelineGitUrl = "";
+        _triggerPipelineGitBranch = "main";
+
         _showTrigger = true;
+
+        // Load full pipeline details asynchronously
+        _ = LoadPipelineDetails(pipeline.Id);
+    }
+
+    private async Task LoadPipelineDetails(Guid pipelineId)
+    {
+        try
+        {
+            var detail = await Api.GetPipelineAsync(pipelineId);
+            if (detail?.Data != null)
+            {
+                _triggerPipelineHasGit = !string.IsNullOrEmpty(detail.Data.GitRepoUrl);
+                _triggerPipelineGitUrl = detail.Data.GitRepoUrl ?? "";
+                _triggerPipelineGitBranch = detail.Data.GitBranch ?? "main";
+
+                // Auto-fill spec name from pipeline config
+                if (!string.IsNullOrEmpty(detail.Data.SpecPath))
+                {
+                    _triggerSpecName = System.IO.Path.GetFileName(detail.Data.SpecPath);
+                }
+                else
+                {
+                    _triggerSpecName = $"{detail.Data.Name}.spec";
+                }
+
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load pipeline details for {PipelineId}", pipelineId);
+        }
+    }
+
+    private async Task AutoBuild(Guid pipelineId, string pipelineName)
+    {
+        try
+        {
+            var result = await Api.TriggerAutoBuildAsync(pipelineId, "admin");
+            if (result?.Success == true)
+            {
+                _triggerMessage = $"✅ Auto build triggered for '{pipelineName}'! Job ID: {result.Data?.Id}";
+                IsSuccess = true;
+            }
+            else
+            {
+                _triggerMessage = $"❌ Failed: {result?.Error ?? "Unknown error"}";
+                IsSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _triggerMessage = $"❌ Error: {ex.Message}";
+            IsSuccess = false;
+            Logger.LogError(ex, "Failed to auto-trigger pipeline {PipelineId}", pipelineId);
+        }
     }
 
     private async Task TriggerPipeline()
@@ -276,7 +405,7 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             var request = new TriggerBuildRequest(
                 _triggerSpecName,
                 _triggerSpecContent,
-                _triggerSourceUrl,
+                string.IsNullOrWhiteSpace(_triggerSourceUrl) ? null : _triggerSourceUrl,
                 _triggeredBy
             );
 
@@ -298,6 +427,19 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             _triggerMessage = $"❌ Error: {ex.Message}";
             IsSuccess = false;
             Logger.LogError(ex, "Failed to trigger pipeline");
+        }
+    }
+
+    private string ExtractHost(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            return uri.Host;
+        }
+        catch
+        {
+            return url.Length > 30 ? url[..30] + "…" : url;
         }
     }
 

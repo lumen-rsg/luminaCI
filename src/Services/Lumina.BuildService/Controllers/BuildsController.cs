@@ -22,10 +22,10 @@ public class BuildsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ApiResponse<BuildListResponse>>> List([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var builds = await _engine.ListBuildJobsAsync(page, pageSize);
+        var (builds, totalCount) = await _engine.ListBuildJobsAsync(page, pageSize);
         var response = new BuildListResponse(
             builds.Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy)).ToList(),
-            builds.Count, page, pageSize);
+            totalCount, page, pageSize);
         return Ok(new ApiResponse<BuildListResponse>(true, response, null, null));
     }
 
@@ -36,7 +36,8 @@ public class BuildsController : ControllerBase
         if (job == null) return NotFound(new ApiResponse<BuildJobResponse>(false, null, "Not found", null));
         var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId,
             job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy,
-            job.Artifacts.Select(a => new BuildArtifactResponse(a.Id, a.FileName, a.FileSize, a.HashSha256, a.HashMd5, a.PgpSignature, a.CveScanStatus)).ToList());
+            job.Artifacts.Select(a => new BuildArtifactResponse(a.Id, a.FileName, a.FileSize, a.HashSha256, a.HashMd5, a.PgpSignature, a.CveScanStatus)).ToList(),
+            job.SourceUrl);
         return Ok(new ApiResponse<BuildJobResponse>(true, response, null, null));
     }
 

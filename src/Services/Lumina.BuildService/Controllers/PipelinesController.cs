@@ -20,10 +20,10 @@ public class PipelinesController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PipelineListResponse>>> List([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var pipelines = await _engine.ListPipelinesAsync(page, pageSize);
+        var (pipelines, totalCount) = await _engine.ListPipelinesAsync(page, pageSize);
         var response = new PipelineListResponse(
-            pipelines.Select(p => new PipelineSummaryResponse(p.Id, p.Name, p.Description, p.Status, p.CreatedBy, p.CreatedAt, p.Steps.Count)).ToList(),
-            pipelines.Count, page, pageSize);
+            pipelines.Select(p => new PipelineSummaryResponse(p.Id, p.Name, p.Description, p.Status, p.CreatedBy, p.CreatedAt, p.Steps.Count, p.GitRepoUrl, p.GitBranch)).ToList(),
+            totalCount, page, pageSize);
         return Ok(new ApiResponse<PipelineListResponse>(true, response, null, null));
     }
 
@@ -35,7 +35,8 @@ public class PipelinesController : ControllerBase
         var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
         var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
             p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
-            p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage);
+            p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
+            p.GitUsername, !string.IsNullOrEmpty(p.GitToken));
         return Ok(new ApiResponse<PipelineResponse>(true, response, null, null));
     }
 
@@ -46,7 +47,8 @@ public class PipelinesController : ControllerBase
         var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
         var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
             p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
-            p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage);
+            p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
+            p.GitUsername, !string.IsNullOrEmpty(p.GitToken));
         return CreatedAtAction(nameof(Get), new { id = p.Id }, new ApiResponse<PipelineResponse>(true, response, null, "Pipeline created"));
     }
 
@@ -54,7 +56,27 @@ public class PipelinesController : ControllerBase
     public async Task<ActionResult<ApiResponse<BuildJobResponse>>> Trigger(Guid id, [FromBody] TriggerBuildRequest request)
     {
         var job = await _engine.TriggerBuildAsync(id, request);
-        var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, []);
+        var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl);
         return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Build triggered"));
+    }
+
+    /// <summary>
+    /// Trigger an automatic build using the pipeline's configured git repository.
+    /// No request body needed — sources are fetched from git automatically.
+    /// </summary>
+    [HttpPost("{id:guid}/trigger-auto")]
+    public async Task<ActionResult<ApiResponse<BuildJobResponse>>> TriggerAuto(Guid id, [FromBody] TriggerAutoBuildRequest? request = null)
+    {
+        try
+        {
+            var triggeredBy = request?.TriggeredBy ?? "auto";
+            var job = await _engine.TriggerAutoBuildAsync(id, triggeredBy);
+            var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl);
+            return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Auto build triggered — sources will be fetched from git"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<BuildJobResponse>(false, null, ex.Message, null));
+        }
     }
 }

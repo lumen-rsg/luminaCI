@@ -21,6 +21,9 @@ public class BuildDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(256);
             entity.Property(e => e.CreatedBy).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.GitUsername).HasMaxLength(256);
+            entity.Property(e => e.GitToken).HasMaxLength(512);
+            entity.Property(e => e.Tags).HasColumnType("text[]");
             entity.HasMany(e => e.Steps).WithOne(e => e.Pipeline).HasForeignKey(e => e.PipelineId).OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -29,6 +32,7 @@ public class BuildDbContext : DbContext
             entity.ToTable("pipeline_steps", "build");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.Configuration).HasColumnType("hstore");
         });
 
         modelBuilder.Entity<BuildJob>(entity =>

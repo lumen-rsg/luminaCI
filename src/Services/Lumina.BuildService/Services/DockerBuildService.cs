@@ -29,7 +29,7 @@ public class DockerBuildService
         _docker = new DockerClientConfiguration(new Uri(dockerUrl)).CreateClient();
     }
 
-    public async Task<BuildJob> StartBuildAsync(BuildJob job, string specContent, string? sourceUrl, string? buildImage = null)
+    public async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null)
     {
         var imageName = !string.IsNullOrWhiteSpace(buildImage) ? buildImage : "lumina-rpm-build:latest";
         _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName}) with image {Image}", job.Id, job.SpecName, imageName);
@@ -55,6 +55,13 @@ public class DockerBuildService
 
             if (!string.IsNullOrEmpty(sourceUrl))
                 envVars.Add($"SOURCE_URL={sourceUrl}");
+
+            // Pass git credentials for private repositories
+            if (!string.IsNullOrEmpty(gitUsername))
+                envVars.Add($"GIT_USERNAME={gitUsername}");
+
+            if (!string.IsNullOrEmpty(gitToken))
+                envVars.Add($"GIT_TOKEN={gitToken}");
 
             var createParams = new CreateContainerParameters
             {

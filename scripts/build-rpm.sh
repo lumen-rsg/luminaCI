@@ -9,6 +9,8 @@
 #   ARTIFACTS_DIR — Output directory for built RPMs
 #   BUILD_JOB_ID  — Build job ID for tracking
 #   AUTO_DOWNLOAD — Set to "true" to auto-download Source0/Source1 from spec (default: true)
+#   GIT_USERNAME  — Username for private git repositories (optional)
+#   GIT_TOKEN     — Personal Access Token / password for git auth (optional)
 
 set -euo pipefail
 
@@ -143,14 +145,38 @@ if [ -n "${SOURCE_URL:-}" ]; then
         done
 
         echo "Cloning: ${GIT_REPO} (branch: ${GIT_BRANCH}, commit: ${GIT_COMMIT:-latest})"
+
+        # Inject credentials into URL for private repositories
+        AUTH_REPO="${GIT_REPO}"
+        if [ -n "${GIT_USERNAME:-}" ] && [ -n "${GIT_TOKEN:-}" ]; then
+            # Handle various URL formats: https://host/path, https://host:port/path, http://...
+            if [[ "${GIT_REPO}" =~ ^https://([^/]+)(/.*)$ ]]; then
+                AUTH_REPO="https://${GIT_USERNAME}:${GIT_TOKEN}@${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+                echo "Using authenticated git URL (username: ${GIT_USERNAME})"
+            elif [[ "${GIT_REPO}" =~ ^http://([^/]+)(/.*)$ ]]; then
+                AUTH_REPO="http://${GIT_USERNAME}:${GIT_TOKEN}@${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+                echo "Using authenticated git URL (username: ${GIT_USERNAME})"
+            else
+                echo "Warning: Cannot inject credentials for non-HTTPS URL: ${GIT_REPO}"
+            fi
+        fi
+
         CLONE_DIR=$(mktemp -d)
-        git clone --depth 50 --branch "${GIT_BRANCH}" "${GIT_REPO}" "${CLONE_DIR}/repo" || {
+        git clone --depth 50 --branch "${GIT_BRANCH}" "${AUTH_REPO}" "${CLONE_DIR}/repo" || {
             echo "ERROR: git clone failed"
             exit 1
         }
 
         if [ -n "${GIT_COMMIT}" ]; then
             cd "${CLONE_DIR}/repo" && git checkout "${GIT_COMMIT}" 2>/dev/null || echo "Warning: could not checkout ${GIT_COMMIT}"
+            cd /
+        fi
+
+        # Initialize git submodules if present
+        if [ -f "${CLONE_DIR}/repo/.gitmodules" ]; then
+            echo "Initializing git submodules..."
+            cd "${CLONE_DIR}/repo"
+            git submodule update --init --recursive 2>/dev/null || echo "Warning: submodule initialization failed"
             cd /
         fi
 

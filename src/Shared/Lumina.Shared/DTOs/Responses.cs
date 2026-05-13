@@ -6,16 +6,16 @@ namespace Lumina.Shared.DTOs;
 public record ApiResponse<T>(bool Success, T? Data, string? Error, string? Message);
 
 // Pipeline Responses
-public record PipelineResponse(Guid Id, string Name, string Description, PipelineStatus Status, List<PipelineStepResponse> Steps, string CreatedBy, DateTime CreatedAt, DateTime UpdatedAt, List<string> Tags, string? GitRepoUrl, string? GitBranch, string? SpecPath, string? WebhookUrl, string? BuildImage);
+public record PipelineResponse(Guid Id, string Name, string Description, PipelineStatus Status, List<PipelineStepResponse> Steps, string CreatedBy, DateTime CreatedAt, DateTime UpdatedAt, List<string> Tags, string? GitRepoUrl, string? GitBranch, string? SpecPath, string? WebhookUrl, string? BuildImage, string? GitUsername, bool HasGitToken);
 
 public record PipelineStepResponse(Guid Id, StepType Type, string Name, int Order, StepStatus Status, Dictionary<string, string> Configuration);
 
 public record PipelineListResponse(List<PipelineSummaryResponse> Pipelines, int TotalCount, int Page, int PageSize);
 
-public record PipelineSummaryResponse(Guid Id, string Name, string Description, PipelineStatus Status, string CreatedBy, DateTime CreatedAt, int StepCount);
+public record PipelineSummaryResponse(Guid Id, string Name, string Description, PipelineStatus Status, string CreatedBy, DateTime CreatedAt, int StepCount, string? GitRepoUrl = null, string? GitBranch = null);
 
 // Build Responses
-public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts);
+public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null);
 
 public record BuildArtifactResponse(Guid Id, string FileName, long FileSize, string? HashSha256, string? HashMd5, string? PgpSignature, ScanStatus CveScanStatus);
 

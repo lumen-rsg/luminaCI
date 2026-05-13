@@ -55,6 +55,23 @@ else
                             <td class="text-muted">Triggered By:</td>
                             <td>@build.TriggeredBy</td>
                         </tr>
+                        @if (!string.IsNullOrEmpty(build.SourceUrl))
+                        {
+                            <tr>
+                                <td class="text-muted">Source URL:</td>
+                                <td>
+                                    @if (build.SourceUrl.StartsWith("git://"))
+                                    {
+                                        <span class="badge bg-info me-1">🔗 Git</span>
+                                        <code style="font-size:0.85em">@build.SourceUrl</code>
+                                    }
+                                    else
+                                    {
+                                        <a href="@build.SourceUrl" target="_blank" class="text-break">@build.SourceUrl</a>
+                                    }
+                                </td>
+                            </tr>
+                        }
                         @if (!string.IsNullOrEmpty(build.ContainerId))
                         {
                             <tr>
@@ -231,12 +248,12 @@ else
         // In Blazor SSR, clipboard API requires JS interop — simplified for now
     }
 
-    private string FormatFileSize(long bytes) => bytes switch
+    private string FormatFileSize(long bytes)
     {
-        < 1024 => $"{bytes} B",
-        < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
-        _ => $"{bytes / (1024.0 * 1024.0):F1} MB"
-    };
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        return $"{bytes / (1024.0 * 1024.0):F1} MB";
+    }
 
     private string GetStatusBorderClass(BuildStatus s) => s switch
     {
