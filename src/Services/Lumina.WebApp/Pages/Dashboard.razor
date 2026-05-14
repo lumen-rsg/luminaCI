@@ -6,57 +6,172 @@
 
 <PageTitle>Dashboard — Lumina CI</PageTitle>
 
-<h1 style="margin-bottom: 1.5rem;">🏗️ Lumina CI Dashboard</h1>
-
-<div class="stats-grid">
-    <div class="stat-card">
-        <div class="stat-icon">📦</div>
-        <div class="stat-value">@(_buildQueue?.Data?.QueuedCount ?? 0)</div>
-        <div class="stat-label">In Queue</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-icon">⚡</div>
-        <div class="stat-value">@(_buildQueue?.Data?.RunningCount ?? 0)</div>
-        <div class="stat-label">Building</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-icon">✅</div>
-        <div class="stat-value">@(_builds?.Data?.Builds.Count(b => b.Status == BuildStatus.Success) ?? 0)</div>
-        <div class="stat-label">Completed</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-icon">❌</div>
-        <div class="stat-value">@(_builds?.Data?.Builds.Count(b => b.Status == BuildStatus.Failed) ?? 0)</div>
-        <div class="stat-label">Failed</div>
+<div class="page-header">
+    <h1>🏠 Dashboard</h1>
+    <div class="page-header-actions">
+        <a href="/pipelines" class="btn btn-outline-success">▶ New Build</a>
+        <button class="btn btn-outline-secondary" @onclick="RefreshAll">🔄 Refresh</button>
     </div>
 </div>
 
+<!-- Stats -->
+<div class="stats-grid animate-slide-in">
+    <div class="stat-card">
+        <div class="stat-icon blue">📦</div>
+        <div class="stat-info">
+            <div class="stat-value">@(_buildQueue?.Data?.QueuedCount ?? 0)</div>
+            <div class="stat-label">In Queue</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon yellow">⚡</div>
+        <div class="stat-info">
+            <div class="stat-value">@(_buildQueue?.Data?.RunningCount ?? 0)</div>
+            <div class="stat-label">Building</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon green">✅</div>
+        <div class="stat-info">
+            <div class="stat-value">@(_successCount)</div>
+            <div class="stat-label">Completed</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon red">❌</div>
+        <div class="stat-info">
+            <div class="stat-value">@(_failedCount)</div>
+            <div class="stat-label">Failed</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon purple">📈</div>
+        <div class="stat-info">
+            <div class="stat-value">@(_successRate)%</div>
+            <div class="stat-label">Success Rate</div>
+        </div>
+    </div>
+</div>
+
+<!-- Build Trend Graph -->
+@if (_builds?.Data?.Builds != null && _builds.Data.Builds.Any())
+{
+    <div class="card mb-4 animate-slide-in">
+        <div class="card-header">
+            <h3>📊 Build Trend</h3>
+            <span class="text-xs text-muted">Last @(_builds.Data.Builds.Take(20).Count()) builds</span>
+        </div>
+        <div class="card-body">
+            <div class="build-health" style="height:40px;">
+                @foreach (var build in _builds.Data.Builds.Take(20).Reverse())
+                {
+                    var height = build.Status == BuildStatus.Success ? 40 : build.Status == BuildStatus.Failed ? 40 : 25;
+                    var css = build.Status switch
+                    {
+                        BuildStatus.Success => "success",
+                        BuildStatus.Failed => "failed",
+                        BuildStatus.Building => "running",
+                        _ => "queued"
+                    };
+                    <div class="health-bar @css" style="height:@(height)px;" title="@build.SpecName — @build.Status (@build.CreatedAt.ToLocalTime().ToString("g"))"></div>
+                }
+            </div>
+            <div class="d-flex justify-content-between mt-2">
+                <span class="text-xs text-muted">Oldest</span>
+                <span class="text-xs text-muted">Newest</span>
+            </div>
+        </div>
+    </div>
+}
+
 <div class="row">
+    <!-- Executors -->
     <div class="col-md-8">
-        <div class="card">
+        <div class="card animate-slide-in">
             <div class="card-header">
-                <h3>Recent Builds</h3>
+                <h3>⚡ Executors</h3>
+                <span class="text-xs text-muted">@(_buildQueue?.Data?.RunningCount ?? 0) running</span>
             </div>
             <div class="card-body">
+                @if (_buildQueue?.Data?.Running != null && _buildQueue.Data.Running.Any())
+                {
+                    foreach (var b in _buildQueue.Data.Running)
+                    {
+                        <div class="queue-item running building-pulse">
+                            <div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="spinner-border spinner-border-sm"></span>
+                                    <strong class="text-bright">@b.SpecName</strong>
+                                </div>
+                                <div class="text-xs text-muted mt-1">
+                                    Started @b.CreatedAt.ToLocalTime().ToString("HH:mm:ss")
+                                    <span class="ms-2">@GetElapsedTime(b.CreatedAt)</span>
+                                </div>
+                            </div>
+                            <a href="/builds/@b.Id" class="btn btn-sm btn-outline-primary">View</a>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="text-center p-4 text-muted">
+                        <div style="font-size:2rem;opacity:0.3;margin-bottom:8px;">💤</div>
+                        <div>No builds running</div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Recent Builds -->
+        <div class="card animate-slide-in">
+            <div class="card-header">
+                <h3>📋 Build History</h3>
+                <a href="/builds" class="text-xs">View all →</a>
+            </div>
+            <div class="card-body p-0">
                 @if (_builds?.Data?.Builds != null && _builds.Data.Builds.Any())
                 {
-                    <table class="table">
+                    <table class="table table-hover table-striped">
                         <thead>
                             <tr>
-                                <th>Spec</th>
+                                <th style="width:6px;padding:0;"></th>
+                                <th>Build</th>
                                 <th>Status</th>
                                 <th>Triggered By</th>
-                                <th>Created</th>
+                                <th>Time</th>
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var build in _builds.Data.Builds.Take(10))
+                            @foreach (var build in _builds.Data.Builds.Take(15))
                             {
-                                <tr>
-                                    <td><code>@build.SpecName</code></td>
-                                    <td><span class="@GetStatusBadgeClass(build.Status)">@build.Status</span></td>
-                                    <td>@build.TriggeredBy</td>
-                                    <td>@build.CreatedAt.ToLocalTime().ToString("g")</td>
+                                var statusColor = build.Status switch
+                                {
+                                    BuildStatus.Success => "var(--accent-green)",
+                                    BuildStatus.Failed => "var(--accent-red)",
+                                    BuildStatus.Building => "var(--accent)",
+                                    BuildStatus.Queued => "var(--accent-yellow)",
+                                    _ => "var(--border-light)"
+                                };
+                                <tr onclick="window.location.href='/builds/@build.Id'" style="cursor:pointer;">
+                                    <td style="width:6px;padding:0;background:@statusColor;"></td>
+                                    <td>
+                                        <code>@build.Id.ToString()[..8]</code>
+                                        <div class="text-xs text-muted">@build.SpecName</div>
+                                    </td>
+                                    <td>
+                                        @if (build.Status == BuildStatus.Building)
+                                        {
+                                            <span class="badge bg-primary building-pulse">
+                                                <span class="badge-dot blue"></span> Building
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="@GetStatusBadgeClass(build.Status)">@build.Status</span>
+                                        }
+                                    </td>
+                                    <td class="text-sm">@build.TriggeredBy</td>
+                                    <td class="text-sm text-muted">@build.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
                                 </tr>
                             }
                         </tbody>
@@ -64,40 +179,91 @@
                 }
                 else
                 {
-                    <p class="text-muted">No builds yet. Create a pipeline and trigger a build!</p>
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📦</div>
+                        <h3>No builds yet</h3>
+                        <p>Create a pipeline and trigger a build to get started.</p>
+                    </div>
                 }
             </div>
         </div>
     </div>
+
+    <!-- Build Queue -->
     <div class="col-md-4">
-        <div class="card">
+        <div class="card animate-slide-in">
             <div class="card-header">
-                <h3>Build Queue</h3>
+                <h3>📥 Build Queue</h3>
+                <span class="badge bg-warning">@(_buildQueue?.Data?.QueuedCount ?? 0)</span>
             </div>
             <div class="card-body">
                 @if (_buildQueue?.Data != null)
                 {
-                    <h5>Running (@_buildQueue.Data.RunningCount)</h5>
-                    foreach (var b in _buildQueue.Data.Running)
+                    if (_buildQueue.Data.Running.Any())
                     {
-                        <div class="queue-item running">
-                            <strong>@b.SpecName</strong>
-                            <small>started @b.CreatedAt.ToLocalTime().ToString("t")</small>
-                        </div>
+                        <div class="section-title">Running</div>
+                        foreach (var b in _buildQueue.Data.Running)
+                        {
+                            <div class="queue-item running">
+                                <div>
+                                    <strong class="text-bright">@b.SpecName</strong>
+                                    <div class="text-xs text-muted">started @b.CreatedAt.ToLocalTime().ToString("t")</div>
+                                </div>
+                                <a href="/builds/@b.Id" class="btn btn-sm btn-outline-primary">View</a>
+                            </div>
+                        }
                     }
-                    <h5 class="mt-3">Queued (@_buildQueue.Data.QueuedCount)</h5>
-                    foreach (var b in _buildQueue.Data.Queued)
+                    if (_buildQueue.Data.Queued.Any())
                     {
-                        <div class="queue-item queued">
-                            <strong>@b.SpecName</strong>
-                            <small>queued @b.CreatedAt.ToLocalTime().ToString("t")</small>
-                        </div>
+                        <div class="section-title mt-3">Queued</div>
+                        foreach (var b in _buildQueue.Data.Queued)
+                        {
+                            <div class="queue-item queued">
+                                <div>
+                                    <strong class="text-bright">@b.SpecName</strong>
+                                    <div class="text-xs text-muted">queued @b.CreatedAt.ToLocalTime().ToString("t")</div>
+                                </div>
+                                <a href="/builds/@b.Id" class="btn btn-sm btn-outline-secondary">View</a>
+                            </div>
+                        }
                     }
-                    if (_buildQueue.Data.QueuedCount == 0 && _buildQueue.Data.RunningCount == 0)
+                    if (!_buildQueue.Data.Queued.Any() && !_buildQueue.Data.Running.Any())
                     {
-                        <p class="text-muted">Queue is empty</p>
+                        <div class="text-center p-3 text-muted">
+                            <div style="font-size:1.5rem;opacity:0.3;">✓</div>
+                            <div class="text-sm">Queue is empty</div>
+                        </div>
                     }
                 }
+            </div>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="card animate-slide-in">
+            <div class="card-header">
+                <h3>📈 Statistics</h3>
+            </div>
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <span class="text-sm">Total Builds</span>
+                    <strong class="text-bright">@(_builds?.Data?.TotalCount ?? 0)</strong>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <span class="text-sm">Successful</span>
+                    <strong class="text-success">@_successCount</strong>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <span class="text-sm">Failed</span>
+                    <strong class="text-danger">@_failedCount</strong>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <span class="text-sm">Success Rate</span>
+                    <strong class="text-bright">@_successRate%</strong>
+                </div>
+                <div class="progress mt-2" style="height:8px;">
+                    <div class="progress-bar bg-success" style="width:@_successRate%"></div>
+                    <div class="progress-bar bg-danger" style="width:@(100 - _successRate)%"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -106,17 +272,21 @@
 @code {
     private ApiResponse<BuildListResponse>? _builds;
     private ApiResponse<BuildQueueResponse>? _buildQueue;
+    private int _successCount = 0;
+    private int _failedCount = 0;
+    private int _successRate = 0;
 
     protected override async Task OnInitializedAsync()
     {
+        await RefreshAll();
+    }
+
+    private async Task RefreshAll()
+    {
         try
         {
-            var tasks = new List<Task>
-            {
-                LoadBuildsAsync(),
-                LoadQueueAsync()
-            };
-            await Task.WhenAll(tasks);
+            await Task.WhenAll(LoadBuildsAsync(), LoadQueueAsync());
+            ComputeStats();
         }
         catch (Exception ex)
         {
@@ -124,16 +294,33 @@
         }
     }
 
-    private async Task LoadBuildsAsync() => _builds = await Api.GetBuildsAsync(1, 20);
+    private async Task LoadBuildsAsync() => _builds = await Api.GetBuildsAsync(1, 30);
     private async Task LoadQueueAsync() => _buildQueue = await Api.GetBuildQueueAsync();
+
+    private void ComputeStats()
+    {
+        if (_builds?.Data?.Builds == null) return;
+        _successCount = _builds.Data.Builds.Count(b => b.Status == BuildStatus.Success);
+        _failedCount = _builds.Data.Builds.Count(b => b.Status == BuildStatus.Failed);
+        var total = _successCount + _failedCount;
+        _successRate = total > 0 ? (int)Math.Round((double)_successCount / total * 100) : 0;
+    }
+
+    private string GetElapsedTime(DateTime createdAt)
+    {
+        var elapsed = DateTime.UtcNow - createdAt;
+        if (elapsed.TotalMinutes < 1) return $"{(int)elapsed.TotalSeconds}s";
+        if (elapsed.TotalHours < 1) return $"{(int)elapsed.TotalMinutes}m {(int)elapsed.Seconds}s";
+        return $"{(int)elapsed.TotalHours}h {(int)elapsed.Minutes}m";
+    }
 
     private string GetStatusBadgeClass(BuildStatus status) => status switch
     {
-        BuildStatus.Queued => "badge bg-warning text-dark",
+        BuildStatus.Queued => "badge bg-warning",
         BuildStatus.Building => "badge bg-primary",
         BuildStatus.Success => "badge bg-success",
         BuildStatus.Failed => "badge bg-danger",
         BuildStatus.Cancelled => "badge bg-secondary",
-        _ => "badge bg-light text-dark"
+        _ => "badge bg-secondary"
     };
 }

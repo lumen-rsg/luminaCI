@@ -1,11 +1,27 @@
 ﻿@inherits LayoutComponentBase
+@inject NavigationManager Navigation
 
 <div class="layout">
     <NavMenu />
     <main class="main-content">
         <header class="top-bar">
             <div class="breadcrumb">
-                <span class="text-muted">console.lumina.1t.ru</span>
+                <a href="/">🏠 console.lumina.1t.ru</a>
+                @foreach (var seg in GetBreadcrumbs())
+                {
+                    <span class="separator">/</span>
+                    if (seg.Link != null)
+                    {
+                        <a href="@seg.Link">@seg.Label</a>
+                    }
+                    else
+                    {
+                        <span class="current">@seg.Label</span>
+                    }
+                }
+            </div>
+            <div class="top-bar-actions">
+                <span class="text-xs text-muted">@DateTime.Now.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
             </div>
         </header>
         <div class="content-wrapper">
@@ -13,3 +29,44 @@
         </div>
     </main>
 </div>
+
+@code {
+    private record BreadcrumbSegment(string Label, string? Link);
+
+    private List<BreadcrumbSegment> GetBreadcrumbs()
+    {
+        var path = Navigation.ToBaseRelativePath(Navigation.Uri);
+        if (string.IsNullOrEmpty(path) || path == "/") return new();
+
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var result = new List<BreadcrumbSegment>();
+
+        for (int i = 0; i < segments.Length; i++)
+        {
+            var seg = segments[i];
+            var label = seg.Length <= 8 ? seg : seg[..8] + "…";
+
+            // Try to make it readable
+            label = label switch
+            {
+                "builds" => "Builds",
+                "pipelines" => "Pipelines",
+                "security" => "Security",
+                "repositories" => "Repositories",
+                _ => label
+            };
+
+            if (i < segments.Length - 1)
+            {
+                var link = "/" + string.Join("/", segments[..(i + 1)]);
+                result.Add(new BreadcrumbSegment(label, link));
+            }
+            else
+            {
+                result.Add(new BreadcrumbSegment(label, null));
+            }
+        }
+
+        return result;
+    }
+}

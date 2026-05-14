@@ -5,23 +5,27 @@
 
 <PageTitle>Security — Lumina CI</PageTitle>
 
-<h1 class="mb-4">🔐 Security</h1>
+<div class="page-header">
+    <h1>🔐 Security</h1>
+    <button class="btn btn-outline-secondary btn-sm" @onclick="RefreshAll">🔄 Refresh</button>
+</div>
 
 <div class="row">
+    <!-- PGP Signing -->
     <div class="col-md-6">
-        <div class="card">
-            <div class="card-header bg-dark text-white">
-                <h3 class="mb-0">🔑 PGP Signing</h3>
+        <div class="card animate-slide-in">
+            <div class="card-header">
+                <h3>🔑 PGP Signing</h3>
             </div>
             <div class="card-body">
-                <p>Sign packages with PGP keys to ensure authenticity and integrity.</p>
+                <p class="text-sm text-muted">Sign packages with PGP keys to ensure authenticity and integrity.</p>
                 <div class="mb-3">
                     <label class="form-label">Artifact ID</label>
-                    <input type="text" class="form-control" @bind="_signArtifactId" placeholder="Guid" />
+                    <input type="text" class="form-control" @bind="_signArtifactId" placeholder="Enter artifact Guid" />
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Key ID</label>
-                    <input type="text" class="form-control" @bind="_signKeyId" placeholder="Guid" />
+                    <input type="text" class="form-control" @bind="_signKeyId" placeholder="Enter key Guid" />
                 </div>
                 <button class="btn btn-warning" @onclick="SignPackage" disabled="@(_signing)">
                     @if (_signing)
@@ -32,22 +36,24 @@
                 </button>
                 @if (_signResult != null)
                 {
-                    <div class="alert @(string.IsNullOrEmpty(_signResult.Error) ? "alert-success" : "alert-danger") mt-3">
+                    <div class="alert @(string.IsNullOrEmpty(_signResult.Error) ? "alert-success" : "alert-danger") mt-3 animate-slide-in">
                         @(string.IsNullOrEmpty(_signResult.Error) ? _signResult.Message ?? "Package signed successfully" : _signResult.Error)
                     </div>
                 }
             </div>
         </div>
     </div>
+
+    <!-- Hash Records -->
     <div class="col-md-6">
-        <div class="card">
-            <div class="card-header bg-info text-white">
-                <h3 class="mb-0">📋 Hash Records</h3>
+        <div class="card animate-slide-in">
+            <div class="card-header">
+                <h3>📋 Hash Records</h3>
             </div>
-            <div class="card-body">
+            <div class="card-body p-0">
                 @if (_hashes?.Data?.Hashes != null && _hashes.Data.Hashes.Any())
                 {
-                    <table class="table table-sm">
+                    <table class="table table-hover table-striped">
                         <thead>
                             <tr>
                                 <th>Artifact</th>
@@ -60,8 +66,12 @@
                             {
                                 <tr>
                                     <td><code>@hash.ArtifactId.ToString()[..8]</code></td>
-                                    <td><small class="text-muted" title="@hash.HashSha256">@hash.HashSha256?[..Math.Min(32, hash.HashSha256?.Length ?? 0)]...</small></td>
-                                    <td><small class="text-muted">@hash.HashMd5</small></td>
+                                    <td>
+                                        <code style="font-size:0.7em;" title="@hash.HashSha256">
+                                            @hash.HashSha256?[..Math.Min(24, hash.HashSha256?.Length ?? 0)]…
+                                        </code>
+                                    </td>
+                                    <td class="text-xs text-muted">@hash.HashMd5</td>
                                 </tr>
                             }
                         </tbody>
@@ -69,21 +79,27 @@
                 }
                 else
                 {
-                    <p class="text-muted">No hash records yet.</p>
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📋</div>
+                        <h3>No hash records</h3>
+                        <p>Hashes are computed automatically after builds.</p>
+                    </div>
                 }
             </div>
         </div>
     </div>
 </div>
 
-<div class="card mt-4">
-    <div class="card-header bg-danger text-white">
-        <h3 class="mb-0">🛡️ CVE Scan Reports</h3>
+<!-- CVE Scans -->
+<div class="card mt-4 animate-slide-in">
+    <div class="card-header">
+        <h3>🛡️ CVE Scan Reports</h3>
+        <span class="badge bg-secondary">@(_scans?.Data?.TotalCount ?? 0) scans</span>
     </div>
-    <div class="card-body">
+    <div class="card-body p-0">
         @if (_scans?.Data?.Scans != null && _scans.Data.Scans.Any())
         {
-            <table class="table table-hover">
+            <table class="table table-hover table-striped">
                 <thead>
                     <tr>
                         <th>Scan ID</th>
@@ -99,9 +115,14 @@
                         <tr>
                             <td><code>@scan.Id.ToString()[..8]</code></td>
                             <td><code>@scan.ArtifactId.ToString()[..8]</code></td>
-                            <td>@scan.ScannerType</td>
-                            <td><span class="badge @(scan.Status == Lumina.Shared.Models.Enums.ScanStatus.Completed ? "bg-success" : "bg-warning text-dark")">@scan.Status</span></td>
-                            <td>@scan.StartedAt.ToLocalTime().ToString("g")</td>
+                            <td class="text-sm">@scan.ScannerType</td>
+                            <td>
+                                <span class="badge @GetScanBadge(scan.Status)">
+                                    <span class="badge-dot @GetScanDot(scan.Status)"></span>
+                                    @scan.Status
+                                </span>
+                            </td>
+                            <td class="text-sm text-muted">@scan.StartedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
                         </tr>
                     }
                 </tbody>
@@ -109,7 +130,11 @@
         }
         else
         {
-            <p class="text-muted">No CVE scans yet. Artifacts are scanned automatically after build.</p>
+            <div class="empty-state">
+                <div class="empty-state-icon">🛡️</div>
+                <h3>No CVE scans yet</h3>
+                <p>Artifacts are scanned automatically after build.</p>
+            </div>
         }
     </div>
 </div>
@@ -124,10 +149,12 @@
 
     protected override async Task OnInitializedAsync()
     {
-        try
-        {
-            await Task.WhenAll(LoadHashes(), LoadScans());
-        }
+        await RefreshAll();
+    }
+
+    private async Task RefreshAll()
+    {
+        try { await Task.WhenAll(LoadHashes(), LoadScans()); }
         catch (Exception ex) { Logger.LogError(ex, "Failed to load security data"); }
     }
 
@@ -146,4 +173,20 @@
         catch (Exception ex) { Logger.LogError(ex, "Failed to sign package"); }
         finally { _signing = false; }
     }
+
+    private string GetScanBadge(Lumina.Shared.Models.Enums.ScanStatus s) => s switch
+    {
+        Lumina.Shared.Models.Enums.ScanStatus.Completed => "bg-success",
+        Lumina.Shared.Models.Enums.ScanStatus.Running => "bg-primary",
+        Lumina.Shared.Models.Enums.ScanStatus.Failed => "bg-danger",
+        _ => "bg-warning"
+    };
+
+    private string GetScanDot(Lumina.Shared.Models.Enums.ScanStatus s) => s switch
+    {
+        Lumina.Shared.Models.Enums.ScanStatus.Completed => "green",
+        Lumina.Shared.Models.Enums.ScanStatus.Running => "blue",
+        Lumina.Shared.Models.Enums.ScanStatus.Failed => "red",
+        _ => "yellow"
+    };
 }

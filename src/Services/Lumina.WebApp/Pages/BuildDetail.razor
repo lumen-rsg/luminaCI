@@ -7,22 +7,26 @@
 
 <PageTitle>Build @Id — Lumina CI</PageTitle>
 
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="page-header">
     <h1>
         <a href="/builds" class="text-decoration-none text-muted">📦 Builds</a>
-        <span class="mx-2">/</span>
-        <span class="text-nowrap" style="font-size: 0.85em">@Id.ToString()[..8]</span>
+        <span class="mx-2 text-muted" style="font-weight:300;">/</span>
+        <code style="font-size:0.85em">@Id.ToString()[..8]</code>
     </h1>
-    <div class="d-flex gap-2">
-        <a href="/api/builds/@Id/spec" class="btn btn-outline-primary" target="_blank">📄 Download Spec</a>
-        <button class="btn btn-outline-secondary" @onclick="RefreshBuild">🔄 Refresh</button>
-        <button class="btn btn-outline-secondary" @onclick="GoBack">← Back</button>
+    <div class="page-header-actions">
+        <a href="/api/builds/@Id/spec" class="btn btn-outline-primary btn-sm" target="_blank">📄 Spec</a>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="RefreshBuild">🔄 Refresh</button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="GoBack">← Back</button>
     </div>
 </div>
 
 @if (_loading)
 {
-    <div class="text-center p-5"><div class="spinner-border"></div></div>
+    <div class="card"><div class="card-body p-4">
+        <div class="skeleton skeleton-title"></div>
+        <div class="skeleton skeleton-text"></div>
+        <div class="skeleton skeleton-text" style="width:70%"></div>
+    </div></div>
 }
 else if (_build?.Data == null)
 {
@@ -31,99 +35,141 @@ else if (_build?.Data == null)
 else
 {
     var build = _build.Data;
+    var isRunning = build.Status == BuildStatus.Building || build.Status == BuildStatus.Queued;
 
-    // Status header
-    <div class="card mb-4 @GetStatusBorderClass(build.Status)">
+    <!-- Status Banner -->
+    <div class="card mb-4 @GetStatusBorderClass(build.Status) animate-slide-in">
         <div class="card-body">
             <div class="row">
                 <div class="col-md-6">
-                    <h4>
-                        @GetStatusIcon(build.Status)
-                        <span class="@GetStatusTextClass(build.Status)">@build.Status</span>
-                        — @build.SpecName
-                    </h4>
-                    <table class="table table-sm table-borderless mb-0">
-                        <tr>
-                            <td class="text-muted" style="width:150px">Spec Name:</td>
-                            <td><strong>@build.SpecName</strong></td>
+                    <div class="d-flex align-items-center gap-2 mb-3">
+                        @if (build.Status == BuildStatus.Building)
+                        {
+                            <span class="spinner-border spinner-border-sm"></span>
+                        }
+                        else
+                        {
+                            <span style="font-size:1.5em;">@GetStatusIcon(build.Status)</span>
+                        }
+                        <h3 class="mb-0 @GetStatusTextClass(build.Status)">@build.Status</h3>
+                        @if (isRunning)
+                        {
+                            <span class="badge bg-primary building-pulse">Live</span>
+                        }
+                    </div>
+                    <table class="table table-sm" style="border-collapse:collapse;">
+                        <tr style="border:none;">
+                            <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Spec Name:</td>
+                            <td style="border:none;padding:4px 8px;"><strong class="text-bright">@build.SpecName</strong></td>
                         </tr>
-                        <tr>
-                            <td class="text-muted">Pipeline:</td>
-                            <td><a href="/builds">@build.PipelineId.ToString()[..8]…</a></td>
+                        <tr style="border:none;">
+                            <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Pipeline:</td>
+                            <td style="border:none;padding:4px 8px;"><a href="/builds" class="text-sm"><code>@build.PipelineId.ToString()[..8]…</code></a></td>
                         </tr>
-                        <tr>
-                            <td class="text-muted">Triggered By:</td>
-                            <td>@build.TriggeredBy</td>
+                        <tr style="border:none;">
+                            <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Triggered By:</td>
+                            <td style="border:none;padding:4px 8px;">@build.TriggeredBy</td>
                         </tr>
                         @if (!string.IsNullOrEmpty(build.SourceUrl))
                         {
-                            <tr>
-                                <td class="text-muted">Source URL:</td>
-                                <td>
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Source URL:</td>
+                                <td style="border:none;padding:4px 8px;">
                                     @if (build.SourceUrl.StartsWith("git://"))
                                     {
                                         <span class="badge bg-info me-1">🔗 Git</span>
-                                        <code style="font-size:0.85em">@build.SourceUrl</code>
+                                        <code style="font-size:0.8em;">@build.SourceUrl</code>
                                     }
                                     else
                                     {
-                                        <a href="@build.SourceUrl" target="_blank" class="text-break">@build.SourceUrl</a>
+                                        <a href="@build.SourceUrl" target="_blank" class="text-break text-sm">@build.SourceUrl</a>
                                     }
                                 </td>
                             </tr>
                         }
                         @if (!string.IsNullOrEmpty(build.ContainerId))
                         {
-                            <tr>
-                                <td class="text-muted">Container:</td>
-                                <td><code style="font-size:0.8em">@build.ContainerId.ToString()[..16]…</code></td>
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Container:</td>
+                                <td style="border:none;padding:4px 8px;"><code style="font-size:0.75em;">@build.ContainerId.ToString()[..16]…</code></td>
                             </tr>
                         }
                     </table>
                 </div>
                 <div class="col-md-6">
-                    <table class="table table-sm table-borderless mb-0">
-                        <tr>
-                            <td class="text-muted" style="width:150px">Created:</td>
-                            <td>@build.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <table class="table table-sm" style="border-collapse:collapse;">
+                        <tr style="border:none;">
+                            <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Created:</td>
+                            <td style="border:none;padding:4px 8px;">@build.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
                         </tr>
                         @if (build.StartedAt.HasValue)
                         {
-                            <tr>
-                                <td class="text-muted">Started:</td>
-                                <td>@build.StartedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Started:</td>
+                                <td style="border:none;padding:4px 8px;">@build.StartedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
                             </tr>
                         }
                         @if (build.CompletedAt.HasValue)
                         {
-                            <tr>
-                                <td class="text-muted">Completed:</td>
-                                <td>@build.CompletedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
-                            </tr>
-                            <tr>
-                                <td class="text-muted">Duration:</td>
-                                <td>@((build.CompletedAt.Value - build.StartedAt)?.ToString(@"mm\:ss") ?? "—")</td>
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Completed:</td>
+                                <td style="border:none;padding:4px 8px;">@build.CompletedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
                             </tr>
                         }
+                        <tr style="border:none;">
+                            <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Duration:</td>
+                            <td style="border:none;padding:4px 8px;">
+                                @if (build.CompletedAt.HasValue && build.StartedAt.HasValue)
+                                {
+                                    <strong class="text-bright">@((build.CompletedAt.Value - build.StartedAt)?.ToString(@"mm\:ss"))</strong>
+                                }
+                                else if (build.StartedAt.HasValue)
+                                {
+                                    <span class="text-warning building-pulse">@((DateTime.UtcNow - build.StartedAt.Value).ToString(@"mm\:ss"))</span>
+                                    <span class="text-xs text-muted ms-2">(running)</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">—</span>
+                                }
+                            </td>
+                        </tr>
                     </table>
                 </div>
             </div>
         </div>
     </div>
 
-    // Artifacts section
+    <!-- Pipeline Stage View -->
+    <div class="section-title">Pipeline Stages</div>
+    <div class="pipeline-stages animate-slide-in">
+        @foreach (var stage in GetStages(build))
+        {
+            <div class="stage-item @stage.CssClass">
+                <div class="stage-icon">@stage.Icon</div>
+                <div class="stage-name">@stage.Name</div>
+                <div class="stage-status @stage.TextClass">@stage.Status</div>
+            </div>
+            @if (stage != GetStages(build).Last())
+            {
+                <div class="stage-connector">→</div>
+            }
+        }
+    </div>
+
+    <!-- Artifacts -->
     @if (build.Artifacts.Any())
     {
-        <div class="card mb-4">
-            <div class="card-header"><h5 class="mb-0">📎 Artifacts</h5></div>
-            <div class="card-body p-0">
-                <table class="table table-hover mb-0">
+        <div class="section-title mt-4">Artifacts</div>
+        <div class="card animate-slide-in">
+            <div class="table-responsive">
+                <table class="table table-hover">
                     <thead>
                         <tr>
                             <th>File Name</th>
                             <th>Size</th>
                             <th>SHA256</th>
-                            <th>PGP Signature</th>
+                            <th>Signature</th>
                             <th>CVE Scan</th>
                         </tr>
                     </thead>
@@ -131,12 +177,12 @@ else
                         @foreach (var artifact in build.Artifacts)
                         {
                             <tr>
-                                <td><strong>@artifact.FileName</strong></td>
-                                <td>@FormatFileSize(artifact.FileSize)</td>
+                                <td><strong class="text-bright">@artifact.FileName</strong></td>
+                                <td class="text-sm">@FormatFileSize(artifact.FileSize)</td>
                                 <td>
                                     @if (!string.IsNullOrEmpty(artifact.HashSha256))
                                     {
-                                        <code style="font-size:0.75em; word-break:break-all">@artifact.HashSha256</code>
+                                        <code style="font-size:0.7em;word-break:break-all;">@artifact.HashSha256</code>
                                     }
                                     else
                                     {
@@ -146,7 +192,7 @@ else
                                 <td>
                                     @if (!string.IsNullOrEmpty(artifact.PgpSignature))
                                     {
-                                        <span class="badge bg-success">Signed ✅</span>
+                                        <span class="badge bg-success">✅ Signed</span>
                                     }
                                     else
                                     {
@@ -164,32 +210,46 @@ else
         </div>
     }
 
-    // Logs section
-    <div class="card mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <h5 class="mb-0">📋 Build Logs</h5>
-            @if (!string.IsNullOrEmpty(build.Logs))
-            {
-                <button class="btn btn-sm btn-outline-secondary" @onclick="CopyLogs">📋 Copy</button>
-            }
+    <!-- Console Output -->
+    <div class="section-title mt-4">Console Output</div>
+    <div class="console-output animate-slide-in">
+        <div class="console-header">
+            <span>📋 Build Logs</span>
+            <div class="d-flex gap-2">
+                @if (isRunning)
+                {
+                    <span class="badge bg-primary building-pulse">
+                        <span class="spinner-border spinner-border-sm" style="width:12px;height:12px;border-width:1px;"></span>
+                        Streaming
+                    </span>
+                }
+                @if (!string.IsNullOrEmpty(build.Logs))
+                {
+                    <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;padding:2px 8px;" @onclick="CopyLogs">📋 Copy</button>
+                }
+            </div>
         </div>
-        <div class="card-body p-0">
-            @if (!string.IsNullOrEmpty(build.Logs))
-            {
-                <pre class="mb-0 p-3 bg-dark text-light" style="max-height:500px; overflow-y:auto; font-size:0.8em; white-space:pre-wrap; word-break:break-all">@CleanLogs(build.Logs)</pre>
-            }
-            else if (build.Status == BuildStatus.Building)
-            {
-                <div class="text-center p-4">
-                    <div class="spinner-border spinner-border-sm me-2"></div>
-                    Build in progress...
-                </div>
-            }
-            else
-            {
-                <div class="text-center p-4 text-muted">No logs available.</div>
-            }
-        </div>
+        @if (!string.IsNullOrEmpty(build.Logs))
+        {
+            <div class="console-body">
+                @foreach (var line in CleanLogs(build.Logs))
+                {
+                    var lineClass = GetLineClass(line);
+                    <span class="console-line @lineClass">@line</span>
+                }
+            </div>
+        }
+        else if (build.Status == BuildStatus.Building)
+        {
+            <div class="text-center p-4">
+                <div class="spinner-border spinner-border-sm me-2"></div>
+                <span class="text-muted">Waiting for output...</span>
+            </div>
+        }
+        else
+        {
+            <div class="text-center p-4 text-muted">No logs available.</div>
+        }
     </div>
 }
 
@@ -198,10 +258,50 @@ else
 
     private ApiResponse<BuildJobResponse>? _build;
     private bool _loading = true;
+    private Timer? _autoRefreshTimer;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadBuild();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender && _build?.Data != null)
+        {
+            var status = _build.Data.Status;
+            if (status == BuildStatus.Building || status == BuildStatus.Queued)
+            {
+                StartAutoRefresh();
+            }
+        }
+    }
+
+    private void StartAutoRefresh()
+    {
+        _autoRefreshTimer?.Dispose();
+        _autoRefreshTimer = new Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadBuild();
+                StateHasChanged();
+
+                // Stop auto-refresh if build finished
+                if (_build?.Data != null &&
+                    _build.Data.Status != BuildStatus.Building &&
+                    _build.Data.Status != BuildStatus.Queued)
+                {
+                    _autoRefreshTimer?.Dispose();
+                    _autoRefreshTimer = null;
+                }
+            });
+        }, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+    }
+
+    public void Dispose()
+    {
+        _autoRefreshTimer?.Dispose();
     }
 
     private async Task LoadBuild()
@@ -228,24 +328,83 @@ else
 
     private void GoBack() => Nav.NavigateTo("/builds");
 
-    private string CleanLogs(string logs)
+    private record StageInfo(string Name, string Icon, string Status, string CssClass, string TextClass);
+
+    private List<StageInfo> GetStages(BuildJobResponse build)
     {
-        // Remove Docker multiplex header bytes (8-byte header per frame)
-        var result = new System.Text.StringBuilder();
+        var stages = new List<StageInfo>();
+        var hasArtifacts = build.Artifacts.Any();
+        var isRunning = build.Status == BuildStatus.Building;
+        var isFailed = build.Status == BuildStatus.Failed;
+        var isSuccess = build.Status == BuildStatus.Success;
+
+        // Build stage
+        stages.Add(new StageInfo(
+            "Build",
+            isSuccess || (isRunning && hasArtifacts) ? "✅" : isFailed && !hasArtifacts ? "❌" : isRunning ? "🔨" : "⏳",
+            isSuccess || (isRunning && hasArtifacts) ? "Passed" : isFailed && !hasArtifacts ? "Failed" : isRunning ? "Running..." : "Pending",
+            isSuccess || (isRunning && hasArtifacts) ? "stage-success" : isFailed && !hasArtifacts ? "stage-failed" : isRunning ? "stage-running" : "stage-pending",
+            isSuccess || (isRunning && hasArtifacts) ? "text-success" : isFailed && !hasArtifacts ? "text-danger" : isRunning ? "text-primary" : "text-muted"
+        ));
+
+        // Scan stage
+        var scanDone = hasArtifacts && build.Artifacts.Any(a => a.CveScanStatus == ScanStatus.Completed);
+        var scanRunning = hasArtifacts && build.Artifacts.Any(a => a.CveScanStatus == ScanStatus.Running);
+        stages.Add(new StageInfo(
+            "CVE Scan",
+            scanDone ? "✅" : scanRunning ? "🔍" : isRunning || isSuccess ? "⏳" : "—",
+            scanDone ? "Clean" : scanRunning ? "Scanning..." : isRunning || isSuccess ? "Pending" : "Skipped",
+            scanDone ? "stage-success" : scanRunning ? "stage-running" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
+            scanDone ? "text-success" : scanRunning ? "text-primary" : "text-muted"
+        ));
+
+        // Sign stage
+        var signed = hasArtifacts && build.Artifacts.Any(a => !string.IsNullOrEmpty(a.PgpSignature));
+        stages.Add(new StageInfo(
+            "PGP Sign",
+            signed ? "✅" : isRunning ? "⏳" : isSuccess ? "⚠️" : "—",
+            signed ? "Signed" : isRunning ? "Pending" : isSuccess ? "Unsigned" : "Skipped",
+            signed ? "stage-success" : isSuccess && !signed ? "stage-failed" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
+            signed ? "text-success" : "text-muted"
+        ));
+
+        // Publish stage
+        stages.Add(new StageInfo(
+            "Publish",
+            isSuccess ? "✅" : isRunning ? "⏳" : "—",
+            isSuccess ? "Published" : isRunning ? "Pending" : "Skipped",
+            isSuccess ? "stage-success" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
+            isSuccess ? "text-success" : "text-muted"
+        ));
+
+        return stages;
+    }
+
+    private List<string> CleanLogs(string logs)
+    {
+        var result = new List<string>();
         var lines = logs.Split('\n');
         foreach (var line in lines)
         {
-            // Filter out lines that are just control characters from Docker stream multiplexing
             var cleaned = new string(line.Where(c => !char.IsControl(c) || c == '\t').ToArray());
             if (!string.IsNullOrWhiteSpace(cleaned))
-                result.AppendLine(cleaned);
+                result.Add(cleaned);
         }
-        return result.ToString();
+        return result;
+    }
+
+    private string GetLineClass(string line)
+    {
+        var lower = line.ToLowerInvariant();
+        if (lower.Contains("error") || lower.Contains("failed") || lower.Contains("fatal")) return "line-error";
+        if (lower.Contains("warning") || lower.Contains("warn")) return "line-warning";
+        if (lower.Contains("success") || lower.Contains("completed") || lower.Contains("done")) return "line-success";
+        return "";
     }
 
     private void CopyLogs()
     {
-        // In Blazor SSR, clipboard API requires JS interop — simplified for now
+        // Clipboard requires JS interop — placeholder
     }
 
     private string FormatFileSize(long bytes)
@@ -279,13 +438,13 @@ else
         BuildStatus.Success => "text-success",
         BuildStatus.Failed => "text-danger",
         BuildStatus.Building => "text-primary",
-        BuildStatus.Cancelled => "text-secondary",
+        BuildStatus.Cancelled => "text-muted",
         _ => ""
     };
 
     private string GetScanBadge(ScanStatus s) => s switch
     {
-        ScanStatus.Pending => "badge bg-warning text-dark",
+        ScanStatus.Pending => "badge bg-warning",
         ScanStatus.Running => "badge bg-primary",
         ScanStatus.Completed => "badge bg-success",
         ScanStatus.Failed => "badge bg-danger",

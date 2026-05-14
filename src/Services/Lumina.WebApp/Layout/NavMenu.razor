@@ -1,14 +1,24 @@
-﻿<div class="sidebar">
+﻿@inject Lumina.WebApp.Services.LuminaApiService Api
+
+<div class="sidebar">
     <div class="sidebar-brand">
-        <a href="/">🏗️ Lumina CI</a>
+        <a href="/">
+            <span class="brand-icon">🏗️</span>
+            <span>Lumina CI</span>
+        </a>
     </div>
     <nav class="sidebar-nav">
-        <ul class="nav flex-column">
+        <div class="sidebar-section">Overview</div>
+        <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
             <li class="nav-item">
                 <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
                     <span class="nav-icon">📊</span> Dashboard
                 </NavLink>
             </li>
+        </ul>
+
+        <div class="sidebar-section">CI/CD</div>
+        <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
             <li class="nav-item">
                 <NavLink class="nav-link" href="pipelines">
                     <span class="nav-icon">🔄</span> Pipelines
@@ -17,8 +27,16 @@
             <li class="nav-item">
                 <NavLink class="nav-link" href="builds">
                     <span class="nav-icon">📦</span> Builds
+                    @if (_queueBadge > 0)
+                    {
+                        <span class="nav-badge">@_queueBadge</span>
+                    }
                 </NavLink>
             </li>
+        </ul>
+
+        <div class="sidebar-section">Management</div>
+        <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
             <li class="nav-item">
                 <NavLink class="nav-link" href="security">
                     <span class="nav-icon">🔐</span> Security
@@ -32,6 +50,20 @@
         </ul>
     </nav>
     <div class="sidebar-footer">
-        <small class="text-muted">Lumina CI v1.0</small>
+        <small>Lumina CI v1.0</small>
     </div>
 </div>
+
+@code {
+    private int _queueBadge;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var queue = await Api.GetBuildQueueAsync();
+            _queueBadge = (queue?.Data?.QueuedCount ?? 0) + (queue?.Data?.RunningCount ?? 0);
+        }
+        catch { /* sidebar badge is non-critical */ }
+    }
+}
