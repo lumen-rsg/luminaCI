@@ -20,7 +20,8 @@ try
         .WriteTo.Console());
 
     // JWT Authentication
-    var jwtSecret = builder.Configuration["Jwt:Secret"] ?? "lumina_jwt_dev_secret_key_2024_min32chars!!";
+    var jwtSecret = builder.Configuration["Jwt:Secret"]
+        ?? throw new InvalidOperationException("Jwt:Secret is not configured. Set it via environment variable or configuration.");
     var jwtKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
 
     builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -50,6 +51,29 @@ try
     {
         c.SwaggerDoc("v1", new() { Title = "Lumina CI API Gateway", Version = "v1" });
     });
+
+    // Rate limiting — 100 requests/minute per IP
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.GlobalLimiter = System.Threading.RateLimiting.PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        {
+            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            return System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(ip,
+                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 100,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
+                    QueueLimit = 10
+                });
+        });
+        options.OnRejected = async (context, ct) =>
+        {
+            context.HttpContext.Response.StatusCode = 429;
+            await context.HttpContext.Response.WriteAsync("Too many requests. Please try again later.", ct);
+        };
+    });
+
     builder.Services.AddHealthChecks();
 
     var app = builder.Build();
@@ -60,6 +84,7 @@ try
         app.UseSwaggerUI();
     }
 
+    app.UseRateLimiter();
     app.UseAuthentication();
     app.UseAuthorization();
 

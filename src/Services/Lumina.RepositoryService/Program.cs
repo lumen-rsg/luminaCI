@@ -25,8 +25,8 @@ try
     builder.Services.AddMinio(client => client
         .WithEndpoint(builder.Configuration["Minio:Endpoint"] ?? "minio:9000")
         .WithCredentials(
-            builder.Configuration["Minio:AccessKey"] ?? "lumina_minio",
-            builder.Configuration["Minio:SecretKey"] ?? "lumina_minio_secret")
+            builder.Configuration["Minio:AccessKey"] ?? throw new InvalidOperationException("Minio:AccessKey not configured"),
+            builder.Configuration["Minio:SecretKey"] ?? throw new InvalidOperationException("Minio:SecretKey not configured"))
         .Build());
 
     builder.Services.AddScoped<RepositoryManagerService>();
@@ -38,8 +38,8 @@ try
         {
             cfg.Host(builder.Configuration["RabbitMQ:Host"] ?? "rabbitmq", "/", h =>
             {
-                h.Username(builder.Configuration["RabbitMQ:Username"] ?? "lumina");
-                h.Password(builder.Configuration["RabbitMQ:Password"] ?? "lumina_rmq_2024");
+                h.Username(builder.Configuration["RabbitMQ:Username"] ?? throw new InvalidOperationException("RabbitMQ:Username not configured"));
+                h.Password(builder.Configuration["RabbitMQ:Password"] ?? throw new InvalidOperationException("RabbitMQ:Password not configured"));
             });
         });
     });

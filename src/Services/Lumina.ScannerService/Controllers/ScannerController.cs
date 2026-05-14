@@ -20,6 +20,10 @@ public class ScannerController : ControllerBase
     [HttpPost("scan")]
     public async Task<ActionResult<ApiResponse<CveReport>>> ScanArtifact([FromBody] ScanRequest request)
     {
+        // SECURITY: Validate artifact ID format
+        if (request.ArtifactId == Guid.Empty)
+            return BadRequest(new ApiResponse<CveReport>(false, null, "Invalid artifact ID", null));
+
         var report = await _scanner.ScanArtifactAsync(request.ArtifactId, "", request.ScannerType);
         return Accepted(new ApiResponse<CveReport>(true, report, null, "Scan started"));
     }
@@ -42,6 +46,8 @@ public class ScannerController : ControllerBase
     [HttpGet("reports/recent")]
     public async Task<ActionResult<ApiResponse<List<CveReport>>>> GetRecentReports([FromQuery] int count = 20)
     {
+        // Clamp to prevent excessive data retrieval
+        count = Math.Clamp(count, 1, 100);
         var reports = await _scanner.GetRecentReportsAsync(count);
         return Ok(new ApiResponse<List<CveReport>>(true, reports, null, null));
     }

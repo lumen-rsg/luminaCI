@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Lumina.ScannerService.Data;
 using Lumina.Shared.Models;
@@ -12,12 +12,18 @@ public class TrivyScannerService
     private readonly ScannerDbContext _db;
     private readonly ILogger<TrivyScannerService> _logger;
     private readonly IConfiguration _config;
+    private readonly HttpClient _httpClient;
 
-    public TrivyScannerService(ScannerDbContext db, ILogger<TrivyScannerService> logger, IConfiguration config)
+    public TrivyScannerService(ScannerDbContext db, ILogger<TrivyScannerService> logger, IConfiguration config, HttpClient httpClient)
     {
         _db = db;
         _logger = logger;
         _config = config;
+        _httpClient = httpClient;
+
+        var trivyEndpoint = _config["Trivy:Endpoint"] ?? "http://trivy:8080";
+        _httpClient.BaseAddress = new Uri(trivyEndpoint.EndsWith('/') ? trivyEndpoint : trivyEndpoint + "/");
+        _httpClient.Timeout = TimeSpan.FromMinutes(10);
     }
 
     public async Task<CveReport> ScanArtifactAsync(Guid artifactId, string artifactPath, string scannerType = "Trivy")
@@ -34,41 +40,75 @@ public class TrivyScannerService
         _db.CveReports.Add(report);
         await _db.SaveChangesAsync();
 
-        _ = RunScanAsync(report, artifactPath);
+        // Fire-and-forget with proper error handling
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await RunScanViaApiAsync(report, artifactPath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unhandled error in fire-and-forget scan for artifact {ArtifactId}", artifactId);
+            }
+        });
 
         return report;
     }
 
-    private async Task RunScanAsync(CveReport report, string artifactPath)
+    private async Task RunScanViaApiAsync(CveReport report, string artifactPath)
     {
         try
         {
-            var trivyPath = _config["Trivy:Path"] ?? "trivy";
-            var startInfo = new ProcessStartInfo
+            // Use Trivy Server REST API instead of CLI to avoid command injection
+            // Validate artifactPath — must be a valid image reference
+            if (string.IsNullOrWhiteSpace(artifactPath))
             {
-                FileName = trivyPath,
-                Arguments = $"--format json --quiet image {artifactPath}",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(startInfo);
-            if (process == null) throw new InvalidOperationException("Failed to start trivy");
-
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            if (process.ExitCode != 0 && process.ExitCode != 1)
-            {
+                _logger.LogWarning("Empty artifact path provided for scan {ScanId}", report.Id);
                 report.Status = ScanStatus.Failed;
                 _db.CveReports.Update(report);
                 await _db.SaveChangesAsync();
                 return;
             }
 
-            var vulnerabilities = ParseTrivyOutput(output, report.Id);
+            // Sanitize: reject shell metacharacters
+            if (ContainsDangerousChars(artifactPath))
+            {
+                _logger.LogError("Artifact path contains dangerous characters: {Path}", artifactPath);
+                report.Status = ScanStatus.Failed;
+                _db.CveReports.Update(report);
+                await _db.SaveChangesAsync();
+                return;
+            }
+
+            // Call Trivy Server API: POST /api/v1/scans
+            var scanRequest = new
+            {
+                target = artifactPath,
+                scanners = new[] { "vuln" }
+            };
+
+            var response = await _httpClient.PostAsJsonAsync("api/v1/scans", scanRequest);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                _logger.LogError("Trivy API returned {StatusCode}: {Error}", response.StatusCode, errorBody);
+                report.Status = ScanStatus.Failed;
+                _db.CveReports.Update(report);
+                await _db.SaveChangesAsync();
+                return;
+            }
+
+            var jsonResponse = await response.Content.ReadAsStringAsync();
+            var vulnerabilities = ParseTrivyOutput(jsonResponse, report.Id);
+
+            // Save individual vulnerability records
+            foreach (var vuln in vulnerabilities)
+            {
+                _db.Vulnerabilities.Add(vuln);
+            }
+
             report.Vulnerabilities = vulnerabilities;
             report.CriticalCount = vulnerabilities.Count(v => v.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase));
             report.HighCount = vulnerabilities.Count(v => v.Severity.Equals("HIGH", StringComparison.OrdinalIgnoreCase));
@@ -91,13 +131,25 @@ public class TrivyScannerService
         }
     }
 
+    private bool ContainsDangerousChars(string value)
+    {
+        var dangerous = new[] { '`', '$', ';', '|', '&', '>', '<', '(', ')', '{', '}', '\n', '\r', '\0' };
+        return value.IndexOfAny(dangerous) >= 0;
+    }
+
     private List<Vulnerability> ParseTrivyOutput(string jsonOutput, Guid reportId)
     {
         var vulnerabilities = new List<Vulnerability>();
         try
         {
             using var doc = JsonDocument.Parse(jsonOutput);
-            var results = doc.RootElement.GetProperty("Results");
+            // Trivy API response may have "Results" at root or under "report"
+            var resultsElement = doc.RootElement;
+            if (resultsElement.TryGetProperty("report", out var reportEl))
+                resultsElement = reportEl;
+            if (!resultsElement.TryGetProperty("Results", out var results))
+                return vulnerabilities;
+
             foreach (var result in results.EnumerateArray())
             {
                 if (!result.TryGetProperty("Vulnerabilities", out var vulns)) continue;

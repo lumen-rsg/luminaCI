@@ -30,8 +30,8 @@ try
         {
             cfg.Host(builder.Configuration["RabbitMQ:Host"] ?? "rabbitmq", "/", h =>
             {
-                h.Username(builder.Configuration["RabbitMQ:Username"] ?? "lumina");
-                h.Password(builder.Configuration["RabbitMQ:Password"] ?? "lumina_rmq_2024");
+                h.Username(builder.Configuration["RabbitMQ:Username"] ?? throw new InvalidOperationException("RabbitMQ:Username not configured"));
+                h.Password(builder.Configuration["RabbitMQ:Password"] ?? throw new InvalidOperationException("RabbitMQ:Password not configured"));
             });
         });
     });

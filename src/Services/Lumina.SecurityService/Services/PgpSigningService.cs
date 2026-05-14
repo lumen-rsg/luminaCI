@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Lumina.SecurityService.Data;
+using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,23 +21,28 @@ public class PgpSigningService
 
     public async Task<SecurityKey> GenerateKeyAsync(string keyName, string email, string passphrase, string createdBy)
     {
+        // SECURITY: Sanitize all user inputs to prevent GPG batch script injection
+        var safeKeyName = ProcessArgumentSanitizer.SanitizeGpgField(keyName, nameof(keyName));
+        var safeEmail = ProcessArgumentSanitizer.SanitizeGpgField(email, nameof(email));
+        var safePassphrase = ProcessArgumentSanitizer.SanitizeGpgField(passphrase, nameof(passphrase));
+
         var keyId = Guid.NewGuid().ToString("N")[..16];
         var keyDir = _config["Gpg:KeyDirectory"] ?? "/app/keys";
         Directory.CreateDirectory(keyDir);
 
         var keyFilePath = Path.Combine(keyDir, $"lumina-{keyId}");
 
-        // Generate PGP key using gpg command
+        // GPG batch script — sanitized inputs prevent injection
         var batchScript = $@"
 %echo Generating PGP key for Lumina CI
 Key-Type: RSA
 Key-Length: 4096
 Subkey-Type: RSA
 Subkey-Length: 2048
-Name-Real: {keyName}
-Name-Email: {email}
+Name-Real: {safeKeyName}
+Name-Email: {safeEmail}
 Expire-Date: 0
-Passphrase: {passphrase}
+Passphrase: {safePassphrase}
 %commit
 %echo Done
 ";
@@ -45,15 +51,20 @@ Passphrase: {passphrase}
 
         try
         {
+            // SECURITY: Use ArgumentList instead of string concatenation
             var startInfo = new ProcessStartInfo
             {
                 FileName = "gpg",
-                Arguments = $"--batch --pinentry-mode loopback --generate-key {batchFile}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            startInfo.ArgumentList.Add("--batch");
+            startInfo.ArgumentList.Add("--pinentry-mode");
+            startInfo.ArgumentList.Add("loopback");
+            startInfo.ArgumentList.Add("--generate-key");
+            startInfo.ArgumentList.Add(batchFile);
 
             using var process = Process.Start(startInfo);
             if (process == null) throw new InvalidOperationException("Failed to start gpg process");
@@ -69,11 +80,13 @@ Passphrase: {passphrase}
             var exportPubInfo = new ProcessStartInfo
             {
                 FileName = "gpg",
-                Arguments = $"--armor --export {email}",
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            exportPubInfo.ArgumentList.Add("--armor");
+            exportPubInfo.ArgumentList.Add("--export");
+            exportPubInfo.ArgumentList.Add(safeEmail);
 
             using var exportProcess = Process.Start(exportPubInfo);
             if (exportProcess == null) throw new InvalidOperationException("Failed to export public key");
@@ -84,7 +97,7 @@ Passphrase: {passphrase}
             {
                 Id = Guid.NewGuid(),
                 KeyId = keyId,
-                KeyName = keyName,
+                KeyName = safeKeyName,
                 PublicKey = publicKey,
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow,
@@ -94,7 +107,7 @@ Passphrase: {passphrase}
             _db.SecurityKeys.Add(key);
             await _db.SaveChangesAsync();
 
-            _logger.LogInformation("PGP key {KeyId} generated for {KeyName}", keyId, keyName);
+            _logger.LogInformation("PGP key {KeyId} generated for {KeyName}", keyId, safeKeyName);
             return key;
         }
         finally
@@ -109,7 +122,10 @@ Passphrase: {passphrase}
         if (key == null) throw new InvalidOperationException($"Key {keyId} not found");
         if (!key.IsActive) throw new InvalidOperationException($"Key {keyId} is not active");
 
+        // SECURITY: Sanitize file paths to prevent command injection
+        var safeArtifactPath = ProcessArgumentSanitizer.SanitizeFilePath(artifactPath);
         var signaturePath = artifactPath + ".sig";
+        var safeSignaturePath = ProcessArgumentSanitizer.SanitizeFilePath(signaturePath);
 
         var request = new SigningRequest
         {
@@ -124,15 +140,20 @@ Passphrase: {passphrase}
 
         try
         {
+            // SECURITY: Use ArgumentList instead of string concatenation
             var startInfo = new ProcessStartInfo
             {
                 FileName = "gpg",
-                Arguments = $"--detach-sign --armor --output {signaturePath} {artifactPath}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            startInfo.ArgumentList.Add("--detach-sign");
+            startInfo.ArgumentList.Add("--armor");
+            startInfo.ArgumentList.Add("--output");
+            startInfo.ArgumentList.Add(signaturePath); // Original path for filesystem operation
+            startInfo.ArgumentList.Add(artifactPath);   // Original path for filesystem operation
 
             using var process = Process.Start(startInfo);
             if (process == null) throw new InvalidOperationException("Failed to start gpg process");

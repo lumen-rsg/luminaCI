@@ -4,6 +4,7 @@ using System.Text.Json;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 
 namespace Lumina.BuildService.Controllers;
 
@@ -119,9 +120,13 @@ public class WebhooksController : ControllerBase
         // GitLab: X-Gitlab-Token header
         // Forgejo/Gitea: X-Forgejo-Signature header
 
-        // Check GitLab token (simple token comparison)
+        // Check GitLab token — constant-time comparison to prevent timing attacks
         if (Request.Headers.TryGetValue("X-Gitlab-Token", out var gitlabToken))
-            return gitlabToken == secret;
+        {
+            var tokenBytes = Encoding.UTF8.GetBytes(gitlabToken.ToString());
+            var secretBytes = Encoding.UTF8.GetBytes(secret);
+            return CryptographicOperations.FixedTimeEquals(tokenBytes, secretBytes);
+        }
 
         // Check GitHub/Forgejo HMAC signature
         var signatureHeader = Request.Headers["X-Hub-Signature-256"].FirstOrDefault()
@@ -133,7 +138,11 @@ public class WebhooksController : ControllerBase
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
             var hash = hmac.ComputeHash(payloadBytes);
             var computedSig = $"sha256={Convert.ToHexString(hash).ToLowerInvariant()}";
-            return computedSig == signatureHeader.ToLowerInvariant();
+
+            // SECURITY: Constant-time comparison to prevent timing attacks
+            return CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(computedSig),
+                Encoding.UTF8.GetBytes(signatureHeader.ToLowerInvariant()));
         }
 
         // If no signature headers present, reject
