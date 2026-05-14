@@ -24,7 +24,7 @@ public class BuildsController : ControllerBase
     {
         var (builds, totalCount) = await _engine.ListBuildJobsAsync(page, pageSize);
         var response = new BuildListResponse(
-            builds.Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy)).ToList(),
+            builds.Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy, b.CommitSha, b.Branch)).ToList(),
             totalCount, page, pageSize);
         return Ok(new ApiResponse<BuildListResponse>(true, response, null, null));
     }
@@ -37,7 +37,7 @@ public class BuildsController : ControllerBase
         var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId,
             job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy,
             job.Artifacts.Select(a => new BuildArtifactResponse(a.Id, a.FileName, a.FileSize, a.HashSha256, a.HashMd5, a.PgpSignature, a.CveScanStatus)).ToList(),
-            job.SourceUrl);
+            job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
         return Ok(new ApiResponse<BuildJobResponse>(true, response, null, null));
     }
 
@@ -54,9 +54,9 @@ public class BuildsController : ControllerBase
     {
         var active = await _engine.GetActiveBuildsAsync();
         var queued = active.Where(b => b.Status == BuildStatus.Queued)
-            .Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy)).ToList();
+            .Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy, b.CommitSha, b.Branch)).ToList();
         var running = active.Where(b => b.Status == BuildStatus.Building)
-            .Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy)).ToList();
+            .Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy, b.CommitSha, b.Branch)).ToList();
         var response = new BuildQueueResponse(queued, running, queued.Count, running.Count);
         return Ok(new ApiResponse<BuildQueueResponse>(true, response, null, null));
     }

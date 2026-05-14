@@ -51,16 +51,17 @@ else if (FilteredBuilds.Any())
         <div class="table-responsive">
             <table class="table table-hover table-striped">
                 <thead>
-                    <tr>
-                        <th style="width:6px;padding:0;"></th>
-                        <th>Build</th>
-                        <th>Spec Name</th>
-                        <th>Status</th>
-                        <th>Pipeline</th>
-                        <th>Triggered By</th>
-                        <th>Started</th>
-                        <th style="width:80px;"></th>
-                    </tr>
+                        <tr>
+                            <th style="width:6px;padding:0;"></th>
+                            <th>Build</th>
+                            <th>Spec Name</th>
+                            <th>Status</th>
+                            <th>Git</th>
+                            <th>Pipeline</th>
+                            <th>Triggered By</th>
+                            <th>Started</th>
+                            <th style="width:80px;"></th>
+                        </tr>
                 </thead>
                 <tbody>
                     @foreach (var build in FilteredBuilds)
@@ -109,6 +110,20 @@ else if (FilteredBuilds.Any())
                                 else
                                 {
                                     <span class="badge bg-secondary">@build.Status</span>
+                                }
+                            </td>
+                            <td>
+                                @if (!string.IsNullOrEmpty(build.CommitSha))
+                                {
+                                    <code title="@build.CommitSha" style="font-size:0.8em;">@build.CommitSha[..Math.Min(7, build.CommitSha.Length)]</code>
+                                    @if (!string.IsNullOrEmpty(build.Branch))
+                                    {
+                                        <span class="badge bg-secondary ms-1" style="font-size:0.7em;">🌿 @build.Branch</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="text-muted">—</span>
                                 }
                             </td>
                             <td>

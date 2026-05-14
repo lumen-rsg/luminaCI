@@ -15,13 +15,13 @@ public record PipelineListResponse(List<PipelineSummaryResponse> Pipelines, int 
 public record PipelineSummaryResponse(Guid Id, string Name, string Description, PipelineStatus Status, string CreatedBy, DateTime CreatedAt, int StepCount, string? GitRepoUrl = null, string? GitBranch = null);
 
 // Build Responses
-public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null);
+public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null);
 
 public record BuildArtifactResponse(Guid Id, string FileName, long FileSize, string? HashSha256, string? HashMd5, string? PgpSignature, ScanStatus CveScanStatus);
 
 public record BuildListResponse(List<BuildJobSummaryResponse> Builds, int TotalCount, int Page, int PageSize);
 
-public record BuildJobSummaryResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, DateTime CreatedAt, string TriggeredBy);
+public record BuildJobSummaryResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, DateTime CreatedAt, string TriggeredBy, string? CommitSha = null, string? Branch = null);
 
 // Security Responses
 public record SecurityKeyResponse(Guid Id, string KeyId, string KeyName, string PublicKey, bool IsActive, DateTime CreatedAt, DateTime? ExpiresAt, string CreatedBy);

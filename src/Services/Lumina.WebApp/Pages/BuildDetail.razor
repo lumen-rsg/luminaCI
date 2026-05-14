@@ -70,10 +70,42 @@ else
                             <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Triggered By:</td>
                             <td style="border:none;padding:4px 8px;">@build.TriggeredBy</td>
                         </tr>
+                        @if (!string.IsNullOrEmpty(build.CommitSha))
+                        {
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Commit:</td>
+                                <td style="border:none;padding:4px 8px;">
+                                    <span class="badge bg-info me-1">🔗</span>
+                                    <code style="font-size:0.85em;">@build.CommitSha</code>
+                                    @if (!string.IsNullOrEmpty(build.Branch))
+                                    {
+                                        <span class="badge bg-secondary ms-2">🌿 @build.Branch</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @if (!string.IsNullOrEmpty(build.CommitMessage))
+                        {
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Message:</td>
+                                <td style="border:none;padding:4px 8px;">
+                                    <em class="text-sm">@build.CommitMessage</em>
+                                </td>
+                            </tr>
+                        }
+                        @if (!string.IsNullOrEmpty(build.CommitAuthor))
+                        {
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Author:</td>
+                                <td style="border:none;padding:4px 8px;">
+                                    👤 @build.CommitAuthor
+                                </td>
+                            </tr>
+                        }
                         @if (!string.IsNullOrEmpty(build.SourceUrl))
                         {
                             <tr style="border:none;">
-                                <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Source URL:</td>
+                                <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Source URL:</td>
                                 <td style="border:none;padding:4px 8px;">
                                     @if (build.SourceUrl.StartsWith("git://"))
                                     {

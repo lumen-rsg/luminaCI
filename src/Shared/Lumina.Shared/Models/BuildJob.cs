@@ -18,5 +18,11 @@ public class BuildJob
     public string TriggeredBy { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    // Git integration — commit/branch info from webhook
+    public string? CommitSha { get; set; }
+    public string? Branch { get; set; }
+    public string? CommitMessage { get; set; }
+    public string? CommitAuthor { get; set; }
+
     public Pipeline? Pipeline { get; set; }
 }

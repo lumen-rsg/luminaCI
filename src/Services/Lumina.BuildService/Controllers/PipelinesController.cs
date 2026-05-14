@@ -56,7 +56,7 @@ public class PipelinesController : ControllerBase
     public async Task<ActionResult<ApiResponse<BuildJobResponse>>> Trigger(Guid id, [FromBody] TriggerBuildRequest request)
     {
         var job = await _engine.TriggerBuildAsync(id, request);
-        var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl);
+        var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
         return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Build triggered"));
     }
 
@@ -71,7 +71,7 @@ public class PipelinesController : ControllerBase
         {
             var triggeredBy = request?.TriggeredBy ?? "auto";
             var job = await _engine.TriggerAutoBuildAsync(id, triggeredBy);
-            var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl);
+            var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
             return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Auto build triggered — sources will be fetched from git"));
         }
         catch (InvalidOperationException ex)

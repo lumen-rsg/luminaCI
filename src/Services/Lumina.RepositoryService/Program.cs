@@ -29,6 +29,7 @@ try
             builder.Configuration["Minio:SecretKey"] ?? "lumina_minio_secret")
         .Build());
 
+    builder.Services.AddScoped<RepositoryManagerService>();
     builder.Services.AddScoped<MinioStorageService>();
 
     builder.Services.AddMassTransit(x =>
@@ -43,10 +44,24 @@ try
         });
     });
 
-    builder.Services.AddControllers();
+    builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+        {
+            options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        });
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
     builder.Services.AddHealthChecks();
+
+    // Allow large file uploads (up to 500MB)
+    builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+    {
+        options.MultipartBodyLengthLimit = 500 * 1024 * 1024;
+    });
+    builder.WebHost.ConfigureKestrel(serverOptions =>
+    {
+        serverOptions.Limits.MaxRequestBodySize = 500 * 1024 * 1024;
+    });
 
     var app = builder.Build();
 

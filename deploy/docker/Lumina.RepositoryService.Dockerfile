@@ -18,11 +18,11 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 EXPOSE 5004
 
-# Install createrepo for RPM repository management
-RUN apt-get update && apt-get install -y createrepo-c && rm -rf /var/lib/apt/lists/*
+# Install createrepo_c and rpm tools for RPM repository management
+RUN apt-get update && apt-get install -y createrepo-c rpm && rm -rf /var/lib/apt/lists/*
 
 COPY --from=publish /app/publish .
-RUN mkdir -p /app/repos && chown app:app /app/repos
+RUN mkdir -p /app/repos && chmod 777 /app/repos
 USER app
 
 ENTRYPOINT ["dotnet", "Lumina.RepositoryService.dll"]

@@ -111,6 +111,30 @@ public class LuminaApiService
         return await resp.Content.ReadFromJsonAsync<ApiResponse<RepositoryResponse>>();
     }
 
+    public async Task<ApiResponse<PackageResponse>?> UploadPackageAsync(Guid repositoryId, Stream fileStream, string fileName, string publishedBy = "upload")
+    {
+        using var content = new MultipartFormDataContent();
+        var fileContent = new StreamContent(fileStream);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-rpm");
+        content.Add(fileContent, "file", fileName);
+        content.Add(new StringContent(repositoryId.ToString()), "repositoryId");
+        content.Add(new StringContent(publishedBy), "publishedBy");
+
+        var resp = await _http.PostAsync("/api/repository/upload", content);
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<PackageResponse>>();
+    }
+
+    public async Task<ApiResponse<object>?> SyncRepositoryAsync(Guid repositoryId)
+    {
+        var resp = await _http.PostAsJsonAsync("/api/repository/sync", new SyncRepositoryRequest(repositoryId));
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
+    }
+
+    public async Task<ApiResponse<List<PackageResponse>>?> GetRepositoryPackagesAsync(Guid repositoryId)
+    {
+        return await _http.GetFromJsonAsync<ApiResponse<List<PackageResponse>>>($"/api/repository/{repositoryId}/packages");
+    }
+
     // === Auth ===
     public async Task<string?> LoginAsync(string username, string password)
     {

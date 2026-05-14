@@ -10,7 +10,7 @@ public record UpdatePipelineRequest(string Name, string Description, List<Create
 public record CreatePipelineStepRequest(StepType Type, string Name, int Order, Dictionary<string, string> Configuration);
 
 // Build DTOs
-public record TriggerBuildRequest(string SpecName, string SpecContent, string? SourceUrl, string TriggeredBy);
+public record TriggerBuildRequest(string SpecName, string SpecContent, string? SourceUrl, string TriggeredBy, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null);
 
 public record TriggerAutoBuildRequest(string TriggeredBy = "auto");
 

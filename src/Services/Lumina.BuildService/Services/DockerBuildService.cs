@@ -63,6 +63,12 @@ public class DockerBuildService
             if (!string.IsNullOrEmpty(gitToken))
                 envVars.Add($"GIT_TOKEN={gitToken}");
 
+            if (!string.IsNullOrEmpty(job.CommitSha))
+                envVars.Add($"COMMIT_SHA={job.CommitSha}");
+
+            if (!string.IsNullOrEmpty(job.Branch))
+                envVars.Add($"BRANCH={job.Branch}");
+
             var createParams = new CreateContainerParameters
             {
                 Image = imageName,

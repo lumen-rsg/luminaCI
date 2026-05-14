@@ -99,7 +99,12 @@ public class PipelineEngine
             SpecContent = specContent ?? string.Empty,
             SourceUrl = sourceUrl ?? string.Empty,
             TriggeredBy = request.TriggeredBy,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            // Git metadata from webhook or auto-build
+            CommitSha = request.CommitSha,
+            Branch = request.Branch ?? pipeline.GitBranch,
+            CommitMessage = request.CommitMessage,
+            CommitAuthor = request.CommitAuthor
         };
 
         _db.BuildJobs.Add(job);

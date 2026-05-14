@@ -3,6 +3,7 @@
 @using Lumina.Shared.Models.Enums
 @inject Lumina.WebApp.Services.LuminaApiService Api
 @inject ILogger<Pipelines> Logger
+@inject IJSRuntime JS
 
 <PageTitle>Pipelines — Lumina CI</PageTitle>
 
@@ -170,6 +171,12 @@ else if (_pipelines?.Data?.Pipelines != null && _pipelines.Data.Pipelines.Any())
                                 <span class="badge bg-info" title="@pipeline.GitRepoUrl">
                                     🔗 @ExtractHost(pipeline.GitRepoUrl)
                                 </span>
+                                @if (!string.IsNullOrEmpty(pipeline.GitBranch))
+                                {
+                                    <span class="badge bg-secondary" title="Branch">
+                                        🌿 @pipeline.GitBranch
+                                    </span>
+                                }
                             }
                         </div>
                         <div class="text-sm text-muted mb-2">@pipeline.Description</div>
@@ -181,11 +188,14 @@ else if (_pipelines?.Data?.Pipelines != null && _pipelines.Data.Pipelines.Any())
                     </div>
                     <div class="d-flex gap-2">
                         @if (!string.IsNullOrEmpty(pipeline.GitRepoUrl))
-                        {
-                            <button class="btn btn-sm btn-success" @onclick="() => AutoBuild(pipeline.Id, pipeline.Name)" title="Auto Build — fetch from git">
-                                ⚡ Auto
-                            </button>
-                        }
+                            {
+                                <button class="btn btn-sm btn-success" @onclick="() => AutoBuild(pipeline.Id, pipeline.Name)" title="Auto Build — fetch from git">
+                                    ⚡ Auto
+                                </button>
+                                <button class="btn btn-sm btn-outline-info" @onclick="() => CopyWebhookUrl(pipeline.Id)" title="Copy webhook URL">
+                                    📋 Webhook
+                                </button>
+                            }
                         <button class="btn btn-sm btn-outline-success" @onclick="() => ShowTriggerDialog(pipeline)" title="Manual Build">
                             ▶ Run
                         </button>
@@ -416,6 +426,27 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             _triggerMessage = $"❌ Error: {ex.Message}";
             IsSuccess = false;
             Logger.LogError(ex, "Failed to trigger pipeline");
+        }
+    }
+
+    private async Task CopyWebhookUrl(Guid pipelineId)
+    {
+        try
+        {
+            var detail = await Api.GetPipelineAsync(pipelineId);
+            if (detail?.Data?.WebhookUrl != null)
+            {
+                await JS.InvokeVoidAsync("navigator.clipboard.writeText", detail.Data.WebhookUrl);
+                _triggerMessage = $"✅ Webhook URL скопирован: {detail.Data.WebhookUrl}";
+                IsSuccess = true;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            _triggerMessage = $"❌ Не удалось скопировать: {ex.Message}";
+            IsSuccess = false;
+            Logger.LogWarning(ex, "Failed to copy webhook URL");
         }
     }
 

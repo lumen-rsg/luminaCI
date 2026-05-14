@@ -101,6 +101,14 @@ else if (_repos?.Data?.Repositories != null && _repos.Data.Repositories.Any())
                             <span>@repo.Distribution</span>
                         </div>
                         <hr style="border-color:var(--border-light);" />
+                        <div class="d-flex gap-2 mb-2">
+                            <button class="btn btn-sm btn-outline-primary flex-fill" @onclick="() => StartUpload(repo.Id)" title="Upload RPM package">
+                                📤 Upload
+                            </button>
+                            <button class="btn btn-sm btn-outline-success flex-fill" @onclick="() => SyncRepo(repo.Id)" title="Sync repository metadata (createrepo_c --update)">
+                                🔄 Sync
+                            </button>
+                        </div>
                         <div class="text-xs text-muted">
                             🌐 <code>packages.lumina.1t.ru@repo.BasePath</code>
                         </div>
@@ -119,6 +127,50 @@ else
     </div>
 }
 
+@* Upload Modal *@
+@if (_showUpload && _uploadRepoId.HasValue)
+{
+    <div class="modal-overlay" @onclick="() => _showUpload = false">
+        <div class="card modal-card" @onclick:stopPropagation="true" style="max-width:500px; width:90%;">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h4 class="mb-0">📤 Upload RPM Package</h4>
+                <button class="btn-close" @onclick="() => _showUpload = false"></button>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">Select RPM file</label>
+                    <InputFile OnChange="HandleFileSelected" accept=".rpm" />
+                </div>
+                @if (_selectedFileName != null)
+                {
+                    <div class="mb-3 text-sm">
+                        <span class="text-muted">Selected:</span>
+                        <strong class="text-bright">@_selectedFileName</strong>
+                        @if (_selectedFileSize > 0)
+                        {
+                            <span class="text-muted">(@(_selectedFileSize / 1024) KB)</span>
+                        }
+                    </div>
+                }
+                @if (_uploading)
+                {
+                    <div class="mb-3">
+                        <div class="progress">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%">Uploading...</div>
+                        </div>
+                    </div>
+                }
+                <div class="d-flex gap-2">
+                    <button class="btn btn-success" @onclick="DoUpload" disabled="@(_selectedFile == null || _uploading)">
+                        @(_uploading ? "Uploading..." : "Upload & Update Repo")
+                    </button>
+                    <button class="btn btn-outline-secondary" @onclick="() => _showUpload = false" disabled="@_uploading">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private ApiResponse<RepositoryListResponse>? _repos;
     private bool _loading = true;
@@ -130,6 +182,14 @@ else
     private string _newDist = "";
     private string? _alertMessage;
     private string _alertClass = "alert-success";
+
+    // Upload state
+    private bool _showUpload = false;
+    private Guid? _uploadRepoId;
+    private IBrowserFile? _selectedFile;
+    private string? _selectedFileName;
+    private long _selectedFileSize;
+    private bool _uploading;
 
     protected override async Task OnInitializedAsync()
     {
@@ -168,6 +228,82 @@ else
             _alertMessage = $"❌ Error: {ex.Message}";
             _alertClass = "alert-danger";
             Logger.LogError(ex, "Failed to create repository");
+        }
+    }
+
+    private void StartUpload(Guid repoId)
+    {
+        _uploadRepoId = repoId;
+        _selectedFile = null;
+        _selectedFileName = null;
+        _selectedFileSize = 0;
+        _uploading = false;
+        _showUpload = true;
+    }
+
+    private void HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        _selectedFile = e.File;
+        _selectedFileName = e.File.Name;
+        _selectedFileSize = e.File.Size;
+    }
+
+    private async Task DoUpload()
+    {
+        if (_selectedFile == null || !_uploadRepoId.HasValue) return;
+
+        _uploading = true;
+        try
+        {
+            using var stream = _selectedFile.OpenReadStream(maxAllowedSize: 500 * 1024 * 1024);
+            var result = await Api.UploadPackageAsync(_uploadRepoId.Value, stream, _selectedFile.Name, "web-upload");
+
+            if (result?.Success == true)
+            {
+                _showUpload = false;
+                _alertMessage = $"✅ Package uploaded and repository metadata updated!";
+                _alertClass = "alert-success";
+                _repos = await Api.GetRepositoriesAsync();
+            }
+            else
+            {
+                _alertMessage = $"❌ Upload failed: {result?.Error ?? "Unknown error"}";
+                _alertClass = "alert-danger";
+            }
+        }
+        catch (Exception ex)
+        {
+            _alertMessage = $"❌ Upload error: {ex.Message}";
+            _alertClass = "alert-danger";
+            Logger.LogError(ex, "Failed to upload package");
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private async Task SyncRepo(Guid repoId)
+    {
+        try
+        {
+            var result = await Api.SyncRepositoryAsync(repoId);
+            if (result?.Success == true)
+            {
+                _alertMessage = "✅ Repository metadata synced (createrepo_c --update)";
+                _alertClass = "alert-success";
+            }
+            else
+            {
+                _alertMessage = $"❌ Sync failed: {result?.Error ?? "Unknown error"}";
+                _alertClass = "alert-danger";
+            }
+        }
+        catch (Exception ex)
+        {
+            _alertMessage = $"❌ Sync error: {ex.Message}";
+            _alertClass = "alert-danger";
+            Logger.LogError(ex, "Failed to sync repository");
         }
     }
 }

@@ -521,6 +521,70 @@ api_get "$REPO_URL/api/repository"
 check "List repositories (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
 check_contains "Repositories response has data" "$HTTP_BODY" '"data"'
 
+# 9c. Create a dummy RPM file and upload it to the test repository
+if [ -n "$TEST_REPO_ID" ]; then
+    echo "  Creating dummy RPM file for upload test..."
+    # Create a minimal valid RPM header (enough for the upload endpoint to accept it)
+    # We use a simple binary blob with .rpm extension — the service will accept it
+    DUMMY_RPM="/tmp/lumina-smoke-test-1.0.0-1.el9.x86_64.rpm"
+    dd if=/dev/urandom of="$DUMMY_RPM" bs=1024 count=4 2>/dev/null
+
+    # Upload via multipart/form-data
+    UPLOAD_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$REPO_URL/api/repository/upload" \
+        -F "file=@$DUMMY_RPM" \
+        -F "repositoryId=$TEST_REPO_ID" \
+        -F "publishedBy=smoke-test" 2>/dev/null)
+    UPLOAD_HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -1)
+    UPLOAD_BODY=$(echo "$UPLOAD_RESPONSE" | sed '$d')
+    check "Upload RPM to repository (HTTP $UPLOAD_HTTP_CODE)" "$([ "$UPLOAD_HTTP_CODE" = "200" ] && echo true || echo false)"
+    if [ "$UPLOAD_HTTP_CODE" = "200" ]; then
+        check_field "Upload response has success=true" "$UPLOAD_BODY" '.success' "true"
+        UPLOADED_PKG_ID=$(echo "$UPLOAD_BODY" | jq -r '.data.id // empty' 2>/dev/null || echo "")
+        check "Uploaded package has ID" "$([ -n "$UPLOADED_PKG_ID" ] && echo true || echo false)"
+    fi
+
+    # Clean up dummy RPM
+    rm -f "$DUMMY_RPM"
+else
+    skip "Upload RPM to repository" "no test repo ID"
+fi
+
+# 9d. List packages in repository
+if [ -n "$TEST_REPO_ID" ]; then
+    api_get "$REPO_URL/api/repository/$TEST_REPO_ID/packages"
+    check "List packages in repository (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+    check_contains "Packages response has data array" "$HTTP_BODY" '"data"'
+    PKG_COUNT=$(echo "$HTTP_BODY" | jq -r '.data | length' 2>/dev/null || echo "0")
+    check "Repository has at least 1 package" "$([ "$PKG_COUNT" -ge 1 ] && echo true || echo false)"
+else
+    skip "List packages in repository" "no test repo ID"
+fi
+
+# 9e. Sync repository (runs createrepo_c --update)
+if [ -n "$TEST_REPO_ID" ]; then
+    api_post "$REPO_URL/api/repository/sync" "{\"repositoryId\":\"$TEST_REPO_ID\"}"
+    check "Sync repository metadata (HTTP $HTTP_CODE)" "$([ "$HTTP_CODE" = "200" ] && echo true || echo false)"
+    if [ "$HTTP_CODE" = "200" ]; then
+        check_field "Sync response success" "$HTTP_BODY" '.success' "true"
+    fi
+else
+    skip "Sync repository metadata" "no test repo ID"
+fi
+
+# 9f. Check repodata was created (via filesystem in container)
+if [ -n "$TEST_REPO_ID" ]; then
+    # Get the basePath of the test repo from the list response
+    REPO_BASEPATH=$(curl -s "$REPO_URL/api/repository" | jq -r '.data[] | select(.name == "smoke-test-repo") | .basePath // empty' 2>/dev/null || echo "")
+    if [ -n "$REPO_BASEPATH" ]; then
+        REPODATAMD=$(docker exec lumina-repository-service test -f "/app/repos${REPO_BASEPATH}/x86_64/repodata/repomd.xml" && echo "exists" || echo "missing")
+        check "repodata/repomd.xml exists" "$([ "$REPODATAMD" = "exists" ] && echo true || echo false)"
+    else
+        skip "repodata/repomd.xml check" "could not determine basePath"
+    fi
+else
+    skip "repodata/repomd.xml check" "no test repo ID"
+fi
+
 # ============================================================
 # 10. API Gateway — Proxy Routes (requires JWT)
 # ============================================================

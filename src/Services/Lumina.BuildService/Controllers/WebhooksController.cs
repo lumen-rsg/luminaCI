@@ -64,17 +64,35 @@ public class WebhooksController : ControllerBase
             "Webhook push: repo={RepoUrl}, branch={Branch}, commit={Commit}, author={Author}",
             repoUrl, branch, commit, author);
 
+        // Branch filtering: if pipeline has a configured branch, only trigger on matching pushes
+        var targetBranch = pipeline.GitBranch ?? "main";
+        if (!string.IsNullOrEmpty(branch) &&
+            !string.Equals(branch, targetBranch, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation(
+                "Webhook branch mismatch: push to '{PushBranch}' but pipeline targets '{TargetBranch}'. Skipping.",
+                branch, targetBranch);
+            return Ok(new ApiResponse<BuildJobResponse?>(true, null, null,
+                $"Push to '{branch}' ignored — pipeline targets '{targetBranch}'"));
+        }
+
         // Determine spec name from pipeline or path
         var specName = !string.IsNullOrEmpty(pipeline.SpecPath)
             ? Path.GetFileName(pipeline.SpecPath)
             : $"{pipeline.Name}.spec";
 
+        var effectiveBranch = branch ?? targetBranch;
+
         // Create build request — source will be cloned from git in the container
         var request = new TriggerBuildRequest(
             specName,
             string.Empty,  // Spec content will be read from cloned repo
-            $"git://{repoUrl}#branch={branch}&specPath={pipeline.SpecPath ?? specName}&commit={commit}",
-            author ?? "webhook"
+            $"git://{repoUrl}#branch={effectiveBranch}&specPath={pipeline.SpecPath ?? specName}&commit={commit}",
+            author ?? "webhook",
+            commit,
+            effectiveBranch,
+            ExtractCommitMessage(payload),
+            author
         );
 
         try
@@ -84,7 +102,7 @@ public class WebhooksController : ControllerBase
                 job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy,
                 job.Artifacts.Select(a => new BuildArtifactResponse(a.Id, a.FileName, a.FileSize,
                     a.HashSha256, a.HashMd5, a.PgpSignature, a.CveScanStatus)).ToList(),
-                job.SourceUrl);
+                job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
 
             return Ok(new ApiResponse<BuildJobResponse?>(true, response, null, "Build triggered from webhook"));
         }
@@ -166,5 +184,29 @@ public class WebhooksController : ControllerBase
         }
 
         return (repoUrl, branch, commit, author);
+    }
+
+    private string? ExtractCommitMessage(JsonElement payload)
+    {
+        try
+        {
+            // GitHub / Forgejo / Gitea format
+            if (payload.TryGetProperty("head_commit", out var headCommit))
+            {
+                if (headCommit.TryGetProperty("message", out var msg))
+                    return msg.GetString()?.Split('\n').FirstOrDefault(); // First line only
+            }
+
+            // GitLab format
+            if (payload.TryGetProperty("commits", out var commits) && commits.GetArrayLength() > 0)
+            {
+                var lastCommit = commits[0];
+                if (lastCommit.TryGetProperty("message", out var msg))
+                    return msg.GetString()?.Split('\n').FirstOrDefault();
+            }
+        }
+        catch { /* best effort */ }
+
+        return null;
     }
 }

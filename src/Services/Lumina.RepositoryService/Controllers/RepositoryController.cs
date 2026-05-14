@@ -9,11 +9,13 @@ namespace Lumina.RepositoryService.Controllers;
 public class RepositoryController : ControllerBase
 {
     private readonly Services.MinioStorageService _storage;
+    private readonly Services.RepositoryManagerService _repoManager;
     private readonly ILogger<RepositoryController> _logger;
 
-    public RepositoryController(Services.MinioStorageService storage, ILogger<RepositoryController> logger)
+    public RepositoryController(Services.MinioStorageService storage, Services.RepositoryManagerService repoManager, ILogger<RepositoryController> logger)
     {
         _storage = storage;
+        _repoManager = repoManager;
         _logger = logger;
     }
 
@@ -51,6 +53,38 @@ public class RepositoryController : ControllerBase
         }
         catch (Exception ex)
         {
+            return BadRequest(new ApiResponse<Package>(false, null, ex.Message, null));
+        }
+    }
+
+    /// <summary>
+    /// Upload an RPM file directly to a repository.
+    /// Accepts multipart/form-data with file and repositoryId.
+    /// </summary>
+    [HttpPost("upload")]
+    [RequestSizeLimit(500 * 1024 * 1024)] // 500MB limit
+    public async Task<ActionResult<ApiResponse<Package>>> UploadPackage([FromForm] IFormFile file, [FromForm] Guid repositoryId, [FromForm] string? publishedBy)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<Package>(false, null, "No file uploaded", null));
+
+        if (!file.FileName.EndsWith(".rpm", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new ApiResponse<Package>(false, null, "Only .rpm files are allowed", null));
+
+        try
+        {
+            var package = await _storage.UploadAndPublishPackageAsync(
+                repositoryId,
+                file.FileName,
+                file.OpenReadStream(),
+                file.Length,
+                publishedBy ?? "upload");
+
+            return Ok(new ApiResponse<Package>(true, package, null, "Package uploaded and repository metadata updated"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to upload package to repository {RepoId}", repositoryId);
             return BadRequest(new ApiResponse<Package>(false, null, ex.Message, null));
         }
     }

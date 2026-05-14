@@ -41,6 +41,10 @@ public class BuildDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.SpecName).IsRequired().HasMaxLength(256);
             entity.Property(e => e.TriggeredBy).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.CommitSha).HasMaxLength(64);
+            entity.Property(e => e.Branch).HasMaxLength(256);
+            entity.Property(e => e.CommitMessage).HasMaxLength(2048);
+            entity.Property(e => e.CommitAuthor).HasMaxLength(256);
             entity.HasMany(e => e.Artifacts).WithOne(e => e.BuildJob).HasForeignKey(e => e.BuildJobId).OnDelete(DeleteBehavior.Cascade);
         });
 
