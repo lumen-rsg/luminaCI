@@ -318,6 +318,16 @@ code {
 .table-hover tbody tr:hover {
     background: var(--bg-card-hover);
 }
+thead, .table-light {
+    background: var(--bg-card) !important;
+    color: var(--text-bright) !important;
+    border-color: var(--border-color) !important;
+}
+thead th {
+    background: var(--bg-card) !important;
+    color: var(--text-bright) !important;
+    border-color: var(--border-color) !important;
+}
 
 .table-striped tbody tr:nth-child(even) {
     background: rgba(0,0,0,0.1);
