@@ -1,6 +1,7 @@
 ﻿@inherits LayoutComponentBase
 @inject NavigationManager Navigation
 @inject Lumina.WebApp.Services.AuthService Auth
+@inject Lumina.WebApp.Services.ThemeService Theme
 
 <div class="layout">
     <NavMenu />
@@ -22,6 +23,9 @@
                 }
             </div>
             <div class="top-bar-actions">
+                <button class="theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Переключить на светлую тему" : "Переключить на тёмную тему")">
+                    @(Theme.IsDark ? "☀️" : "🌙")
+                </button>
                 <span class="text-xs text-muted">@DateTime.Now.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
             </div>
         </header>
@@ -33,6 +37,17 @@
 
 @code {
     private record BreadcrumbSegment(string Label, string? Link);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Theme.InitializeAsync();
+        Theme.OnThemeChanged += StateHasChanged;
+    }
+
+    private async Task ToggleTheme()
+    {
+        await Theme.ToggleThemeAsync();
+    }
 
     private List<BreadcrumbSegment> GetBreadcrumbs()
     {

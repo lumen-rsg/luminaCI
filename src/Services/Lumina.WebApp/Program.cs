@@ -27,6 +27,7 @@ builder.Services.AddScoped(sp =>
 });
 
 builder.Services.AddScoped<LuminaApiService>();
+builder.Services.AddScoped<ThemeService>();
 
 var host = builder.Build();
 
