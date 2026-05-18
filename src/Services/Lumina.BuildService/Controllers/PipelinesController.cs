@@ -60,6 +60,40 @@ public class PipelinesController : ControllerBase
         return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Build triggered"));
     }
 
+    [HttpPut("{id:guid}")]
+    public async Task<ActionResult<ApiResponse<PipelineResponse>>> Update(Guid id, [FromBody] UpdatePipelineRequest request)
+    {
+        try
+        {
+            var p = await _engine.UpdatePipelineAsync(id, request);
+            var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
+            var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
+                p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
+                p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
+                p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
+            return Ok(new ApiResponse<PipelineResponse>(true, response, null, "Pipeline updated"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(new ApiResponse<PipelineResponse>(false, null, ex.Message, null));
+        }
+    }
+
+    [HttpDelete("{id:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> Delete(Guid id)
+    {
+        try
+        {
+            var deleted = await _engine.DeletePipelineAsync(id);
+            if (!deleted) return NotFound(new ApiResponse<object>(false, null, "Pipeline not found", null));
+            return Ok(new ApiResponse<object>(true, null, null, "Pipeline deleted"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<object>(false, null, ex.Message, null));
+        }
+    }
+
     /// <summary>
     /// Trigger an automatic build using the pipeline's configured git repository.
     /// No request body needed — sources are fetched from git automatically.

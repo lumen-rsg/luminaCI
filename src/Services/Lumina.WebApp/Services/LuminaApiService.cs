@@ -52,6 +52,18 @@ public class LuminaApiService
         return await resp.Content.ReadFromJsonAsync<ApiResponse<PipelineResponse>>();
     }
 
+    public async Task<ApiResponse<PipelineResponse>?> UpdatePipelineAsync(Guid id, UpdatePipelineRequest request)
+    {
+        var resp = await _http.PutAsJsonAsync($"/api/pipelines/{id}", request);
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<PipelineResponse>>();
+    }
+
+    public async Task<ApiResponse<object>?> DeletePipelineAsync(Guid id)
+    {
+        var resp = await _http.DeleteAsync($"/api/pipelines/{id}");
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
+    }
+
     public async Task<ApiResponse<BuildJobResponse>?> TriggerPipelineAsync(Guid pipelineId)
     {
         var resp = await _http.PostAsync($"/api/pipelines/{pipelineId}/trigger", null);

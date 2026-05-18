@@ -145,6 +145,90 @@ Version: 1.0
     </div>
 }
 
+<!-- Edit Pipeline Dialog -->
+@if (_showEdit)
+{
+    <div class="card mb-4 animate-slide-in" style="border-color:var(--accent-yellow, #f0ad4e);">
+        <div class="card-header" style="background:rgba(240,173,78,0.1);">
+            <h4 class="mb-0">✏️ Edit Pipeline — @_editName</h4>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Name</label>
+                    <input type="text" class="form-control" @bind="_editName" />
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Description</label>
+                    <input type="text" class="form-control" @bind="_editDescription" />
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Tags (comma-separated)</label>
+                <input type="text" class="form-control" @bind="_editTags" />
+            </div>
+            <div class="section-title mt-4">🔗 Git Integration</div>
+            <div class="mb-3">
+                <label class="form-label">Git Repository URL</label>
+                <input type="text" class="form-control" @bind="_editGitRepoUrl" />
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">Branch</label>
+                    <input type="text" class="form-control" @bind="_editGitBranch" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Spec File Path</label>
+                    <input type="text" class="form-control" @bind="_editSpecPath" />
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">Git Username</label>
+                    <input type="text" class="form-control" @bind="_editGitUsername" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Git Token / Password</label>
+                    <input type="password" class="form-control" @bind="_editGitToken" placeholder="Leave empty to keep current" />
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Build Image</label>
+                <select class="form-select" @bind="_editBuildImage">
+                    <option value="">Default (rpm-build)</option>
+                    <option value="lumina-dotnet-build:latest">.NET / NativeAOT</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">RPM Spec Content (inline)</label>
+                <textarea class="form-control font-monospace" rows="6" @bind="_editSpecContent" style="font-size:0.82rem;"></textarea>
+            </div>
+            <div class="d-flex gap-2 mt-3">
+                <button class="btn btn-warning" @onclick="SaveEditPipeline">💾 Save Changes</button>
+                <button class="btn btn-outline-secondary" @onclick="() => _showEdit = false">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Delete Confirmation -->
+@if (_showDeleteConfirm)
+{
+    <div class="card mb-4 animate-slide-in" style="border-color:var(--danger, #dc3545);">
+        <div class="card-header" style="background:rgba(220,53,69,0.1);">
+            <h4 class="mb-0">🗑️ Delete Pipeline — @_deletePipelineName?</h4>
+        </div>
+        <div class="card-body">
+            <p>Are you sure you want to delete pipeline <strong>@_deletePipelineName</strong>?</p>
+            <p class="text-muted text-sm">This action cannot be undone. Build history will be preserved.</p>
+            <div class="d-flex gap-2">
+                <button class="btn btn-danger" @onclick="DeletePipeline">🗑️ Delete</button>
+                <button class="btn btn-outline-secondary" @onclick="() => _showDeleteConfirm = false">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
 <!-- Alert Messages -->
 @if (_triggerMessage != null)
 {
@@ -197,7 +281,7 @@ else if (_pipelines?.Data?.Pipelines != null && _pipelines.Data.Pipelines.Any())
                             <span>🔢 @pipeline.StepCount steps</span>
                         </div>
                     </div>
-                    <div class="d-flex gap-2">
+                        <div class="d-flex gap-2">
                         @if (!string.IsNullOrEmpty(pipeline.GitRepoUrl))
                             {
                                 <button class="btn btn-sm btn-success" @onclick="() => AutoBuild(pipeline.Id, pipeline.Name)" title="Auto Build — fetch from git">
@@ -209,6 +293,12 @@ else if (_pipelines?.Data?.Pipelines != null && _pipelines.Data.Pipelines.Any())
                             }
                         <button class="btn btn-sm btn-outline-success" @onclick="() => ShowTriggerDialog(pipeline)" title="Manual Build">
                             ▶ Run
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning" @onclick="() => ShowEditDialog(pipeline)" title="Edit Pipeline">
+                            ✏️ Edit
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(pipeline)" title="Delete Pipeline">
+                            🗑️
                         </button>
                         <a href="/builds" class="btn btn-sm btn-outline-primary" title="View Builds">
                             📋 Builds
@@ -261,6 +351,25 @@ else
     private string _triggeredBy = "admin";
     private string? _triggerMessage;
     private bool IsSuccess;
+
+    // Edit dialog
+    private bool _showEdit = false;
+    private Guid _editId;
+    private string _editName = "";
+    private string _editDescription = "";
+    private string _editTags = "";
+    private string _editGitRepoUrl = "";
+    private string _editGitBranch = "main";
+    private string _editSpecPath = "";
+    private string _editBuildImage = "";
+    private string _editGitUsername = "";
+    private string _editGitToken = "";
+    private string _editSpecContent = "";
+
+    // Delete dialog
+    private bool _showDeleteConfirm = false;
+    private Guid _deletePipelineId;
+    private string _deletePipelineName = "";
 
     private readonly string _defaultSpec = @"Name:           lumina-hello
 Version:        1.0.0
@@ -496,6 +605,107 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
     {
         try { return new Uri(url).Host; }
         catch { return url.Length > 30 ? url[..30] + "…" : url; }
+    }
+
+    private async Task ShowEditDialog(PipelineSummaryResponse pipeline)
+    {
+        _editId = pipeline.Id;
+        _editName = pipeline.Name;
+        _editDescription = pipeline.Description;
+        _editGitRepoUrl = pipeline.GitRepoUrl ?? "";
+        _editGitBranch = pipeline.GitBranch ?? "main";
+        _showEdit = true;
+
+        // Load full details
+        try
+        {
+            var detail = await Api.GetPipelineAsync(pipeline.Id);
+            if (detail?.Data != null)
+            {
+                _editTags = detail.Data.Tags != null ? string.Join(", ", detail.Data.Tags) : "";
+                _editSpecPath = detail.Data.SpecPath ?? "";
+                _editBuildImage = detail.Data.BuildImage ?? "";
+                _editGitUsername = detail.Data.GitUsername ?? "";
+                _editSpecContent = detail.Data.SpecContent ?? "";
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load pipeline details for edit");
+        }
+    }
+
+    private async Task SaveEditPipeline()
+    {
+        try
+        {
+            var tags = _editTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            var steps = new List<CreatePipelineStepRequest>
+            {
+                new(StepType.Build, "Build RPM", 1, new Dictionary<string, string>()),
+                new(StepType.Scan, "CVE Scan", 2, new Dictionary<string, string>()),
+                new(StepType.Sign, "PGP Sign", 3, new Dictionary<string, string>()),
+                new(StepType.Publish, "Publish", 4, new Dictionary<string, string>())
+            };
+
+            var result = await Api.UpdatePipelineAsync(_editId, new UpdatePipelineRequest(
+                _editName, _editDescription, steps, tags,
+                _editGitRepoUrl, _editGitBranch, _editSpecPath, _editBuildImage,
+                _editGitUsername,
+                string.IsNullOrWhiteSpace(_editGitToken) ? null : _editGitToken,
+                string.IsNullOrWhiteSpace(_editSpecContent) ? null : _editSpecContent));
+
+            if (result?.Success == true)
+            {
+                _showEdit = false;
+                _triggerMessage = "✅ Pipeline updated successfully!";
+                IsSuccess = true;
+                _pipelines = await Api.GetPipelinesAsync(1, 50);
+            }
+            else
+            {
+                _triggerMessage = $"❌ Update failed: {result?.Error ?? "Unknown error"}";
+                IsSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _triggerMessage = $"❌ Error: {ex.Message}";
+            IsSuccess = false;
+        }
+    }
+
+    private void ConfirmDelete(PipelineSummaryResponse pipeline)
+    {
+        _deletePipelineId = pipeline.Id;
+        _deletePipelineName = pipeline.Name;
+        _showDeleteConfirm = true;
+    }
+
+    private async Task DeletePipeline()
+    {
+        try
+        {
+            var result = await Api.DeletePipelineAsync(_deletePipelineId);
+            if (result?.Success == true)
+            {
+                _showDeleteConfirm = false;
+                _triggerMessage = $"✅ Pipeline '{_deletePipelineName}' deleted";
+                IsSuccess = true;
+                _pipelines = await Api.GetPipelinesAsync(1, 50);
+            }
+            else
+            {
+                _triggerMessage = $"❌ Delete failed: {result?.Error ?? "Unknown error"}";
+                IsSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _triggerMessage = $"❌ Error: {ex.Message}";
+            IsSuccess = false;
+        }
     }
 
     private string GetPipelineStatusBadge(PipelineStatus status) => status switch

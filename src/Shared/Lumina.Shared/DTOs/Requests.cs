@@ -17,7 +17,18 @@ public record CreatePipelineRequest(
     string? GitToken = null,
     string? SpecContent = null);
 
-public record UpdatePipelineRequest(string Name, string Description, List<CreatePipelineStepRequest> Steps, List<string> Tags);
+public record UpdatePipelineRequest(
+    string Name,
+    string Description,
+    List<CreatePipelineStepRequest> Steps,
+    List<string> Tags,
+    string? GitRepoUrl = null,
+    string? GitBranch = null,
+    string? SpecPath = null,
+    string? BuildImage = null,
+    string? GitUsername = null,
+    string? GitToken = null,
+    string? SpecContent = null);
 
 public record CreatePipelineStepRequest(StepType Type, string Name, int Order, Dictionary<string, string> Configuration);
 

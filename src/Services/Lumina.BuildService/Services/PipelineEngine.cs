@@ -295,6 +295,64 @@ public class PipelineEngine
             .FirstOrDefaultAsync(b => b.Artifacts.Any(a => a.Id == artifactId));
     }
 
+    public async Task<Pipeline> UpdatePipelineAsync(Guid id, Shared.DTOs.UpdatePipelineRequest request)
+    {
+        var pipeline = await _db.Pipelines.Include(p => p.Steps).FirstOrDefaultAsync(p => p.Id == id);
+        if (pipeline == null)
+            throw new InvalidOperationException($"Pipeline {id} not found");
+
+        pipeline.Name = request.Name;
+        pipeline.Description = request.Description;
+        pipeline.Tags = request.Tags;
+        pipeline.UpdatedAt = DateTime.UtcNow;
+
+        // Update git fields if provided
+        if (request.GitRepoUrl != null) pipeline.GitRepoUrl = request.GitRepoUrl;
+        if (request.GitBranch != null) pipeline.GitBranch = request.GitBranch;
+        if (request.SpecPath != null) pipeline.SpecPath = request.SpecPath;
+        if (request.BuildImage != null) pipeline.BuildImage = request.BuildImage;
+        if (request.GitUsername != null) pipeline.GitUsername = request.GitUsername;
+        if (request.GitToken != null) pipeline.GitToken = request.GitToken;
+        if (request.SpecContent != null) pipeline.SpecContent = request.SpecContent;
+
+        // Replace steps
+        _db.PipelineSteps.RemoveRange(pipeline.Steps);
+        pipeline.Steps = request.Steps.Select((s, i) => new PipelineStep
+        {
+            Id = Guid.NewGuid(),
+            PipelineId = pipeline.Id,
+            Type = s.Type,
+            Name = s.Name,
+            Order = s.Order,
+            Status = StepStatus.Pending,
+            Configuration = s.Configuration
+        }).ToList();
+
+        _db.Pipelines.Update(pipeline);
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Pipeline {PipelineId} updated", pipeline.Id);
+        return pipeline;
+    }
+
+    public async Task<bool> DeletePipelineAsync(Guid id)
+    {
+        var pipeline = await _db.Pipelines.Include(p => p.Steps).FirstOrDefaultAsync(p => p.Id == id);
+        if (pipeline == null) return false;
+
+        // Check for active builds
+        var activeBuilds = await _db.BuildJobs
+            .Where(b => b.PipelineId == id && (b.Status == BuildStatus.Queued || b.Status == BuildStatus.Building))
+            .CountAsync();
+        if (activeBuilds > 0)
+            throw new InvalidOperationException($"Cannot delete pipeline {id}: {activeBuilds} active build(s) running");
+
+        _db.PipelineSteps.RemoveRange(pipeline.Steps);
+        _db.Pipelines.Remove(pipeline);
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Pipeline {PipelineId} deleted", id);
+        return true;
+    }
+
     public async Task UpdateBuildJobAsync(BuildJob job)
     {
         _db.BuildJobs.Update(job);
