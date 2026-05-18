@@ -20,6 +20,18 @@ public class LuminaApiService
         return await _http.GetFromJsonAsync<ApiResponse<BuildListResponse>>($"/api/builds?page={page}&pageSize={pageSize}");
     }
 
+    public async Task<ApiResponse<object>?> CancelBuildAsync(Guid buildId)
+    {
+        var response = await _http.PostAsync($"/api/builds/{buildId}/cancel", null);
+        return await response.Content.ReadFromJsonAsync<ApiResponse<object>>();
+    }
+
+    public async Task<ApiResponse<object>?> ClearBuildQueueAsync()
+    {
+        var response = await _http.DeleteAsync("/api/builds/queue/clear");
+        return await response.Content.ReadFromJsonAsync<ApiResponse<object>>();
+    }
+
     public async Task<ApiResponse<BuildQueueResponse>?> GetBuildQueueAsync()
     {
         return await _http.GetFromJsonAsync<ApiResponse<BuildQueueResponse>>("/api/builds/queue");

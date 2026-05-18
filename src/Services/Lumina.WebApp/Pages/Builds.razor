@@ -10,6 +10,7 @@
     <h1>📦 Builds</h1>
     <div class="page-header-actions">
         <a href="/pipelines" class="btn btn-outline-success">▶ Trigger Build</a>
+        <button class="btn btn-outline-danger" @onclick="ClearQueue" title="Clear all queued builds">🗑 Clear Queue</button>
         <button class="btn btn-outline-secondary" @onclick="LoadBuilds">🔄</button>
     </div>
 </div>
@@ -107,6 +108,12 @@ else if (FilteredBuilds.Any())
                                         <span class="badge-dot red"></span> Failed
                                     </span>
                                 }
+                                else if (build.Status == BuildStatus.Cancelled)
+                                {
+                                    <span class="badge bg-dark">
+                                        <span class="badge-dot" style="background:var(--text-primary);"></span> Cancelled
+                                    </span>
+                                }
                                 else
                                 {
                                     <span class="badge bg-secondary">@build.Status</span>
@@ -133,7 +140,13 @@ else if (FilteredBuilds.Any())
                             <td class="text-sm text-muted">
                                 @build.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")
                             </td>
-                            <td>
+                            <td class="d-flex gap-2">
+                                @if (build.Status == BuildStatus.Queued || build.Status == BuildStatus.Building)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => CancelBuild(build.Id)" @onclick:stopPropagation title="Cancel build">
+                                        🚫
+                                    </button>
+                                }
                                 <a href="/builds/@build.Id" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">
                                     Details
                                 </a>
@@ -215,6 +228,32 @@ else
     private void FilterFailed() => SetFilter("failed");
     private void FilterBuilding() => SetFilter("building");
     private void FilterQueued() => SetFilter("queued");
+
+    private async Task CancelBuild(Guid buildId)
+    {
+        try
+        {
+            await Api.CancelBuildAsync(buildId);
+            await LoadBuilds();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to cancel build {BuildId}", buildId);
+        }
+    }
+
+    private async Task ClearQueue()
+    {
+        try
+        {
+            await Api.ClearBuildQueueAsync();
+            await LoadBuilds();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to clear build queue");
+        }
+    }
 
     private async Task ChangePage(int delta)
     {

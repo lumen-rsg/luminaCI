@@ -353,9 +353,28 @@ public class PipelineEngine
         return true;
     }
 
+    public async Task<int> ClearQueuedBuildsAsync()
+    {
+        var queuedJobs = await _db.BuildJobs
+            .Where(b => b.Status == BuildStatus.Queued)
+            .ToListAsync();
+
+        foreach (var job in queuedJobs)
+        {
+            job.Status = BuildStatus.Cancelled;
+            job.CompletedAt = DateTime.UtcNow;
+        }
+
+        _db.BuildJobs.UpdateRange(queuedJobs);
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Cleared {Count} queued builds", queuedJobs.Count);
+        return queuedJobs.Count;
+    }
+
     public async Task UpdateBuildJobAsync(BuildJob job)
     {
         _db.BuildJobs.Update(job);
         await _db.SaveChangesAsync();
     }
-}
+ }

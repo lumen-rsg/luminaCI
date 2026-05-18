@@ -462,20 +462,43 @@ public class DockerBuildService
     public async Task<bool> CancelBuildAsync(Guid jobId)
     {
         var job = await _db.BuildJobs.FindAsync(jobId);
-        if (job == null || job.ContainerId == null) return false;
+        if (job == null) return false;
+        if (job.Status != BuildStatus.Queued && job.Status != BuildStatus.Building) return false;
 
         try
         {
-            await _docker.Containers.StopContainerAsync(job.ContainerId, new ContainerStopParameters());
+            // Stop Docker container if one exists
+            if (!string.IsNullOrEmpty(job.ContainerId))
+            {
+                try
+                {
+                    await _docker.Containers.StopContainerAsync(job.ContainerId, new ContainerStopParameters { WaitBeforeKillSeconds = 5 });
+                    _logger.LogInformation("Stopped container {ContainerId} for cancelled build {BuildId}", job.ContainerId, jobId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to stop container {ContainerId} for build {BuildId}", job.ContainerId, jobId);
+                }
+
+                // Remove the container
+                try
+                {
+                    await _docker.Containers.RemoveContainerAsync(job.ContainerId, new ContainerRemoveParameters { Force = true });
+                }
+                catch { /* best effort */ }
+            }
+
+            var previousStatus = job.Status.ToString();
             job.Status = BuildStatus.Cancelled;
             job.CompletedAt = DateTime.UtcNow;
             _db.BuildJobs.Update(job);
             await _db.SaveChangesAsync();
+            _logger.LogInformation("Build {BuildId} cancelled (was {PreviousStatus})", jobId, previousStatus);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to cancel build {JobId}", jobId);
+            _logger.LogError(ex, "Failed to cancel build {BuildId}", jobId);
             return false;
         }
     }

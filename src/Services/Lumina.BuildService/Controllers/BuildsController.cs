@@ -49,6 +49,13 @@ public class BuildsController : ControllerBase
         return Ok(new ApiResponse<object>(true, null, null, "Build cancelled"));
     }
 
+    [HttpDelete("queue/clear")]
+    public async Task<ActionResult<ApiResponse<object>>> ClearQueue()
+    {
+        var count = await _engine.ClearQueuedBuildsAsync();
+        return Ok(new ApiResponse<object>(true, null, null, $"Cleared {count} queued build(s)"));
+    }
+
     [HttpGet("queue")]
     public async Task<ActionResult<ApiResponse<BuildQueueResponse>>> Queue()
     {
