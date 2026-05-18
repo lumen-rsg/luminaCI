@@ -63,3 +63,10 @@ public record AuditLogListResponse(List<AuditLogResponse> Logs, int TotalCount, 
 public record DashboardStatsResponse(int TotalPipelines, int ActiveBuilds, int CompletedToday, int FailedToday, int VulnerablePackages, int TotalPackages);
 
 public record BuildQueueResponse(List<BuildJobSummaryResponse> Queued, List<BuildJobSummaryResponse> Running, int QueuedCount, int RunningCount);
+
+// Source Responses
+public record SourcePackageResponse(string PackageName, string SourceUrl, SourceType SourceType, string? SourceBranch, SourceStatus Status, string? ErrorMessage, long? FileSize, string? HashSha256, DateTime? LastFetchedAt);
+
+public record SourceListResponse(List<SourcePackageResponse> Packages, int TotalCount);
+
+public record SourceFetchResponse(Guid JobId, string PackageName, SourceStatus Status, string? ErrorMessage);

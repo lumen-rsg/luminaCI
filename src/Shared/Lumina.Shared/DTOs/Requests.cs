@@ -38,3 +38,8 @@ public record CreateRepositoryRequest(string Name, string DisplayName, string Ba
 public record PublishPackageRequest(Guid ArtifactId, Guid RepositoryId, string PublishedBy);
 
 public record SyncRepositoryRequest(Guid RepositoryId);
+
+// Source DTOs
+public record FetchSourceRequest(string PackageName, int MaxRetries = 3);
+
+public record FetchAllSourcesRequest(int MaxRetries = 3);

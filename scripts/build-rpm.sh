@@ -6,6 +6,7 @@
 #   SPEC_CONTENT  — .spec file content (base64 encoded)
 #   SPEC_NAME     — Name of the spec file
 #   SOURCE_URL    — URL to download source tarball (optional, or git://... format)
+#   SOURCE_DIR    — Directory with pre-fetched sources (mounted by SourceService, optional)
 #   ARTIFACTS_DIR — Output directory for built RPMs
 #   BUILD_JOB_ID  — Build job ID for tracking
 #   AUTO_DOWNLOAD — Set to "true" to auto-download Source0/Source1 from spec (default: true)
@@ -231,6 +232,78 @@ if [ -n "${SOURCE_URL:-}" ]; then
             echo "WARNING: Failed to download source"
         }
     fi
+fi
+
+# ─── Step 1b: Copy pre-fetched sources from SOURCE_DIR if mounted ───
+if [ -n "${SOURCE_DIR:-}" ] && [ -d "${SOURCE_DIR}" ]; then
+    echo "=== Using pre-fetched sources from ${SOURCE_DIR} ==="
+    
+    # Check if SOURCE_DIR contains a git repo (has .git directory)
+    if [ -d "${SOURCE_DIR}/repo/.git" ] || [ -d "${SOURCE_DIR}/.git" ]; then
+        REPO_DIR="${SOURCE_DIR}"
+        [ -d "${SOURCE_DIR}/repo" ] && REPO_DIR="${SOURCE_DIR}/repo"
+        
+        echo "Source is a git repository: ${REPO_DIR}"
+        
+        # Auto-find spec file in repo if not already provided
+        if [ -z "${SPEC_CONTENT:-}" ]; then
+            FOUND_SPEC=$(find "${REPO_DIR}" -maxdepth 3 -name "*.spec" -type f 2>/dev/null | head -1)
+            if [ -n "${FOUND_SPEC}" ]; then
+                cp "${FOUND_SPEC}" "${BUILD_DIR}/SPECS/${SPEC_NAME}"
+                echo "Auto-found spec in pre-fetched repo: ${FOUND_SPEC}"
+            fi
+        fi
+        
+        # Copy source files from repo
+        find "${REPO_DIR}" -maxdepth 1 \( -name "*.tar.gz" -o -name "*.tar.bz2" -o -name "*.tar.xz" -o -name "*.patch" -o -name "*.diff" \) -exec cp {} "${BUILD_DIR}/SOURCES/" \;
+        
+        for srcdir in "${REPO_DIR}/sources" "${REPO_DIR}/SOURCES" "${REPO_DIR}/dist"; do
+            if [ -d "$srcdir" ]; then
+                cp "$srcdir"/* "${BUILD_DIR}/SOURCES/" 2>/dev/null || true
+                echo "Copied sources from ${srcdir}"
+            fi
+        done
+        
+        # Create source tarball from repo content
+        PKG_NAME_FROM_SPEC=$(grep -i "^Name:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
+        PKG_VERSION_FROM_SPEC=$(grep -i "^Version:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
+        if [ -n "${PKG_NAME_FROM_SPEC}" ] && [ -n "${PKG_VERSION_FROM_SPEC}" ]; then
+            TARBALL_NAME="${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}.tar.gz"
+            if [ ! -f "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" ]; then
+                echo "Creating source tarball from pre-fetched repo: ${TARBALL_NAME}"
+                TMP_TARDIR=$(mktemp -d)
+                mkdir -p "${TMP_TARDIR}/${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}"
+                cp -r "${REPO_DIR}"/* "${TMP_TARDIR}/${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}/" 2>/dev/null || true
+                tar -czf "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" -C "${TMP_TARDIR}" "${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}"
+                rm -rf "${TMP_TARDIR}"
+            fi
+        fi
+    else
+        # SOURCE_DIR contains tarballs or other files — copy directly to SOURCES
+        echo "Copying pre-fetched source files from ${SOURCE_DIR}"
+        cp -v "${SOURCE_DIR}"/* "${BUILD_DIR}/SOURCES/" 2>/dev/null || true
+        
+        # If there's an "extracted" subdirectory, handle it
+        if [ -d "${SOURCE_DIR}/extracted" ]; then
+            echo "Found extracted sources in ${SOURCE_DIR}/extracted"
+            PKG_NAME_FROM_SPEC=$(grep -i "^Name:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
+            PKG_VERSION_FROM_SPEC=$(grep -i "^Version:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
+            if [ -n "${PKG_NAME_FROM_SPEC}" ] && [ -n "${PKG_VERSION_FROM_SPEC}" ]; then
+                TARBALL_NAME="${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}.tar.gz"
+                if [ ! -f "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" ]; then
+                    echo "Creating tarball from extracted sources: ${TARBALL_NAME}"
+                    tar -czf "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" -C "${SOURCE_DIR}/extracted" .
+                fi
+            fi
+        fi
+    fi
+    
+    echo "Pre-fetched sources preparation completed"
+    echo "SOURCES directory contents:"
+    ls -la "${BUILD_DIR}/SOURCES/"
+    
+    # Skip auto-download since sources are pre-fetched
+    AUTO_DOWNLOAD="false"
 fi
 
 # ─── Step 2: Auto-download Source0/Source1/... from spec ───

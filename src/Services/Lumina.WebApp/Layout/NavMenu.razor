@@ -1,4 +1,6 @@
 ﻿@inject Lumina.WebApp.Services.LuminaApiService Api
+@inject Lumina.WebApp.Services.AuthService Auth
+@inject NavigationManager Nav
 
 <div class="sidebar">
     <div class="sidebar-brand">
@@ -7,50 +9,65 @@
             <span>Lumina CI</span>
         </a>
     </div>
-    <nav class="sidebar-nav">
-        <div class="sidebar-section">Overview</div>
-        <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
-            <li class="nav-item">
-                <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                    <span class="nav-icon">📊</span> Dashboard
-                </NavLink>
-            </li>
-        </ul>
 
-        <div class="sidebar-section">CI/CD</div>
-        <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
-            <li class="nav-item">
-                <NavLink class="nav-link" href="pipelines">
-                    <span class="nav-icon">🔄</span> Pipelines
-                </NavLink>
-            </li>
-            <li class="nav-item">
-                <NavLink class="nav-link" href="builds">
-                    <span class="nav-icon">📦</span> Builds
-                    @if (_queueBadge > 0)
-                    {
-                        <span class="nav-badge">@_queueBadge</span>
-                    }
-                </NavLink>
-            </li>
-        </ul>
+    @if (Auth.IsAuthenticated)
+    {
+        <nav class="sidebar-nav">
+            <div class="sidebar-section">Overview</div>
+            <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
+                <li class="nav-item">
+                    <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                        <span class="nav-icon">📊</span> Dashboard
+                    </NavLink>
+                </li>
+            </ul>
 
-        <div class="sidebar-section">Management</div>
-        <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
-            <li class="nav-item">
-                <NavLink class="nav-link" href="security">
-                    <span class="nav-icon">🔐</span> Security
-                </NavLink>
-            </li>
-            <li class="nav-item">
-                <NavLink class="nav-link" href="repositories">
-                    <span class="nav-icon">📂</span> Repositories
-                </NavLink>
-            </li>
-        </ul>
-    </nav>
+            <div class="sidebar-section">CI/CD</div>
+            <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
+                <li class="nav-item">
+                    <NavLink class="nav-link" href="pipelines">
+                        <span class="nav-icon">🔄</span> Pipelines
+                    </NavLink>
+                </li>
+                <li class="nav-item">
+                    <NavLink class="nav-link" href="builds">
+                        <span class="nav-icon">📦</span> Builds
+                        @if (_queueBadge > 0)
+                        {
+                            <span class="nav-badge">@_queueBadge</span>
+                        }
+                    </NavLink>
+                </li>
+            </ul>
+
+            <div class="sidebar-section">Management</div>
+            <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
+                <li class="nav-item">
+                    <NavLink class="nav-link" href="security">
+                        <span class="nav-icon">🔐</span> Security
+                    </NavLink>
+                </li>
+                <li class="nav-item">
+                    <NavLink class="nav-link" href="repositories">
+                        <span class="nav-icon">📂</span> Repositories
+                    </NavLink>
+                </li>
+            </ul>
+        </nav>
+    }
+
     <div class="sidebar-footer">
-        <small>Lumina CI v1.0</small>
+        @if (Auth.IsAuthenticated)
+        {
+            <button class="btn btn-sm btn-outline-secondary w-100" @onclick="DoLogout">
+                🚪 Logout
+            </button>
+        }
+        else
+        {
+            <a href="/login" class="btn btn-sm btn-primary w-100">🔐 Sign In</a>
+        }
+        <small class="mt-2 d-block text-muted">Lumina CI v1.0</small>
     </div>
 </div>
 
@@ -59,11 +76,36 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Auth.OnAuthStateChanged += StateChanged;
+        if (Auth.IsAuthenticated)
+        {
+            await LoadQueueBadge();
+        }
+    }
+
+    private async Task LoadQueueBadge()
+    {
         try
         {
             var queue = await Api.GetBuildQueueAsync();
             _queueBadge = (queue?.Data?.QueuedCount ?? 0) + (queue?.Data?.RunningCount ?? 0);
         }
         catch { /* sidebar badge is non-critical */ }
+    }
+
+    private async Task DoLogout()
+    {
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login", forceLoad: true);
+    }
+
+    private void StateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Auth.OnAuthStateChanged -= StateChanged;
     }
 }

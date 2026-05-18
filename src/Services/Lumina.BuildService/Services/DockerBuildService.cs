@@ -29,7 +29,7 @@ public class DockerBuildService
         _docker = new DockerClientConfiguration(new Uri(dockerUrl)).CreateClient();
     }
 
-    public async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null)
+    public async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? sourceDir = null)
     {
         var imageName = !string.IsNullOrWhiteSpace(buildImage) ? buildImage : "lumina-rpm-build:latest";
         _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName}) with image {Image}", job.Id, job.SpecName, imageName);
@@ -56,6 +56,10 @@ public class DockerBuildService
             if (!string.IsNullOrEmpty(sourceUrl))
                 envVars.Add($"SOURCE_URL={sourceUrl}");
 
+            // If pre-fetched source directory is provided, mount it into the container
+            if (!string.IsNullOrEmpty(sourceDir))
+                envVars.Add($"SOURCE_DIR=/sources");
+
             // Pass git credentials for private repositories
             if (!string.IsNullOrEmpty(gitUsername))
                 envVars.Add($"GIT_USERNAME={gitUsername}");
@@ -69,16 +73,25 @@ public class DockerBuildService
             if (!string.IsNullOrEmpty(job.Branch))
                 envVars.Add($"BRANCH={job.Branch}");
 
+            var binds = new List<string>
+            {
+                $"{artifactDir}:/artifacts:z"
+            };
+
+            // Mount pre-fetched sources if available
+            if (!string.IsNullOrEmpty(sourceDir) && Directory.Exists(sourceDir))
+            {
+                binds.Add($"{sourceDir}:/sources:z");
+                _logger.LogInformation("Mounting pre-fetched sources from {SourceDir}", sourceDir);
+            }
+
             var createParams = new CreateContainerParameters
             {
                 Image = imageName,
                 Env = envVars,
                 HostConfig = new HostConfig
                 {
-                    Binds = new List<string>
-                    {
-                        $"{artifactDir}:/artifacts:z"
-                    },
+                    Binds = binds,
                     Memory = 2L * 1024 * 1024 * 1024 // 2GB limit
                 },
                 Name = $"lumina-build-{job.Id:N}",

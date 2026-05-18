@@ -92,6 +92,7 @@ services:
       - Services__SecurityService=http://security-service:5002
       - Services__ScannerService=http://scanner-service:5003
       - Services__RepositoryService=http://repository-service:5004
+      - Services__SourceService=http://source-service:5006
       - Ldap__Host=${LDAP_HOST:-localhost}
       - Ldap__Port=${LDAP_PORT:-389}
       - Ldap__BaseDn=${LDAP_BASE_DN:-dc=lumina,dc=1t,dc=ru}
@@ -248,6 +249,40 @@ services:
     networks:
       - lumina-network
 
+  source-service:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Lumina.SourceService.Dockerfile
+    container_name: lumina-source-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5006
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=lumina
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - MinIO__Endpoint=minio:9000
+      - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
+      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - Source__ConfigPath=/app/conf.ini
+      - Source__MaxRetries=3
+      - Source__FetchTimeoutMinutes=30
+      - Source__TempDir=/tmp/source-fetch
+    ports:
+      - "5006:5006"
+    volumes:
+      - ../conf.ini:/app/conf.ini:ro,z
+      - source_temp:/tmp/source-fetch
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - lumina-network
+
   webapp:
     build:
       context: ../
@@ -302,6 +337,7 @@ volumes:
   gpg_keys:
   trivy_cache:
   repo_data:
+  source_temp:
 
 networks:
   lumina-network:

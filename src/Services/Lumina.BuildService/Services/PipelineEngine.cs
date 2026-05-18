@@ -161,6 +161,89 @@ public class PipelineEngine
         return await TriggerBuildAsync(pipelineId, request);
     }
 
+    /// <summary>
+    /// Trigger a build using pre-fetched sources from the SourceService.
+    /// This is used when sources are downloaded by the SourceService (git, http, ftp, rsync, svn, hg).
+    /// The SourceService downloads sources to MinIO, then we download them locally and mount into the build container.
+    /// </summary>
+    public async Task<BuildJob> TriggerBuildFromConfigAsync(
+        string packageName, string sourceDir, string specContent, string specName,
+        string? buildImage = null, string triggeredBy = "source-service")
+    {
+        // Find or create a pipeline for this package
+        var pipeline = await _db.Pipelines
+            .FirstOrDefaultAsync(p => p.Name == packageName);
+
+        if (pipeline == null)
+        {
+            pipeline = new Pipeline
+            {
+                Id = Guid.NewGuid(),
+                Name = packageName,
+                Description = $"Auto-created pipeline for {packageName} (from conf.ini)",
+                Status = PipelineStatus.Active,
+                CreatedBy = triggeredBy,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                SpecPath = specName,
+                BuildImage = buildImage,
+                Steps = new List<PipelineStep>
+                {
+                    new()
+                    {
+                        Id = Guid.NewGuid(),
+                        Type = StepType.Build,
+                        Name = "Build RPM",
+                        Order = 1,
+                        Status = StepStatus.Pending,
+                        Configuration = new Dictionary<string, string>
+                        {
+                            { "sourceType", "pre-fetched" }
+                        }
+                    }
+                }
+            };
+
+            _db.Pipelines.Add(pipeline);
+            await _db.SaveChangesAsync();
+            _logger.LogInformation("Auto-created pipeline {PipelineId} for package {Package}", pipeline.Id, packageName);
+        }
+
+        var job = new BuildJob
+        {
+            Id = Guid.NewGuid(),
+            PipelineId = pipeline.Id,
+            Status = BuildStatus.Queued,
+            SpecName = specName,
+            SpecContent = specContent,
+            SourceUrl = $"pre-fetched://{packageName}",
+            TriggeredBy = triggeredBy,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _db.BuildJobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Build job {JobId} queued for package {Package} with pre-fetched sources", job.Id, packageName);
+
+        var buildStep = pipeline.Steps.FirstOrDefault(s => s.Type == StepType.Build);
+        if (buildStep != null)
+        {
+            try
+            {
+                await _dockerBuild.StartBuildAsync(
+                    job, specContent, null, buildImage ?? pipeline.BuildImage,
+                    sourceDir: sourceDir);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Build start failed for job {JobId}", job.Id);
+            }
+        }
+
+        return job;
+    }
+
     public async Task<(List<Pipeline> Items, int TotalCount)> ListPipelinesAsync(int page = 1, int pageSize = 20)
     {
         var totalCount = await _db.Pipelines.CountAsync();

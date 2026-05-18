@@ -1,11 +1,19 @@
 FROM fedora:latest
 
-# Install minimal RPM build tools
+# Install RPM build tools + multi-protocol source fetching tools
 RUN dnf install -y \
     rpm-build \
     rpmdevtools \
     curl \
+    wget \
     git-core \
+    rsync \
+    subversion \
+    mercurial \
+    tar \
+    gzip \
+    bzip2 \
+    xz \
     sudo \
     && dnf clean all
 

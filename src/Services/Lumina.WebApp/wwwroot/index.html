@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 
 <head>
     <meta charset="utf-8" />
@@ -28,6 +28,16 @@
         <a href="." class="reload">Reload</a>
         <span class="dismiss">🗙</span>
     </div>
+    <script>
+        // Auth guard: redirect to /login if no token (before Blazor loads)
+        (function() {
+            var path = window.location.pathname;
+            if (path !== '/login' && !localStorage.getItem('lumina_token')) {
+                window.location.replace('/login');
+            }
+        })();
+    </script>
+    <script src="lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
 </body>
 
