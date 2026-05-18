@@ -4,6 +4,7 @@
 @inject Lumina.WebApp.Services.LuminaApiService Api
 @inject ILogger<BuildDetail> Logger
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>Build @Id — Lumina CI</PageTitle>
 
@@ -14,7 +15,11 @@
         <code style="font-size:0.85em">@Id.ToString()[..8]</code>
     </h1>
     <div class="page-header-actions">
-        <a href="/api/builds/@Id/spec" class="btn btn-outline-primary btn-sm" target="_blank">📄 Spec</a>
+        <button class="btn btn-outline-primary btn-sm" @onclick="DownloadSpec">📄 Spec</button>
+        @if (_build?.Data != null && _build.Data.Artifacts.Any())
+        {
+            <button class="btn btn-outline-success btn-sm" @onclick="DownloadAllArtifacts">💾 Download RPM</button>
+        }
         <button class="btn btn-outline-secondary btn-sm" @onclick="RefreshBuild">🔄 Refresh</button>
         <button class="btn btn-outline-secondary btn-sm" @onclick="GoBack">← Back</button>
     </div>
@@ -198,17 +203,20 @@ else
                 <table class="table table-hover">
                     <thead>
                         <tr>
+                            <th>Artifact ID</th>
                             <th>File Name</th>
                             <th>Size</th>
                             <th>SHA256</th>
                             <th>Signature</th>
                             <th>CVE Scan</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var artifact in build.Artifacts)
                         {
                             <tr>
+                                <td><code style="font-size:0.75em;" title="@artifact.Id.ToString()">@artifact.Id.ToString()[..8]…</code></td>
                                 <td><strong class="text-bright">@artifact.FileName</strong></td>
                                 <td class="text-sm">@FormatFileSize(artifact.FileSize)</td>
                                 <td>
@@ -234,10 +242,73 @@ else
                                 <td>
                                     <span class="@GetScanBadge(artifact.CveScanStatus)">@artifact.CveScanStatus</span>
                                 </td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-success" @onclick="() => DownloadArtifact(artifact.FileName)" title="Download @artifact.FileName">💾</button>
+                                </td>
                             </tr>
                         }
                     </tbody>
                 </table>
+            </div>
+        </div>
+    }
+
+    <!-- Publish to Repository -->
+    @if (build.Status == BuildStatus.Success && build.Artifacts.Any())
+    {
+        <div class="section-title mt-4">📂 Publish to Repository</div>
+        <div class="card animate-slide-in">
+            <div class="card-body">
+                @if (_publishMessage != null)
+                {
+                    <div class="alert @(_publishSuccess ? "alert-success" : "alert-danger") alert-dismissible fade show py-2 px-3 mb-3">
+                        @_publishMessage
+                        <button type="button" class="btn-close btn-sm" @onclick="() => _publishMessage = null" style="font-size:0.6em;"></button>
+                    </div>
+                }
+                @if (_repos?.Data?.Repositories == null || !_repos.Data.Repositories.Any())
+                {
+                    <div class="text-muted text-sm mb-2">
+                        No repositories available. <a href="/repositories">Create one first</a>.
+                    </div>
+                }
+                else
+                {
+                    <div class="row align-items-end">
+                        <div class="col-md-5 mb-2">
+                            <label class="form-label text-sm">Repository</label>
+                            <select class="form-select form-select-sm" @bind="_selectedRepoId">
+                                <option value="">-- Select repository --</option>
+                                @foreach (var repo in _repos.Data.Repositories)
+                                {
+                                    <option value="@repo.Id">@repo.DisplayName (@repo.Arch)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-5 mb-2">
+                            <label class="form-label text-sm">Artifact</label>
+                            <select class="form-select form-select-sm" @bind="_selectedArtifactId">
+                                @foreach (var artifact in build.Artifacts)
+                                {
+                                    <option value="@artifact.Id">@artifact.FileName</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2 mb-2">
+                            <button class="btn btn-sm btn-success w-100" @onclick="PublishArtifact" disabled="@(!_selectedRepoId.HasValue || _publishing)">
+                                @if (_publishing)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                    <span>Publishing...</span>
+                                }
+                                else
+                                {
+                                    <span>📤 Publish</span>
+                                }
+                            </button>
+                        </div>
+                    </div>
+                }
             </div>
         </div>
     }
@@ -292,6 +363,14 @@ else
     private bool _loading = true;
     private Timer? _autoRefreshTimer;
 
+    // Publish state
+    private ApiResponse<RepositoryListResponse>? _repos;
+    private Guid? _selectedRepoId;
+    private Guid? _selectedArtifactId;
+    private bool _publishing = false;
+    private string? _publishMessage;
+    private bool _publishSuccess;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadBuild();
@@ -341,6 +420,14 @@ else
         try
         {
             _build = await Api.GetBuildAsync(Id);
+            if (_build?.Data?.Artifacts.Any() == true && _selectedArtifactId == null)
+                _selectedArtifactId = _build.Data.Artifacts.First().Id;
+            // Load repositories for publish section
+            if (_build?.Data?.Status == BuildStatus.Success)
+            {
+                try { _repos ??= await Api.GetRepositoriesAsync(); }
+                catch { /* non-critical */ }
+            }
         }
         catch (Exception ex)
         {
@@ -350,6 +437,26 @@ else
         {
             _loading = false;
         }
+    }
+
+    private async Task PublishArtifact()
+    {
+        if (!_selectedRepoId.HasValue || !_selectedArtifactId.HasValue) return;
+        _publishing = true; StateHasChanged();
+        try
+        {
+            var result = await Api.PublishPackageAsync(_selectedArtifactId.Value, _selectedRepoId.Value, "admin");
+            _publishSuccess = result?.Success == true;
+            _publishMessage = _publishSuccess
+                ? $"✅ Published to repository successfully!"
+                : $"❌ Publish failed: {result?.Error ?? "Unknown error"}";
+        }
+        catch (Exception ex)
+        {
+            _publishSuccess = false;
+            _publishMessage = $"❌ Error: {ex.Message}";
+        }
+        finally { _publishing = false; StateHasChanged(); }
     }
 
     private async Task RefreshBuild()
@@ -432,6 +539,23 @@ else
         if (lower.Contains("warning") || lower.Contains("warn")) return "line-warning";
         if (lower.Contains("success") || lower.Contains("completed") || lower.Contains("done")) return "line-success";
         return "";
+    }
+
+    private async Task DownloadSpec()
+    {
+        var fileName = _build?.Data?.SpecName ?? "build.spec";
+        if (!fileName.EndsWith(".spec")) fileName += ".spec";
+        await JS.InvokeVoidAsync("downloadFileWithAuth", $"/api/builds/{Id}/spec", fileName);
+    }
+
+    private async Task DownloadAllArtifacts()
+    {
+        await JS.InvokeVoidAsync("downloadFileWithAuth", $"/api/builds/{Id}/artifacts", "artifacts.zip");
+    }
+
+    private async Task DownloadArtifact(string fileName)
+    {
+        await JS.InvokeVoidAsync("downloadFileWithAuth", $"/api/builds/{Id}/artifacts/{Uri.EscapeDataString(fileName)}", fileName);
     }
 
     private void CopyLogs()

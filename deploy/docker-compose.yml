@@ -131,6 +131,8 @@ services:
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
       - Docker__SocketPath=/var/run/docker.sock
+      - Services__ScannerService=http://scanner-service:5003
+      - Services__SecurityService=http://security-service:5002
     ports:
       - "5001:5001"
     user: "root"
@@ -138,7 +140,8 @@ services:
       - label=disable
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - build_data:/app/builds
+      - /opt/lumina/builds:/app/builds
+      - /opt/lumina/sources:/opt/lumina/sources:z
     depends_on:
       postgres:
         condition: service_healthy
@@ -166,10 +169,14 @@ services:
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
       - Gpg__KeyStorePath=/app/keys
+      - Gpg__Passphrase=lumina_pgp_dev_2024
+      - Services__BuildService=http://build-service:5001
     ports:
       - "5002:5002"
     volumes:
       - gpg_keys:/app/keys
+      - gpg_gnupghome:/app/.gnupg
+      - /opt/lumina/builds:/app/builds:z
     depends_on:
       postgres:
         condition: service_healthy
@@ -197,8 +204,13 @@ services:
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
       - Trivy__Endpoint=http://trivy:8080
+      - Trivy__Path=/usr/local/bin/trivy
+      - Services__BuildService=http://build-service:5001
     ports:
       - "5003:5003"
+    user: "root"
+    volumes:
+      - /opt/lumina/builds:/app/builds:z
     depends_on:
       postgres:
         condition: service_healthy
@@ -268,11 +280,15 @@ services:
       - Source__MaxRetries=3
       - Source__FetchTimeoutMinutes=30
       - Source__TempDir=/tmp/source-fetch
+      - Source__SourcesDir=/opt/lumina/sources
+      - Services__BuildService=http://build-service:5001
     ports:
       - "5006:5006"
     volumes:
       - ../conf.ini:/app/conf.ini:ro,z
+      - ../Test:/app/Test:ro,z
       - source_temp:/tmp/source-fetch
+      - /opt/lumina/sources:/opt/lumina/sources:z
     depends_on:
       postgres:
         condition: service_healthy
@@ -333,8 +349,8 @@ volumes:
   redis_data:
   rabbitmq_data:
   minio_data:
-  build_data:
   gpg_keys:
+  gpg_gnupghome:
   trivy_cache:
   repo_data:
   source_temp:

@@ -84,4 +84,30 @@ static async Task CreateTablesWithScriptAsync(DbContext db)
     {
         Log.Warning(ex, "Table creation skipped (tables may already exist)");
     }
+
+    // Add columns that may be missing from earlier schema versions
+    var migrations = new (string Table, string Column, string Def)[]
+    {
+        ("\"build\".\"pipelines\"", "\"SpecContent\"", "text NULL"),
+        ("\"build\".\"build_jobs\"", "\"SpecContent\"", "text NOT NULL DEFAULT ''"),
+        ("\"build\".\"build_jobs\"", "\"SourceUrl\"", "text NULL"),
+        ("\"build\".\"build_jobs\"", "\"CommitSha\"", "text NULL"),
+        ("\"build\".\"build_jobs\"", "\"Branch\"", "text NULL"),
+        ("\"build\".\"build_jobs\"", "\"CommitMessage\"", "text NULL"),
+        ("\"build\".\"build_jobs\"", "\"CommitAuthor\"", "text NULL"),
+    };
+
+    foreach (var (table, column, def) in migrations)
+    {
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE {table} ADD COLUMN {column} {def}");
+            Log.Information("Added column {Table}.{Column}", table, column);
+        }
+        catch (Exception ex)
+        {
+            Log.Verbose(ex, "Column {Table}.{Column} already exists, skipped", table, column);
+        }
+    }
 }

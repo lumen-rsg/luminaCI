@@ -1,0 +1,329 @@
+@page "/sources"
+@using Lumina.Shared.DTOs
+@using Lumina.WebApp.Services
+@using Lumina.Shared.Models.Enums
+@inject LuminaApiService Api
+
+<PageTitle>Sources — Lumina CI</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-box-seam me-2"></i>Sources</h4>
+    <div>
+        <button class="btn btn-outline-secondary btn-sm me-2" @onclick="ReloadConfig">
+            <i class="bi bi-arrow-clockwise me-1"></i>Reload Config
+        </button>
+        <button class="btn btn-outline-primary btn-sm me-2" @onclick="ToggleConfigEditor">
+            <i class="bi bi-pencil-square me-1"></i>Edit conf.ini
+        </button>
+        <button class="btn btn-primary btn-sm" @onclick="ShowAddPackage">
+            <i class="bi bi-plus-lg me-1"></i>Add Package
+        </button>
+    </div>
+</div>
+
+<!-- Config Editor -->
+@if (_showConfigEditor)
+{
+    <div class="card mb-4 border-primary">
+        <div class="card-header bg-primary text-white d-flex justify-content-between">
+            <span><i class="bi bi-file-earmark-code me-1"></i>conf.ini</span>
+            <div>
+                <button class="btn btn-sm btn-light me-2" @onclick="SaveConfig">Save</button>
+                <button class="btn btn-sm btn-outline-light" @onclick="ToggleConfigEditor">Cancel</button>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <textarea class="form-control font-monospace border-0 rounded-0" rows="14" @bind="_configContent" style="font-size:0.82rem;resize:vertical;"></textarea>
+        </div>
+    </div>
+}
+
+<!-- Add Package Dialog -->
+@if (_showAddPackage)
+{
+    <div class="card mb-4 border-success">
+        <div class="card-header bg-success text-white">
+            <i class="bi bi-plus-circle me-1"></i>Add Package
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Package Name</label>
+                    <input type="text" class="form-control" @bind="_newPkgName" placeholder="my-package" />
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">Source URL</label>
+                    <input type="text" class="form-control" @bind="_newPkgSource" placeholder="https://github.com/org/repo" />
+                </div>
+                <div class="col-md-2 mb-3">
+                    <label class="form-label">Source Type</label>
+                    <select class="form-select" @bind="_newPkgSourceType">
+                        <option value="git">Git</option>
+                        <option value="http">HTTP</option>
+                        <option value="tar">Tar</option>
+                        <option value="ftp">FTP</option>
+                        <option value="rsync">Rsync</option>
+                        <option value="svn">SVN</option>
+                        <option value="local">Local</option>
+                    </select>
+                </div>
+                <div class="col-md-2 mb-3">
+                    <label class="form-label">Branch</label>
+                    <input type="text" class="form-control" @bind="_newPkgBranch" placeholder="main" />
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-12 mb-3">
+                    <label class="form-label">Spec File Content (optional)</label>
+                    <textarea class="form-control font-monospace" rows="8" @bind="_newPkgSpecContent" placeholder="Name:           my-package&#10;Version:        1.0.0&#10;Release:        1%{?dist}&#10;Summary:        My package&#10;&#10;Source0:        %{name}-%{version}.tar.gz&#10;&#10;%description&#10;My package description.&#10;&#10;%build&#10;%configure&#10;make %{?_smp_mflags}&#10;&#10;%install&#10;make install DESTDIR=%{buildroot}" style="font-size:0.82rem;resize:vertical;"></textarea>
+                </div>
+            </div>
+            <div class="d-flex justify-content-end">
+                <button class="btn btn-secondary btn-sm me-2" @onclick="CancelAddPackage">Cancel</button>
+                <button class="btn btn-success btn-sm" @onclick="AddPackage">Add</button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Package List -->
+@if (_loading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+    </div>
+}
+else if (_packages.Any())
+{
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Package</th>
+                    <th>Source</th>
+                    <th>Type</th>
+                    <th>Branch</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var pkg in _packages)
+                {
+                    <tr>
+                        <td class="fw-semibold">@pkg.PackageName</td>
+                        <td class="text-truncate" style="max-width:300px;" title="@pkg.SourceUrl">
+                            <small class="text-muted">@pkg.SourceUrl</small>
+                        </td>
+                        <td><span class="badge bg-info">@pkg.SourceType</span></td>
+                        <td><small>@(pkg.SourceBranch ?? "—")</small></td>
+                        <td>
+                            @switch (pkg.Status)
+                            {
+                                case SourceStatus.Pending:
+                                    <span class="badge bg-secondary">Pending</span>
+                                    break;
+                                case SourceStatus.Fetching:
+                                    <span class="badge bg-warning text-dark">Fetching</span>
+                                    break;
+                                case SourceStatus.Ready:
+                                    <span class="badge bg-success">Ready</span>
+                                    break;
+                                case SourceStatus.Failed:
+                                    <span class="badge bg-danger" title="@pkg.ErrorMessage">Failed</span>
+                                    break;
+                                default:
+                                    <span class="badge bg-secondary">@pkg.Status</span>
+                                    break;
+                            }
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" @onclick="() => FetchPackage(pkg.PackageName)" title="Fetch sources">
+                                    <i class="bi bi-download"></i>
+                                </button>
+                                <button class="btn btn-outline-success" @onclick="() => BuildPackage(pkg.PackageName)" title="Build RPM">
+                                    <i class="bi bi-hammer"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" @onclick="() => RemovePackage(pkg.PackageName)" title="Remove from config">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else
+{
+    <div class="text-center text-muted py-5">
+        <i class="bi bi-box-seam" style="font-size:3rem;"></i>
+        <p class="mt-3">No packages configured. Edit conf.ini or add a package.</p>
+    </div>
+}
+
+<!-- Status messages -->
+@if (!string.IsNullOrEmpty(_statusMessage))
+{
+    <div class="alert alert-info alert-dismissible fade show mt-3" role="alert">
+        @_statusMessage
+        <button type="button" class="btn-close" @onclick="() => _statusMessage = null"></button>
+    </div>
+}
+
+@if (_errorMessage != null)
+{
+    <div class="alert alert-danger alert-dismissible fade show mt-3" role="alert">
+        @_errorMessage
+        <button type="button" class="btn-close" @onclick="() => _errorMessage = null"></button>
+    </div>
+}
+
+@code {
+    private List<SourcePackageResponse> _packages = new();
+    private bool _loading = true;
+    private bool _showConfigEditor = false;
+    private bool _showAddPackage = false;
+    private string _configContent = "";
+    private string? _statusMessage;
+    private string? _errorMessage;
+
+    // Add package form
+    private string _newPkgName = "";
+    private string _newPkgSource = "";
+    private string _newPkgSourceType = "git";
+    private string _newPkgBranch = "";
+    private string _newPkgSpecContent = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPackages();
+    }
+
+    private async Task LoadPackages()
+    {
+        _loading = true;
+        try
+        {
+            var result = await Api.GetSourcesAsync();
+            _packages = result?.Data?.Packages ?? new();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to load sources: {ex.Message}";
+        }
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task ToggleConfigEditor()
+    {
+        _showConfigEditor = !_showConfigEditor;
+        if (_showConfigEditor)
+        {
+            _configContent = await Api.GetConfigAsync() ?? "";
+        }
+    }
+
+    private async Task SaveConfig()
+    {
+        try
+        {
+            await Api.SaveConfigAsync(_configContent);
+            _showConfigEditor = false;
+            _statusMessage = "Configuration saved successfully";
+            await LoadPackages();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to save config: {ex.Message}";
+        }
+    }
+
+    private void ShowAddPackage() => _showAddPackage = true;
+    private void CancelAddPackage() => _showAddPackage = false;
+
+    private async Task AddPackage()
+    {
+        try
+        {
+            var request = new AddPackageToConfigRequest(_newPkgName, _newPkgSource, _newPkgSourceType, _newPkgBranch, SpecContent: string.IsNullOrWhiteSpace(_newPkgSpecContent) ? null : _newPkgSpecContent);
+            var result = await Api.AddPackageToConfigAsync(request);
+            if (result?.Success == true)
+            {
+                _showAddPackage = false;
+                _newPkgName = "";
+                _newPkgSource = "";
+                _newPkgSourceType = "git";
+                _newPkgBranch = "";
+                _newPkgSpecContent = "";
+                _statusMessage = $"Package added to configuration";
+                await LoadPackages();
+            }
+            else
+            {
+                _errorMessage = result?.Error ?? "Failed to add package";
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to add package: {ex.Message}";
+        }
+    }
+
+    private async Task RemovePackage(string name)
+    {
+        try
+        {
+            await Api.RemovePackageFromConfigAsync(name);
+            _statusMessage = $"Package '{name}' removed from configuration";
+            await LoadPackages();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to remove package: {ex.Message}";
+        }
+    }
+
+    private async Task FetchPackage(string name)
+    {
+        try
+        {
+            await Api.FetchSourceAsync(name);
+            _statusMessage = $"Fetch started for '{name}'";
+            await LoadPackages();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to fetch: {ex.Message}";
+        }
+    }
+
+    private async Task BuildPackage(string name)
+    {
+        try
+        {
+            await Api.BuildSourceAsync(name);
+            _statusMessage = $"Build triggered for '{name}'";
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to build: {ex.Message}";
+        }
+    }
+
+    private async Task ReloadConfig()
+    {
+        try
+        {
+            await LoadPackages();
+            _statusMessage = "Configuration reloaded";
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to reload: {ex.Message}";
+        }
+    }
+}

@@ -1,4 +1,3 @@
-
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
@@ -15,11 +14,17 @@ RUN dotnet build "src/Services/Lumina.ScannerService/Lumina.ScannerService.cspro
 FROM build AS publish
 RUN dotnet publish "src/Services/Lumina.ScannerService/Lumina.ScannerService.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
+FROM aquasec/trivy:latest AS trivy-bin
+
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 EXPOSE 5003
 
-USER app
+# Install rpm2cpio and cpio for RPM extraction (needed for trivy rootfs scanning)
+RUN apt-get update && apt-get install -y --no-install-recommends cpio rpm2cpio && rm -rf /var/lib/apt/lists/*
+
+# Copy trivy binary from official image
+COPY --from=trivy-bin /usr/local/bin/trivy /usr/local/bin/trivy
 
 COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "Lumina.ScannerService.dll"]

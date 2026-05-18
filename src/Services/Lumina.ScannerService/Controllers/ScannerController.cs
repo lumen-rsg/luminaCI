@@ -24,7 +24,7 @@ public class ScannerController : ControllerBase
         if (request.ArtifactId == Guid.Empty)
             return BadRequest(new ApiResponse<CveReport>(false, null, "Invalid artifact ID", null));
 
-        var report = await _scanner.ScanArtifactAsync(request.ArtifactId, "", request.ScannerType);
+        var report = await _scanner.ScanArtifactAsync(request.ArtifactId, request.ArtifactPath ?? "", request.ScannerType);
         return Accepted(new ApiResponse<CveReport>(true, report, null, "Scan started"));
     }
 
@@ -50,5 +50,14 @@ public class ScannerController : ControllerBase
         count = Math.Clamp(count, 1, 100);
         var reports = await _scanner.GetRecentReportsAsync(count);
         return Ok(new ApiResponse<List<CveReport>>(true, reports, null, null));
+    }
+
+    [HttpGet("scans")]
+    public async Task<ActionResult<ApiResponse<ScanListResponse>>> ListScans([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        page = Math.Clamp(page, 1, 1000);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var result = await _scanner.GetScansPaginatedAsync(page, pageSize);
+        return Ok(new ApiResponse<ScanListResponse>(true, result, null, null));
     }
 }

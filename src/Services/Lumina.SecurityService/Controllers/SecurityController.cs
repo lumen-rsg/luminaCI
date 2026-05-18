@@ -95,4 +95,43 @@ public class SecurityController : ControllerBase
         var records = await _hash.GetHashHistoryAsync(artifactId);
         return Ok(new ApiResponse<List<HashRecord>>(true, records, null, null));
     }
+
+    /// <summary>
+    /// Get all hash records (paginated).
+    /// </summary>
+    [HttpGet("hashes")]
+    public async Task<ActionResult<ApiResponse<HashListResponse>>> ListAllHashes([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var hashes = await _hash.GetAllHashesAsync(page, pageSize);
+        var totalCount = await _hash.GetTotalHashCountAsync();
+
+        var hashResponses = hashes.Select(h => new HashResponse(
+            h.ArtifactId,
+            h.Sha256,
+            h.Sha1,
+            h.Md5,
+            h.CreatedAt
+        )).ToList();
+
+        return Ok(new ApiResponse<HashListResponse>(true,
+            new HashListResponse(hashResponses, totalCount, page, pageSize), null, null));
+    }
+
+    /// <summary>
+    /// Store pre-computed hash from BuildService.
+    /// </summary>
+    [HttpPost("hash/store")]
+    public async Task<ActionResult<ApiResponse<HashRecord>>> StoreHash([FromBody] StoreHashRequest request)
+    {
+        try
+        {
+            var record = await _hash.StorePrecomputedHashAsync(
+                request.ArtifactId, request.FileName, request.Sha256, request.Md5, request.FileSize);
+            return Ok(new ApiResponse<HashRecord>(true, record, null, "Hash stored"));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new ApiResponse<HashRecord>(false, null, ex.Message, null));
+        }
+    }
 }

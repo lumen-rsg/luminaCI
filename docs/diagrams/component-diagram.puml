@@ -1,0 +1,85 @@
+@startuml Component Diagram - Lumina CI Logical Architecture
+!theme plain
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam defaultFontSize 12
+skinparam componentFontSize 12
+skinparam packageFontSize 14
+
+title Логическая архитектура системы Lumina CI
+
+skinparam legendBackgroundColor white
+
+legend right
+  |= Компонент |= Описание |
+  | Presentation | Слой взаимодействия с пользователем |
+  | Business Logic | Слой бизнес-логики и доменных моделей |
+  | Data Access | Слой доступа к данным |
+  | Shared | Общие модели и контракты |
+endlegend
+
+package "Presentation Layer" as presentation #E8F5E9 {
+    component [Blazor WebAssembly\n(WebApp)] as webapp #C8E6C9
+    component [API Gateway\n(YARP Reverse Proxy)] as gateway #C8E6C9
+    component [JWT Authentication\n(HMAC-SHA256)] as jwt #A5D6A7
+}
+
+package "Business Logic Layer" as business #E3F2FD {
+    component [Build Service\n(Pipeline Engine + Docker Builder)] as build #BBDEFB
+    component [Security Service\n(PGP Signing + Hash)] as security #BBDEFB
+    component [Scanner Service\n(Trivy CVE Scanner)] as scanner #BBDEFB
+    component [Repository Service\n(Package Management)] as repo #BBDEFB
+}
+
+package "Data Access Layer" as data #FFF3E0 {
+    component [PostgreSQL 16\n(BuildDbContext)] as pgdb #FFE0B2
+    component [Redis 7\n(Cache)] as redis #FFE0B2
+    component [MinIO\n(S3 Object Storage)] as minio #FFE0B2
+}
+
+package "Shared Kernel" as shared #F3E5F5 {
+    component [Lumina.Shared\n(Models + DTOs + Events)] as sharedlib #E1BEE7
+}
+
+package "Infrastructure" as infra #ECEFF1 {
+    component [RabbitMQ 3\n(Message Broker)] as rabbit #CFD8DC
+    component [Docker Engine\n(Container Runtime)] as docker #CFD8DC
+    component [Trivy Server\n(Vulnerability DB)] as trivy #CFD8DC
+}
+
+' Presentation connections
+webapp ..> gateway : HTTP/REST
+gateway ..> jwt : validate token
+gateway ..> build : route /api/builds\nroute /api/pipelines\nroute /api/webhooks
+gateway ..> security : route /api/security
+gateway ..> scanner : route /api/scanner
+gateway ..> repo : route /api/repository
+
+' Business to Data
+build ..> pgdb : EF Core / Npgsql
+build ..> minio : S3 API
+build ..> rabbit : AMQP (MassTransit)
+build ..> docker : Docker API (Unix Socket)
+
+security ..> pgdb : EF Core / Npgsql
+security ..> minio : S3 API
+security ..> rabbit : AMQP (MassTransit)
+
+scanner ..> pgdb : EF Core / Npgsql
+scanner ..> trivy : HTTP REST
+scanner ..> rabbit : AMQP (MassTransit)
+
+repo ..> pgdb : EF Core / Npgsql
+repo ..> minio : S3 API
+repo ..> rabbit : AMQP (MassTransit)
+
+' All business services depend on shared
+build ..> sharedlib
+security ..> sharedlib
+scanner ..> sharedlib
+repo ..> sharedlib
+
+' Gateway uses shared for DTOs
+gateway ..> sharedlib
+
+@enduml

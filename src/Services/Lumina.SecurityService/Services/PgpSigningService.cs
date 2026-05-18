@@ -124,8 +124,7 @@ Passphrase: {safePassphrase}
 
         // SECURITY: Sanitize file paths to prevent command injection
         var safeArtifactPath = ProcessArgumentSanitizer.SanitizeFilePath(artifactPath);
-        var signaturePath = artifactPath + ".sig";
-        var safeSignaturePath = ProcessArgumentSanitizer.SanitizeFilePath(signaturePath);
+        var signaturePath = artifactPath + ".asc";
 
         var request = new SigningRequest
         {
@@ -141,6 +140,7 @@ Passphrase: {safePassphrase}
         try
         {
             // SECURITY: Use ArgumentList instead of string concatenation
+            var passphrase = _config["Gpg:Passphrase"] ?? "lumina_pgp_dev_2024";
             var startInfo = new ProcessStartInfo
             {
                 FileName = "gpg",
@@ -149,11 +149,17 @@ Passphrase: {safePassphrase}
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            startInfo.ArgumentList.Add("--batch");
+            startInfo.ArgumentList.Add("--yes");
+            startInfo.ArgumentList.Add("--pinentry-mode");
+            startInfo.ArgumentList.Add("loopback");
+            startInfo.ArgumentList.Add("--passphrase");
+            startInfo.ArgumentList.Add(passphrase);
             startInfo.ArgumentList.Add("--detach-sign");
             startInfo.ArgumentList.Add("--armor");
             startInfo.ArgumentList.Add("--output");
-            startInfo.ArgumentList.Add(signaturePath); // Original path for filesystem operation
-            startInfo.ArgumentList.Add(artifactPath);   // Original path for filesystem operation
+            startInfo.ArgumentList.Add(signaturePath);
+            startInfo.ArgumentList.Add(artifactPath);
 
             using var process = Process.Start(startInfo);
             if (process == null) throw new InvalidOperationException("Failed to start gpg process");
@@ -170,12 +176,39 @@ Passphrase: {safePassphrase}
                 throw new InvalidOperationException($"Signing failed: {error}");
             }
 
+            // Read the signature content
+            var signatureContent = await File.ReadAllTextAsync(signaturePath);
+
             request.Status = "Signed";
             request.CompletedAt = DateTime.UtcNow;
             _db.SigningRequests.Add(request);
             await _db.SaveChangesAsync();
 
             _logger.LogInformation("Artifact {ArtifactPath} signed with key {KeyId}", artifactPath, keyId);
+
+            // Notify BuildService with the PGP signature
+            try
+            {
+                var buildServiceUrl = _config["Services:BuildService"] ?? "http://build-service:5001";
+                using var httpClient = new HttpClient();
+                var callbackPayload = new
+                {
+                    artifactId,
+                    pgpSignature = signatureContent
+                };
+                var callbackResponse = await httpClient.PutAsJsonAsync(
+                    $"{buildServiceUrl}/api/builds/artifacts/{artifactId}/pgp-signature", callbackPayload);
+
+                if (callbackResponse.IsSuccessStatusCode)
+                    _logger.LogInformation("Notified build service: artifact {ArtifactId} signed", artifactId);
+                else
+                    _logger.LogWarning("Failed to notify build service about signing: {Status}", callbackResponse.StatusCode);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to notify build service about signing for artifact {ArtifactId}", artifactId);
+            }
+
             return request;
         }
         catch (Exception ex)

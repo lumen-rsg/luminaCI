@@ -1,0 +1,64 @@
+@page "/login"
+@inject Lumina.WebApp.Services.AuthService Auth
+@inject NavigationManager Nav
+
+<PageTitle>Login — Lumina CI</PageTitle>
+
+<div class="d-flex justify-content-center align-items-center" style="min-height:60vh;">
+    <div class="card" style="width:400px;">
+        <div class="card-header text-center">
+            <h3 class="mb-0">🔐 Lumina CI</h3>
+        </div>
+        <div class="card-body">
+            @if (_error != null)
+            {
+                <div class="alert alert-danger">@_error</div>
+            }
+            <div class="mb-3">
+                <label class="form-label">Username</label>
+                <input type="text" class="form-control" @bind="_username" placeholder="admin" @onkeypress="OnKeyPress" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <input type="password" class="form-control" @bind="_password" placeholder="admin" @onkeypress="OnKeyPress" />
+            </div>
+            <button class="btn btn-primary w-100" @onclick="DoLogin" disabled="@_loading">
+                @if (_loading)
+                {
+                    <span class="spinner-border spinner-border-sm me-2"></span>
+                }
+                Sign In
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _username = "admin";
+    private string _password = "admin";
+    private string? _error;
+    private bool _loading;
+
+    private async Task DoLogin()
+    {
+        _loading = true;
+        _error = null;
+
+        var success = await Auth.LoginAsync(_username, _password);
+        if (success)
+        {
+            Nav.NavigateTo("/", forceLoad: true);
+        }
+        else
+        {
+            _error = "Invalid credentials. Try admin/admin";
+        }
+
+        _loading = false;
+    }
+
+    private async Task OnKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await DoLogin();
+    }
+}

@@ -34,14 +34,22 @@ if [ -n "${SPEC_CONTENT:-}" ]; then
 elif [ -f "/specs/${SPEC_NAME}" ]; then
     cp "/specs/${SPEC_NAME}" "${BUILD_DIR}/SPECS/${SPEC_NAME}"
     echo "Spec file copied from /specs/"
+elif [[ "${SOURCE_URL:-}" == git://* ]] || [[ "${SOURCE_URL:-}" == git+* ]]; then
+    echo "Spec will be found after git clone..."
+elif [ -n "${SOURCE_DIR:-}" ]; then
+    echo "Spec will be found from pre-fetched sources..."
 else
     echo "ERROR: No spec file provided!"
     exit 1
 fi
 
-echo "--- spec content ---"
-cat "${BUILD_DIR}/SPECS/${SPEC_NAME}"
-echo "--- end spec ---"
+if [ -f "${BUILD_DIR}/SPECS/${SPEC_NAME}" ]; then
+    echo "--- spec content ---"
+    cat "${BUILD_DIR}/SPECS/${SPEC_NAME}"
+    echo "--- end spec ---"
+else
+    echo "--- spec will be available after source fetch ---"
+fi
 
 # ─── Helper: expand RPM macros in a string ───
 # Reads Name, Version, URL, Epoch from spec and substitutes %{name}, %{version}, etc.
@@ -112,7 +120,7 @@ download_source() {
 
     echo "  → Downloading to SOURCES/${target_filename}"
 
-    curl -L -f -o "${BUILD_DIR}/SOURCES/${target_filename}" "${expanded_url}" 2>&1 || {
+    curl -L -f --connect-timeout 30 --max-time 300 -o "${BUILD_DIR}/SOURCES/${target_filename}" "${expanded_url}" 2>&1 || {
         echo "  WARNING: Failed to download ${expanded_url}"
         return 1
     }
@@ -329,16 +337,19 @@ SOURCE0_LINE=$(grep -i "^Source0:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null
 if [ -n "${SOURCE0_LINE}" ]; then
     SOURCE0_FILENAME=$(expand_spec_macros "$(echo "$SOURCE0_LINE" | sed 's/^Source0:[[:space:]]*//' | sed 's/.*\///')")
     if [ -n "${SOURCE0_FILENAME}" ] && [ ! -f "${BUILD_DIR}/SOURCES/${SOURCE0_FILENAME}" ]; then
-        PKG_NAME=$(grep -i "^Name:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" | awk '{print $2}' | tr -d '[:space:]')
-        PKG_VERSION=$(grep -i "^Version:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" | awk '{print $2}' | tr -d '[:space:]')
+        # Derive directory name from Source0 filename (e.g. aurora.net-2.1.tar.gz → aurora.net-2.1)
+        TARBALL_STEM="${SOURCE0_FILENAME%.tar.gz}"
+        TARBALL_STEM="${TARBALL_STEM%.tar.bz2}"
+        TARBALL_STEM="${TARBALL_STEM%.tar.xz}"
+        TARBALL_STEM="${TARBALL_STEM%.tgz}"
 
-        if [ -n "${PKG_NAME}" ] && [ -n "${PKG_VERSION}" ]; then
+        if [ -n "${TARBALL_STEM}" ]; then
             TARBALL_NAME="${SOURCE0_FILENAME}"
-            echo "Creating dummy source tarball: ${TARBALL_NAME}"
+            echo "Creating dummy source tarball: ${TARBALL_NAME} (dir: ${TARBALL_STEM})"
             TMP_DIR=$(mktemp -d)
-            mkdir -p "${TMP_DIR}/${PKG_NAME}-${PKG_VERSION}"
-            echo "Lumina CI build: ${PKG_NAME}-${PKG_VERSION}" > "${TMP_DIR}/${PKG_NAME}-${PKG_VERSION}/README"
-            tar -czf "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" -C "${TMP_DIR}" "${PKG_NAME}-${PKG_VERSION}"
+            mkdir -p "${TMP_DIR}/${TARBALL_STEM}"
+            echo "Lumina CI dummy build: ${TARBALL_STEM}" > "${TMP_DIR}/${TARBALL_STEM}/README"
+            tar -czf "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" -C "${TMP_DIR}" "${TARBALL_STEM}"
             rm -rf "${TMP_DIR}"
             echo "Dummy tarball created successfully"
         fi

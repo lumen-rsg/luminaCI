@@ -22,7 +22,8 @@ EXPOSE 5002
 RUN apt-get update && apt-get install -y gnupg2 pinentry-tty && rm -rf /var/lib/apt/lists/*
 
 COPY --from=publish /app/publish .
-RUN mkdir -p /app/keys && chown app:app /app/keys
-USER app
+RUN mkdir -p /app/keys /app/.gnupg && chmod 700 /app/.gnupg
+
+ENV GNUPGHOME=/app/.gnupg
 
 ENTRYPOINT ["dotnet", "Lumina.SecurityService.dll"]

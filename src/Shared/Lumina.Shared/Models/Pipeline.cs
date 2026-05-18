@@ -26,4 +26,7 @@ public class Pipeline
 
     // Build configuration
     public string? BuildImage { get; set; }  // Docker image for builds, e.g. "lumina-rpm-build:latest" or "lumina-dotnet-build:latest"
+
+    // Spec content (for packages where .spec is NOT in the git repo)
+    public string? SpecContent { get; set; }  // Full .spec file content — used by Auto Build when repo has no spec
 }

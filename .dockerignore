@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea/
+.vs/
+*.user
+*.suo
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Scripts (not needed in build context)
+scripts/
+!scripts/build-rpm.sh
+
+# Deploy config (referenced via docker-compose, not copied)
+deploy/nginx/nginx.conf
+deploy/nginx/conf.d/
+deploy/.env
+deploy/.env.*
+
+# Build outputs
+**/bin/
+**/obj/
+**/publish/
+
+# Docker volumes
+postgres_data/
+redis_data/
+rabbitmq_data/
+minio_data/
+
+# Keys — NEVER include in Docker context
+*.gpg
+*.pem
+*.key
+*.env
+.env.*

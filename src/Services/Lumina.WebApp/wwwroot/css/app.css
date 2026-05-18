@@ -350,6 +350,7 @@ code {
 .bg-info { background: rgba(56, 139, 253, 0.15) !important; color: #58a6ff !important; }
 .bg-secondary { background: rgba(139, 148, 158, 0.15) !important; color: #8b949e !important; }
 .bg-dark { background: rgba(13, 17, 23, 0.6) !important; color: #c9d1d9 !important; }
+.bg-light { background: var(--bg-dark) !important; color: var(--text-bright) !important; }
 
 .badge-dot {
     width: 6px;
@@ -1191,6 +1192,9 @@ textarea.form-control { resize: vertical; }
 /* Select dropdown arrow fix for dark theme */
 .form-select {
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%238b949e' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 16px 12px;
 }
 
 /* Select option elements */
@@ -1515,6 +1519,9 @@ select:-webkit-autofill {
 
 [data-bs-theme="light"] .form-select {
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23656d76' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 16px 12px;
 }
 
 [data-bs-theme="light"] ::-webkit-scrollbar-thumb {

@@ -11,23 +11,58 @@
 </div>
 
 <div class="row">
-    <!-- PGP Signing -->
+    <!-- PGP Key Management & Signing -->
     <div class="col-md-6">
         <div class="card animate-slide-in">
-            <div class="card-header">
-                <h3>🔑 PGP Signing</h3>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3 class="mb-0">🔑 PGP Keys & Signing</h3>
+                <button class="btn btn-sm btn-outline-primary" @onclick="ToggleGenerateKey">
+                    @(_showGenerateKey ? "Cancel" : "+ Generate Key")
+                </button>
             </div>
             <div class="card-body">
+                @if (_showGenerateKey)
+                {
+                    <div class="border rounded p-3 mb-3" style="background: var(--bg-dark); border-color: var(--border-light) !important;">
+                        <h6>Generate New PGP Key</h6>
+                        <div class="mb-2">
+                            <label class="form-label small">Key Name</label>
+                            <input type="text" class="form-control form-control-sm" @bind="_keyName" placeholder="lumina-build-key" />
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small">Email</label>
+                            <input type="email" class="form-control form-control-sm" @bind="_keyEmail" placeholder="build@lumina-ci.local" />
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small">Passphrase</label>
+                            <input type="password" class="form-control form-control-sm" @bind="_keyPassphrase" placeholder="Optional" />
+                        </div>
+                        <button class="btn btn-primary btn-sm" @onclick="GenerateKey" disabled="@(_generatingKey)">
+                            @if (_generatingKey)
+                            {
+                                <span class="spinner-border spinner-border-sm"></span>
+                            }
+                            Generate
+                        </button>
+                        @if (_keyResult != null)
+                        {
+                            <div class="alert @(string.IsNullOrEmpty(_keyResult.Error) ? "alert-success" : "alert-danger") mt-2 mb-0 py-1 px-2 small">
+                                @(string.IsNullOrEmpty(_keyResult.Error) ? (_keyResult.Message ?? "Key generated!") : _keyResult.Error)
+                            </div>
+                        }
+                    </div>
+                }
+
                 <p class="text-sm text-muted">Sign packages with PGP keys to ensure authenticity and integrity.</p>
                 <div class="mb-3">
                     <label class="form-label">Artifact ID</label>
-                    <input type="text" class="form-control" @bind="_signArtifactId" placeholder="Enter artifact Guid" />
+                    <input type="text" class="form-control form-control-sm" @bind="_signArtifactId" placeholder="Enter artifact Guid" />
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Key ID</label>
-                    <input type="text" class="form-control" @bind="_signKeyId" placeholder="Enter key Guid" />
+                    <input type="text" class="form-control form-control-sm" @bind="_signKeyId" placeholder="Enter key Guid" />
                 </div>
-                <button class="btn btn-warning" @onclick="SignPackage" disabled="@(_signing)">
+                <button class="btn btn-warning btn-sm" @onclick="SignPackage" disabled="@(_signing)">
                     @if (_signing)
                     {
                         <span class="spinner-border spinner-border-sm"></span>
@@ -147,6 +182,14 @@
     private string _signArtifactId = "";
     private string _signKeyId = "";
 
+    // Key generation
+    private bool _showGenerateKey = false;
+    private bool _generatingKey = false;
+    private string _keyName = "lumina-build";
+    private string _keyEmail = "build@lumina-ci.local";
+    private string _keyPassphrase = "";
+    private ApiResponse<object>? _keyResult;
+
     protected override async Task OnInitializedAsync()
     {
         await RefreshAll();
@@ -181,6 +224,27 @@
         Lumina.Shared.Models.Enums.ScanStatus.Failed => "bg-danger",
         _ => "bg-warning"
     };
+
+    private void ToggleGenerateKey() => _showGenerateKey = !_showGenerateKey;
+
+    private async Task GenerateKey()
+    {
+        _generatingKey = true;
+        _keyResult = null;
+        try
+        {
+            _keyResult = await Api.GenerateKeyAsync(_keyName, _keyEmail, _keyPassphrase);
+            if (_keyResult?.Success == true)
+            {
+                _showGenerateKey = false;
+                _keyName = "lumina-build";
+                _keyEmail = "build@lumina-ci.local";
+                _keyPassphrase = "";
+            }
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Failed to generate key"); }
+        finally { _generatingKey = false; }
+    }
 
     private string GetScanDot(Lumina.Shared.Models.Enums.ScanStatus s) => s switch
     {

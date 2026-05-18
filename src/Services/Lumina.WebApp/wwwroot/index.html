@@ -26,6 +26,47 @@
         window.setLuminaTheme = function(theme) {
             document.documentElement.setAttribute('data-bs-theme', theme);
         };
+
+        // Authenticated file download — fetches with JWT token and triggers browser download
+        window.downloadFileWithAuth = async function(url, fallbackName) {
+            var token = localStorage.getItem('lumina_token');
+            if (!token) {
+                alert('Not authenticated. Please log in again.');
+                window.location.replace('/login');
+                return false;
+            }
+            try {
+                var resp = await fetch(url, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!resp.ok) {
+                    alert('Download failed: ' + resp.status + ' ' + resp.statusText);
+                    return false;
+                }
+                var blob = await resp.blob();
+                // Extract filename from Content-Disposition header or use fallback
+                var disposition = resp.headers.get('Content-Disposition');
+                var filename = fallbackName || 'download';
+                if (disposition) {
+                    var match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                    if (match && match[1]) {
+                        filename = match[1].replace(/['"]/g, '');
+                    }
+                }
+                var blobUrl = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(blobUrl);
+                return true;
+            } catch (err) {
+                alert('Download error: ' + err.message);
+                return false;
+            }
+        };
     </script>
 </head>
 

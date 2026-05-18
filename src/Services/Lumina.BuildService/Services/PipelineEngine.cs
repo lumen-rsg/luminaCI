@@ -36,6 +36,7 @@ public class PipelineEngine
             BuildImage = request.BuildImage,
             GitUsername = request.GitUsername,
             GitToken = request.GitToken,
+            SpecContent = request.SpecContent,
             Tags = request.Tags ?? new List<string>(),
             Steps = request.Steps.Select((s, i) => new PipelineStep
             {
@@ -153,7 +154,7 @@ public class PipelineEngine
 
         var request = new Shared.DTOs.TriggerBuildRequest(
             specName,
-            string.Empty,  // Spec will be read from cloned repo
+            pipeline.SpecContent ?? string.Empty,
             $"git://{pipeline.GitRepoUrl}#branch={branch}&specPath={specPath}",
             triggeredBy
         );
@@ -172,6 +173,7 @@ public class PipelineEngine
     {
         // Find or create a pipeline for this package
         var pipeline = await _db.Pipelines
+            .Include(p => p.Steps)
             .FirstOrDefaultAsync(p => p.Name == packageName);
 
         if (pipeline == null)
@@ -226,19 +228,16 @@ public class PipelineEngine
 
         _logger.LogInformation("Build job {JobId} queued for package {Package} with pre-fetched sources", job.Id, packageName);
 
-        var buildStep = pipeline.Steps.FirstOrDefault(s => s.Type == StepType.Build);
-        if (buildStep != null)
+        // Start the build container (with or without a formal build step)
+        try
         {
-            try
-            {
-                await _dockerBuild.StartBuildAsync(
-                    job, specContent, null, buildImage ?? pipeline.BuildImage,
-                    sourceDir: sourceDir);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Build start failed for job {JobId}", job.Id);
-            }
+            await _dockerBuild.StartBuildAsync(
+                job, specContent, null, buildImage ?? pipeline.BuildImage,
+                sourceDir: sourceDir);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Build start failed for job {JobId}", job.Id);
         }
 
         return job;
@@ -287,5 +286,18 @@ public class PipelineEngine
             .Where(b => b.Status == BuildStatus.Queued || b.Status == BuildStatus.Building)
             .OrderBy(b => b.CreatedAt)
             .ToListAsync();
+    }
+
+    public async Task<BuildJob?> GetBuildJobByArtifactIdAsync(Guid artifactId)
+    {
+        return await _db.BuildJobs
+            .Include(b => b.Artifacts)
+            .FirstOrDefaultAsync(b => b.Artifacts.Any(a => a.Id == artifactId));
+    }
+
+    public async Task UpdateBuildJobAsync(BuildJob job)
+    {
+        _db.BuildJobs.Update(job);
+        await _db.SaveChangesAsync();
     }
 }

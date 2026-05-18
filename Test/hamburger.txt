@@ -1,0 +1,57 @@
+Name: hamburger
+Version: 0.5
+Release: 2%{?dist}
+Summary: Hamburger is a distortion plugin with inbuilt dynamics controls and equalisation
+
+License: AGPL-3.0-or-later
+URL: https://github.com/Davit-G/Hamburger
+ExclusiveArch: x86_64 aarch64
+
+Source0: %{name}-%{version}.tar.gz
+
+BuildRequires: gcc gcc-c++
+BuildRequires: cmake
+BuildRequires: git
+BuildRequires: cairo-devel
+BuildRequires: fontconfig-devel
+BuildRequires: freetype-devel
+BuildRequires: libX11-devel
+BuildRequires: xcb-util-keysyms-devel
+BuildRequires: xcb-util-devel
+BuildRequires: libXrandr-devel
+BuildRequires: xcb-util-cursor-devel
+BuildRequires: libxkbcommon-x11-devel
+BuildRequires: libXinerama-devel
+BuildRequires: libcurl-devel
+BuildRequires: alsa-lib-devel
+BuildRequires: pkgconfig(jack)
+BuildRequires: mesa-libGL-devel
+BuildRequires: libXcursor-devel
+BuildRequires: gtk3-devel
+
+%description
+Hamburger is a distortion plugin with inbuilt dynamics controls and equalisation that can
+deliver both subtle tangy harmonics and absolute annihilation and noise-wall-ification to
+any sound.
+
+%prep
+%autosetup
+
+%build
+%cmake
+%cmake_build
+
+%install
+install -m 755 -d %{buildroot}%{_libdir}/vst3/
+cp -ra %{__cmake_builddir}/Hamburger_artefacts/VST3/* %{buildroot}/%{_libdir}/vst3/ || true
+
+install -m 755 -d %{buildroot}%{_libdir}/clap/
+cp -ra %{__cmake_builddir}/Hamburger_artefacts/CLAP/* %{buildroot}/%{_libdir}/clap/ || true
+
+install -m 755 -d %{buildroot}%{_bindir}/
+cp %{__cmake_builddir}/Hamburger_artefacts/Standalone/* %{buildroot}/%{_bindir}/ || true
+
+%files
+%{_bindir}/*
+%doc README.md
+%license LICENSE.md

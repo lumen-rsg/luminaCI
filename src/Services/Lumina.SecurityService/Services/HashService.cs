@@ -81,4 +81,60 @@ public class HashService
             .ToListAsync();
     }
 
+    /// <summary>
+    /// Store pre-computed hashes from BuildService (which has the actual files).
+    /// </summary>
+    public async Task<HashRecord> StorePrecomputedHashAsync(Guid artifactId, string fileName, string sha256, string md5, long fileSize)
+    {
+        // Check if hash already exists for this artifact
+        var existing = await _db.HashRecords.FirstOrDefaultAsync(h => h.ArtifactId == artifactId);
+        if (existing != null)
+        {
+            _logger.LogInformation("Hash already exists for artifact {ArtifactId}, updating", artifactId);
+            existing.Sha256 = sha256;
+            existing.Md5 = md5;
+            existing.FileName = fileName;
+            existing.FileSize = fileSize;
+            existing.CreatedAt = DateTime.UtcNow;
+            _db.HashRecords.Update(existing);
+            await _db.SaveChangesAsync();
+            return existing;
+        }
+
+        var record = new HashRecord
+        {
+            Id = Guid.NewGuid(),
+            ArtifactId = artifactId,
+            FileName = fileName,
+            Sha256 = sha256,
+            Md5 = md5,
+            Sha1 = "",
+            FileSize = fileSize,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _db.HashRecords.Add(record);
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Stored pre-computed hash for {FileName}: SHA256={Sha256}", fileName, sha256[..Math.Min(16, sha256.Length)] + "...");
+        return record;
+    }
+
+    /// <summary>
+    /// Get all hash records, newest first.
+    /// </summary>
+    public async Task<List<HashRecord>> GetAllHashesAsync(int page = 1, int pageSize = 20)
+    {
+        return await _db.HashRecords
+            .OrderByDescending(h => h.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+    }
+
+    public async Task<int> GetTotalHashCountAsync()
+    {
+        return await _db.HashRecords.CountAsync();
+    }
+
 }

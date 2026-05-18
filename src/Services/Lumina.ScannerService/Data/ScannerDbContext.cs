@@ -16,6 +16,7 @@ public class ScannerDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ScannerType).IsRequired().HasMaxLength(20);
+            entity.Ignore(e => e.Artifact); // Artifact lives in build-service DB, no FK here
             entity.HasMany(e => e.Vulnerabilities)
                 .WithOne()
                 .HasForeignKey(v => v.CveReportId);

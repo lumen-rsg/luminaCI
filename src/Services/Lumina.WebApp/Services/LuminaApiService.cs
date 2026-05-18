@@ -82,6 +82,17 @@ public class LuminaApiService
         return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
     }
 
+    public async Task<ApiResponse<object>?> GenerateKeyAsync(string keyName, string email, string passphrase)
+    {
+        var resp = await _http.PostAsJsonAsync("/api/security/keys/generate", new GenerateKeyRequest(keyName, email, passphrase));
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
+    }
+
+    public async Task<ApiResponse<List<object>>?> GetKeysAsync()
+    {
+        return await _http.GetFromJsonAsync<ApiResponse<List<object>>>("/api/security/keys");
+    }
+
     // === Scanner ===
     public async Task<ApiResponse<ScanListResponse>?> GetScansAsync(int page = 1)
     {
@@ -133,6 +144,59 @@ public class LuminaApiService
     public async Task<ApiResponse<List<PackageResponse>>?> GetRepositoryPackagesAsync(Guid repositoryId)
     {
         return await _http.GetFromJsonAsync<ApiResponse<List<PackageResponse>>>($"/api/repository/{repositoryId}/packages");
+    }
+
+    public async Task<ApiResponse<PackageResponse>?> PublishPackageAsync(Guid artifactId, Guid repositoryId, string publishedBy = "build-service")
+    {
+        var resp = await _http.PostAsJsonAsync("/api/repository/publish", new PublishPackageRequest(artifactId, repositoryId, publishedBy));
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<PackageResponse>>();
+    }
+
+    // === Sources ===
+    public async Task<ApiResponse<SourceListResponse>?> GetSourcesAsync()
+    {
+        return await _http.GetFromJsonAsync<ApiResponse<SourceListResponse>>("/api/sources");
+    }
+
+    public async Task<ApiResponse<SourcePackageResponse>?> GetSourceAsync(string name)
+    {
+        return await _http.GetFromJsonAsync<ApiResponse<SourcePackageResponse>>($"/api/sources/{name}");
+    }
+
+    public async Task<ApiResponse<SourceFetchResponse>?> FetchSourceAsync(string name)
+    {
+        var resp = await _http.PostAsync($"/api/sources/{name}/fetch", null);
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<SourceFetchResponse>>();
+    }
+
+    public async Task<string?> GetConfigAsync()
+    {
+        var resp = await _http.GetFromJsonAsync<System.Text.Json.JsonElement>("/api/sources/config");
+        return resp.TryGetProperty("content", out var c) ? c.GetString() : null;
+    }
+
+    public async Task<bool> SaveConfigAsync(string content)
+    {
+        var resp = await _http.PutAsJsonAsync("/api/sources/config", new { content });
+        return resp.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> RemovePackageFromConfigAsync(string name)
+    {
+        var resp = await _http.DeleteAsync($"/api/sources/config/{name}");
+        return resp.IsSuccessStatusCode;
+    }
+
+    public async Task<ApiResponse<object>?> AddPackageToConfigAsync(AddPackageToConfigRequest request)
+    {
+        var resp = await _http.PostAsJsonAsync("/api/sources/config/package", request);
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
+    }
+
+    public async Task<ApiResponse<object>?> BuildSourceAsync(string name)
+    {
+        var resp = await _http.PostAsync($"/api/sources/{name}/build", null);
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
     }
 
     // === Auth ===

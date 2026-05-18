@@ -78,6 +78,17 @@
                     <option value="lumina-dotnet-build:latest">.NET / NativeAOT (Fedora + .NET 10 SDK + clang)</option>
                 </select>
             </div>
+            <div class="mb-3">
+                <label class="form-label">RPM Spec Content</label>
+                <textarea class="form-control font-monospace" rows="8" @bind="_newSpecContent" style="font-size:0.82rem;" placeholder="Name: my-package
+Version: 1.0
+..."></textarea>
+                <div class="form-text">Required if the git repo has no .spec file. This spec will be used for RPM packaging.</div>
+            </div>
+            <div class="mb-3 form-check">
+                <input type="checkbox" class="form-check-input" id="autoBuildCheck" @bind="_autoBuildAfterCreate" />
+                <label class="form-check-label" for="autoBuildCheck">▶ Auto-build after creation (requires Git URL)</label>
+            </div>
             <div class="d-flex gap-2 mt-3">
                 <button class="btn btn-success" @onclick="CreatePipeline">Create Pipeline</button>
                 <button class="btn btn-outline-secondary" @onclick="() => _showCreate = false">Cancel</button>
@@ -235,6 +246,8 @@ else
     private string _newBuildImage = "";
     private string _newGitUsername = "";
     private string _newGitToken = "";
+    private string _newSpecContent = "";
+    private bool _autoBuildAfterCreate = false;
 
     // Trigger build dialog
     private bool _showTrigger = false;
@@ -307,9 +320,13 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             string.IsNullOrWhiteSpace(_newWebhookSecret) ? null : _newWebhookSecret,
             string.IsNullOrWhiteSpace(_newBuildImage) ? null : _newBuildImage,
             string.IsNullOrWhiteSpace(_newGitUsername) ? null : _newGitUsername,
-            string.IsNullOrWhiteSpace(_newGitToken) ? null : _newGitToken));
+            string.IsNullOrWhiteSpace(_newGitToken) ? null : _newGitToken,
+            string.IsNullOrWhiteSpace(_newSpecContent) ? null : _newSpecContent));
         if (result?.Success == true)
         {
+            var shouldAutoBuild = _autoBuildAfterCreate && !string.IsNullOrWhiteSpace(_newGitRepoUrl);
+            var pipelineId = result.Data?.Id;
+
             _showCreate = false;
             _newName = "";
             _newDescription = "";
@@ -321,9 +338,34 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             _newBuildImage = "";
             _newGitUsername = "";
             _newGitToken = "";
+            _newSpecContent = "";
+            _autoBuildAfterCreate = false;
             _triggerMessage = "✅ Pipeline created successfully!";
             IsSuccess = true;
             _pipelines = await Api.GetPipelinesAsync(1, 50);
+
+            // Auto-build if requested and git URL was configured
+            if (shouldAutoBuild && pipelineId.HasValue)
+            {
+                try
+                {
+                    var buildResult = await Api.TriggerAutoBuildAsync(pipelineId.Value, "admin");
+                    if (buildResult?.Success == true)
+                    {
+                        _triggerMessage = $"✅ Pipeline created & auto-build triggered! Job ID: {buildResult.Data?.Id}";
+                    }
+                    else
+                    {
+                        _triggerMessage = $"⚠️ Pipeline created, but auto-build failed: {buildResult?.Error ?? "Unknown error"}";
+                        IsSuccess = false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _triggerMessage = $"⚠️ Pipeline created, but auto-build error: {ex.Message}";
+                    IsSuccess = false;
+                }
+            }
         }
         else
         {

@@ -21,7 +21,7 @@ try
     builder.Services.AddDbContext<ScannerDbContext>(options =>
         options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
 
-    builder.Services.AddHttpClient<TrivyScannerService>();
+    builder.Services.AddSingleton<TrivyScannerService>();
 
     builder.Services.AddMassTransit(x =>
     {

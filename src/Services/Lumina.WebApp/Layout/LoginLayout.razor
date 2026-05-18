@@ -1,0 +1,58 @@
+@inherits LayoutComponentBase
+@inject Lumina.WebApp.Services.ThemeService Theme
+
+<div class="login-layout">
+    <button class="theme-toggle login-theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Переключить на светлую тему" : "Переключить на тёмную тему")">
+        @(Theme.IsDark ? "☀️" : "🌙")
+    </button>
+    <div class="login-container">
+        <div class="login-logo">
+            <span style="font-size:3rem;">🏗️</span>
+            <h1>Lumina CI</h1>
+            <p class="text-muted">Continuous Integration Platform</p>
+        </div>
+        @Body
+    </div>
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        await Theme.InitializeAsync();
+    }
+
+    private async Task ToggleTheme()
+    {
+        await Theme.ToggleThemeAsync();
+    }
+}
+
+<style>
+    .login-layout {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-card) 50%, var(--bg-dark) 100%);
+        position: relative;
+    }
+    .login-theme-toggle {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+    }
+    .login-container {
+        width: 100%;
+        max-width: 420px;
+        padding: 2rem;
+    }
+    .login-logo {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .login-logo h1 {
+        color: var(--text-white);
+        margin-top: 0.5rem;
+        font-size: 1.8rem;
+    }
+</style>

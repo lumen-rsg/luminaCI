@@ -1,0 +1,94 @@
+@startuml deployment_diagram
+!theme plain
+skinparam defaultFontSize 11
+skinparam rectangleFontSize 12
+skinparam arrowThickness 1.5
+
+title Диаграмма развёртывания системы Lumina CI
+
+rectangle "Клиент" #E8F5E9 {
+    node "Браузер" {
+        component [Blazor WebAssembly] as blazor
+    }
+}
+
+rectangle "Docker Compose" #E3F2FD {
+    node "Nginx :80" {
+        component [Reverse Proxy] as nginx
+    }
+    node "API Gateway :5000" {
+        component [YARP Proxy + JWT] as gateway
+    }
+    node "Build Service :5001" {
+        component [Pipeline Engine] as build
+    }
+    node "Security Service :5002" {
+        component [PGP + Hash] as security
+    }
+    node "Scanner Service :5003" {
+        component [Trivy Client] as scanner
+    }
+    node "Repository Service :5004" {
+        component [Package Manager] as repo
+    }
+    node "WebApp :80" {
+        component [Static Files] as webapp
+    }
+    node "PostgreSQL 16 :5432" {
+        database "PostgreSQL" as postgres
+    }
+    node "Redis 7 :6379" {
+        database "Redis" as redis
+    }
+    node "RabbitMQ 3 :5672" {
+        queue "RabbitMQ" as rabbit
+    }
+    node "MinIO :9000" {
+        database "MinIO S3" as minio
+    }
+    node "Trivy :8080" {
+        component [Trivy Server] as trivy
+    }
+    node "Docker Engine" {
+        component [Docker 24+] as docker
+    }
+}
+
+rectangle "Внешние" #FFEBEE {
+    node "Git-хостинг" {
+        component [GitHub/GitLab] as git
+    }
+}
+
+blazor -down-> nginx : HTTPS
+nginx -down-> webapp : static
+nginx -down-> gateway : /api/*
+gateway -down-> build : :5001
+gateway -down-> security : :5002
+gateway -down-> scanner : :5003
+gateway -down-> repo : :5004
+
+build -down-> postgres : Npgsql
+build -down-> redis : StackExchange
+build --> rabbit : MassTransit
+build -down-> minio : S3 API
+build ..> docker : Socket
+
+security -down-> postgres
+security -down-> redis
+security --> rabbit
+security -down-> minio
+
+scanner -down-> postgres
+scanner -down-> redis
+scanner --> rabbit
+scanner -down-> trivy
+
+repo -down-> postgres
+repo -down-> redis
+repo --> rabbit
+repo -down-> minio
+
+git -up-> gateway : Webhook
+
+@enduml

@@ -1,0 +1,117 @@
+@startuml package_diagram
+!theme plain
+skinparam packageStyle rectangle
+skinparam defaultFontSize 11
+skinparam packageFontSize 13
+
+title Структура пакетов проекта Lumina CI
+
+package "Lumina.ApiGateway" as apiGateway #E8F5E9 {
+    package "Controllers" {
+        [Auth Endpoints]
+    }
+    package "Configuration" {
+        [YARP Routes]
+        [JWT Settings]
+    }
+}
+
+package "Lumina.BuildService" as buildService #E3F2FD {
+    package "Controllers" {
+        [BuildsController]
+        [PipelinesController]
+        [WebhooksController]
+    }
+    package "Services" {
+        [PipelineEngine]
+        [DockerBuildService]
+    }
+    package "Data" {
+        [BuildDbContext]
+    }
+}
+
+package "Lumina.SecurityService" as securityService #E3F2FD {
+    package "Controllers" {
+        [SecurityController]
+    }
+    package "Services" {
+        [PgpSigningService]
+        [HashService]
+    }
+    package "Data" {
+        [SecurityDbContext]
+    }
+}
+
+package "Lumina.ScannerService" as scannerService #E3F2FD {
+    package "Controllers" {
+        [ScannerController]
+    }
+    package "Services" {
+        [TrivyScannerService]
+    }
+    package "Data" {
+        [ScannerDbContext]
+    }
+}
+
+package "Lumina.RepositoryService" as repoService #E3F2FD {
+    package "Controllers" {
+        [RepositoryController]
+    }
+    package "Services" {
+        [MinioStorageService]
+    }
+    package "Data" {
+        [RepositoryDbContext]
+    }
+}
+
+package "Lumina.WebApp" as webApp #FFF3E0 {
+    package "Pages" {
+        [Dashboard]
+        [Pipelines]
+        [Builds]
+        [BuildDetail]
+        [Security]
+        [Repositories]
+    }
+    package "Services" {
+        [LuminaApiService]
+    }
+}
+
+package "Lumina.Shared" as shared #F3E5F5 {
+    package "Models" {
+        [Pipeline]
+        [BuildJob]
+        [BuildArtifact]
+        [SecurityKey]
+        [Package]
+    }
+    package "DTOs" {
+        [Requests]
+        [Responses]
+    }
+    package "Events" {
+        [BuildEvents]
+        [SecurityEvents]
+        [ScannerEvents]
+    }
+    package "Enums" {
+        [BuildStatus]
+        [PipelineStatus]
+        [StepType]
+    }
+}
+
+apiGateway ..> shared : <<use>>
+buildService ..> shared : <<use>>
+securityService ..> shared : <<use>>
+scannerService ..> shared : <<use>>
+repoService ..> shared : <<use>>
+webApp ..> shared : <<use>>
+webApp ..> apiGateway : HTTP/REST
+
+@enduml
