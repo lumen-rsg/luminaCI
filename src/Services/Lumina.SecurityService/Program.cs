@@ -1,5 +1,7 @@
+using Lumina.SecurityService.Consumers;
 using Lumina.SecurityService.Data;
 using Lumina.SecurityService.Services;
+using Lumina.Shared.Extensions;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -24,8 +26,20 @@ try
     builder.Services.AddScoped<PgpSigningService>();
     builder.Services.AddScoped<HashService>();
 
+    // Redis distributed cache
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = builder.Configuration["Redis:ConnectionString"] ?? "redis:6379";
+        options.InstanceName = "lumina:security:";
+    });
+    builder.Services.AddSingleton<RedisCacheService>();
+
+    // MassTransit with RabbitMQ
     builder.Services.AddMassTransit(x =>
     {
+        x.AddConsumer<HashStoreRequestedConsumer>();
+        x.AddConsumer<PackageSigningRequestedConsumer>();
+
         x.UsingRabbitMq((ctx, cfg) =>
         {
             cfg.Host(builder.Configuration["RabbitMQ:Host"] ?? "rabbitmq", "/", h =>
@@ -33,6 +47,14 @@ try
                 h.Username(builder.Configuration["RabbitMQ:Username"] ?? throw new InvalidOperationException("RabbitMQ:Username not configured"));
                 h.Password(builder.Configuration["RabbitMQ:Password"] ?? throw new InvalidOperationException("RabbitMQ:Password not configured"));
             });
+
+            cfg.ReceiveEndpoint("lumina-security-service", e =>
+            {
+                e.ConfigureConsumer<HashStoreRequestedConsumer>(ctx);
+                e.ConfigureConsumer<PackageSigningRequestedConsumer>(ctx);
+            });
+
+            cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
         });
     });
 

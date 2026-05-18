@@ -1,5 +1,6 @@
 using Lumina.RepositoryService.Data;
 using Lumina.RepositoryService.Services;
+using Lumina.Shared.Extensions;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Minio;
@@ -32,6 +33,15 @@ try
     builder.Services.AddScoped<RepositoryManagerService>();
     builder.Services.AddScoped<MinioStorageService>();
 
+    // Redis distributed cache
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = builder.Configuration["Redis:ConnectionString"] ?? "redis:6379";
+        options.InstanceName = "lumina:repository:";
+    });
+    builder.Services.AddSingleton<RedisCacheService>();
+
+    // MassTransit — RepositoryService only publishes, no consumers
     builder.Services.AddMassTransit(x =>
     {
         x.UsingRabbitMq((ctx, cfg) =>
@@ -41,6 +51,8 @@ try
                 h.Username(builder.Configuration["RabbitMQ:Username"] ?? throw new InvalidOperationException("RabbitMQ:Username not configured"));
                 h.Password(builder.Configuration["RabbitMQ:Password"] ?? throw new InvalidOperationException("RabbitMQ:Password not configured"));
             });
+
+            cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
         });
     });
 

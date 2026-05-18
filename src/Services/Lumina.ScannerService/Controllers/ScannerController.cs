@@ -53,11 +53,11 @@ public class ScannerController : ControllerBase
     }
 
     [HttpGet("scans")]
-    public async Task<ActionResult<ApiResponse<ScanListResponse>>> ListScans([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    public async Task<ActionResult<ApiResponse<ScanPaginatedResponse>>> ListScans([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
         page = Math.Clamp(page, 1, 1000);
         pageSize = Math.Clamp(pageSize, 1, 100);
         var result = await _scanner.GetScansPaginatedAsync(page, pageSize);
-        return Ok(new ApiResponse<ScanListResponse>(true, result, null, null));
+        return Ok(new ApiResponse<ScanPaginatedResponse>(true, result, null, null));
     }
 }

@@ -11,12 +11,14 @@ public class PgpSigningService
     private readonly SecurityDbContext _db;
     private readonly ILogger<PgpSigningService> _logger;
     private readonly IConfiguration _config;
+    private readonly RedisCacheService _cache;
 
-    public PgpSigningService(SecurityDbContext db, ILogger<PgpSigningService> logger, IConfiguration config)
+    public PgpSigningService(SecurityDbContext db, ILogger<PgpSigningService> logger, IConfiguration config, RedisCacheService cache)
     {
         _db = db;
         _logger = logger;
         _config = config;
+        _cache = cache;
     }
 
     public async Task<SecurityKey> GenerateKeyAsync(string keyName, string email, string passphrase, string createdBy)
@@ -108,6 +110,7 @@ Passphrase: {safePassphrase}
             await _db.SaveChangesAsync();
 
             _logger.LogInformation("PGP key {KeyId} generated for {KeyName}", keyId, safeKeyName);
+            await _cache.RemoveAsync(CacheKeys.SecurityKeysList);
             return key;
         }
         finally
@@ -184,30 +187,9 @@ Passphrase: {safePassphrase}
             _db.SigningRequests.Add(request);
             await _db.SaveChangesAsync();
 
+            request.SignatureContent = signatureContent;
+
             _logger.LogInformation("Artifact {ArtifactPath} signed with key {KeyId}", artifactPath, keyId);
-
-            // Notify BuildService with the PGP signature
-            try
-            {
-                var buildServiceUrl = _config["Services:BuildService"] ?? "http://build-service:5001";
-                using var httpClient = new HttpClient();
-                var callbackPayload = new
-                {
-                    artifactId,
-                    pgpSignature = signatureContent
-                };
-                var callbackResponse = await httpClient.PutAsJsonAsync(
-                    $"{buildServiceUrl}/api/builds/artifacts/{artifactId}/pgp-signature", callbackPayload);
-
-                if (callbackResponse.IsSuccessStatusCode)
-                    _logger.LogInformation("Notified build service: artifact {ArtifactId} signed", artifactId);
-                else
-                    _logger.LogWarning("Failed to notify build service about signing: {Status}", callbackResponse.StatusCode);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to notify build service about signing for artifact {ArtifactId}", artifactId);
-            }
 
             return request;
         }
@@ -220,11 +202,17 @@ Passphrase: {safePassphrase}
 
     public async Task<List<SecurityKey>> ListKeysAsync()
     {
-        return await _db.SecurityKeys.OrderByDescending(k => k.CreatedAt).ToListAsync();
+        return await _cache.GetOrSetAsync(
+            CacheKeys.SecurityKeysList,
+            async () => await _db.SecurityKeys.OrderByDescending(k => k.CreatedAt).ToListAsync(),
+            TimeSpan.FromMinutes(10));
     }
 
     public async Task<List<SigningRequest>> GetRecentSigningsAsync(int count = 50)
     {
-        return await _db.SigningRequests.OrderByDescending(s => s.CreatedAt).Take(count).ToListAsync();
+        return await _cache.GetOrSetAsync(
+            CacheKeys.SigningHistory(count),
+            async () => await _db.SigningRequests.OrderByDescending(s => s.CreatedAt).Take(count).ToListAsync(),
+            TimeSpan.FromMinutes(5));
     }
 }

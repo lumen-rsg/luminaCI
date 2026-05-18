@@ -15,5 +15,17 @@ public class CveReport
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
 
+    /// <summary>When this report record was created (start of scan).</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>When the scan completed or failed.</summary>
+    public DateTime? CompletedAt { get; set; }
+
+    /// <summary>Human-readable summary of scan results.</summary>
+    public string? Summary { get; set; }
+
+    /// <summary>Raw JSON output from the scanner.</summary>
+    public string? RawOutput { get; set; }
+
     public BuildArtifact? Artifact { get; set; }
 }

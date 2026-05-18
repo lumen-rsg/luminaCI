@@ -2,8 +2,10 @@ using System.Text.Json;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Lumina.BuildService.Data;
+using Lumina.Shared.Events;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.BuildService.Services;
@@ -15,22 +17,25 @@ public class DockerBuildService
     private readonly ILogger<DockerBuildService> _logger;
     private readonly IConfiguration _config;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly HttpClient _httpClient;
-    private readonly HttpClient _securityHttpClient;
+    private readonly IBus _bus;
 
-    public DockerBuildService(BuildDbContext db, ILogger<DockerBuildService> logger, IConfiguration config, IServiceScopeFactory scopeFactory)
+    public DockerBuildService(
+        BuildDbContext db,
+        ILogger<DockerBuildService> logger,
+        IConfiguration config,
+        IServiceScopeFactory scopeFactory,
+        IBus bus)
     {
         _db = db;
         _logger = logger;
         _config = config;
         _scopeFactory = scopeFactory;
+        _bus = bus;
         var dockerPath = config["Docker:SocketPath"] ?? "/var/run/docker.sock";
         var dockerUrl = dockerPath.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
             ? dockerPath
             : $"unix://{dockerPath}";
         _docker = new DockerClientConfiguration(new Uri(dockerUrl)).CreateClient();
-        _httpClient = new HttpClient { BaseAddress = new Uri(config["Services:ScannerService"] ?? "http://scanner-service:5003") };
-        _securityHttpClient = new HttpClient { BaseAddress = new Uri(config["Services:SecurityService"] ?? "http://security-service:5002") };
     }
 
     public async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? sourceDir = null)
@@ -207,12 +212,10 @@ public class DockerBuildService
             db.BuildJobs.Update(dbJob);
             await db.SaveChangesAsync();
 
-            // Trigger CVE scan, hash storage, and PGP signing for all registered artifacts
+            // Trigger CVE scan, hash storage, and PGP signing via MassTransit for all registered artifacts
             if (waitResult.StatusCode == 0)
             {
-                _ = TriggerCveScansAsync(dbJob.Id);
-                _ = TriggerHashStorageAsync(dbJob.Id);
-                _ = TriggerPgpSigningAsync(dbJob.Id);
+                _ = PublishPostBuildEventsAsync(dbJob.Id);
             }
 
             // Clean up container
@@ -306,9 +309,9 @@ public class DockerBuildService
     }
 
     /// <summary>
-    /// Trigger CVE scans for all artifacts of a build job via the Scanner Service API.
+    /// Publish post-build events via MassTransit: CVE scan requests, hash storage, and PGP signing.
     /// </summary>
-    private async Task TriggerCveScansAsync(Guid jobId)
+    private async Task PublishPostBuildEventsAsync(Guid jobId)
     {
         try
         {
@@ -316,146 +319,81 @@ public class DockerBuildService
             var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
             var artifacts = await db.BuildArtifacts.Where(a => a.BuildJobId == jobId).ToListAsync();
 
-            foreach (var artifact in artifacts)
-            {
-                _logger.LogInformation("Triggering CVE scan for artifact {ArtifactId} ({FileName})", artifact.Id, artifact.FileName);
-
-                var scanPayload = new
-                {
-                    artifactId = artifact.Id,
-                    artifactPath = artifact.FilePath,
-                    scannerType = "Trivy"
-                };
-
-                var response = await _httpClient.PostAsJsonAsync("/api/scanner/scan", scanPayload);
-                if (response.IsSuccessStatusCode)
-                {
-                    artifact.CveScanStatus = ScanStatus.Running;
-                    _logger.LogInformation("CVE scan triggered for artifact {ArtifactId}", artifact.Id);
-                }
-                else
-                {
-                    var error = await response.Content.ReadAsStringAsync();
-                    _logger.LogWarning("Failed to trigger CVE scan for artifact {ArtifactId}: {Error}", artifact.Id, error);
-                }
-            }
-
-            db.BuildArtifacts.UpdateRange(artifacts);
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to trigger CVE scans for job {JobId}", jobId);
-        }
-    }
-
-    /// <summary>
-    /// Store pre-computed hashes in SecurityService for all artifacts of a build job.
-    /// </summary>
-    private async Task TriggerHashStorageAsync(Guid jobId)
-    {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
-            var artifacts = await db.BuildArtifacts.Where(a => a.BuildJobId == jobId).ToListAsync();
-
-            foreach (var artifact in artifacts)
-            {
-                _logger.LogInformation("Storing hash for artifact {ArtifactId} ({FileName})", artifact.Id, artifact.FileName);
-
-                var hashPayload = new
-                {
-                    artifactId = artifact.Id,
-                    fileName = artifact.FileName,
-                    sha256 = artifact.HashSha256,
-                    md5 = artifact.HashMd5,
-                    fileSize = artifact.FileSize
-                };
-
-                var response = await _securityHttpClient.PostAsJsonAsync("/api/security/hash/store", hashPayload);
-                if (response.IsSuccessStatusCode)
-                {
-                    _logger.LogInformation("Hash stored for artifact {ArtifactId}", artifact.Id);
-                }
-                else
-                {
-                    var error = await response.Content.ReadAsStringAsync();
-                    _logger.LogWarning("Failed to store hash for artifact {ArtifactId}: {Error}", artifact.Id, error);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to store hashes for job {JobId}", jobId);
-        }
-    }
-
-    /// <summary>
-    /// Trigger PGP signing for all artifacts of a build job via the Security Service API.
-    /// </summary>
-    private async Task TriggerPgpSigningAsync(Guid jobId)
-    {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
-            var artifacts = await db.BuildArtifacts.Where(a => a.BuildJobId == jobId).ToListAsync();
-
-            // Get the first active PGP key
-            var keysResponse = await _securityHttpClient.GetAsync("/api/security/keys");
-            if (!keysResponse.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Failed to get PGP keys from SecurityService — skipping signing for job {JobId}", jobId);
-                return;
-            }
-
-            var keysContent = await keysResponse.Content.ReadAsStringAsync();
-            using var keysDoc = JsonDocument.Parse(keysContent);
-            var keysArray = keysDoc.RootElement.GetProperty("data").EnumerateArray();
-
+            // Get the first active PGP key for signing
+            // We need to query SecurityService for keys — use a dedicated endpoint or publish without keyId
+            // For now, we'll publish signing requests without a specific key and let SecurityService pick the active one
             Guid? activeKeyId = null;
-            foreach (var key in keysArray)
+
+            // Try to get active key via a temporary HTTP call (this will be replaced when SecurityService publishes key info)
+            try
             {
-                if (key.TryGetProperty("isActive", out var isActive) && isActive.GetBoolean())
+                var securityServiceUrl = _config["Services:SecurityService"] ?? "http://security-service:5002";
+                using var httpClient = new HttpClient { BaseAddress = new Uri(securityServiceUrl) };
+                var keysResponse = await httpClient.GetAsync("/api/security/keys");
+                if (keysResponse.IsSuccessStatusCode)
                 {
-                    activeKeyId = key.GetProperty("id").GetGuid();
-                    break;
+                    var keysContent = await keysResponse.Content.ReadAsStringAsync();
+                    using var keysDoc = JsonDocument.Parse(keysContent);
+                    var keysArray = keysDoc.RootElement.GetProperty("data").EnumerateArray();
+                    foreach (var key in keysArray)
+                    {
+                        if (key.TryGetProperty("isActive", out var isActive) && isActive.GetBoolean())
+                        {
+                            activeKeyId = key.GetProperty("id").GetGuid();
+                            break;
+                        }
+                    }
                 }
             }
-
-            if (activeKeyId == null)
+            catch (Exception ex)
             {
-                _logger.LogWarning("No active PGP key found — skipping signing for job {JobId}", jobId);
-                return;
+                _logger.LogWarning(ex, "Failed to get PGP keys from SecurityService — skipping signing");
             }
 
             foreach (var artifact in artifacts)
             {
-                _logger.LogInformation("Triggering PGP sign for artifact {ArtifactId} ({FileName})", artifact.Id, artifact.FileName);
+                // Publish CVE scan request
+                await _bus.Publish(new CveScanRequested(
+                    artifact.Id,
+                    artifact.FilePath,
+                    artifact.FileName,
+                    "Trivy",
+                    DateTime.UtcNow
+                ));
+                _logger.LogInformation("Published CveScanRequested for artifact {ArtifactId}", artifact.Id);
 
-                var signPayload = new
-                {
-                    artifactId = artifact.Id,
-                    artifactPath = artifact.FilePath,
-                    keyId = activeKeyId.Value
-                };
+                // Publish hash storage request
+                await _bus.Publish(new HashStoreRequested(
+                    artifact.Id,
+                    artifact.FileName,
+                    artifact.HashSha256,
+                    artifact.HashMd5,
+                    artifact.FileSize,
+                    DateTime.UtcNow
+                ));
+                _logger.LogInformation("Published HashStoreRequested for artifact {ArtifactId}", artifact.Id);
 
-                var response = await _securityHttpClient.PostAsJsonAsync("/api/security/sign", signPayload);
-                if (response.IsSuccessStatusCode)
+                // Publish PGP signing request (only if we have an active key)
+                if (activeKeyId.HasValue)
                 {
-                    _logger.LogInformation("PGP sign triggered for artifact {ArtifactId}", artifact.Id);
+                    await _bus.Publish(new PackageSigningRequested(
+                        artifact.Id,
+                        artifact.FilePath,
+                        artifact.FileName,
+                        activeKeyId.Value,
+                        DateTime.UtcNow
+                    ));
+                    _logger.LogInformation("Published PackageSigningRequested for artifact {ArtifactId}", artifact.Id);
                 }
                 else
                 {
-                    var error = await response.Content.ReadAsStringAsync();
-                    _logger.LogWarning("Failed to trigger PGP sign for artifact {ArtifactId}: {Error}", artifact.Id, error);
+                    _logger.LogWarning("No active PGP key found — skipping signing for artifact {ArtifactId}", artifact.Id);
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to trigger PGP signing for job {JobId}", jobId);
+            _logger.LogError(ex, "Failed to publish post-build events for job {JobId}", jobId);
         }
     }
 

@@ -1,9 +1,11 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Lumina.Shared.DTOs;
+using Lumina.Shared.Events;
 using Lumina.Shared.Models.Enums;
 using Lumina.SourceService.Data;
 using Lumina.SourceService.Services;
+using MassTransit;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -20,6 +22,7 @@ public class SourceController : ControllerBase
     private readonly SourceDbContext _db;
     private readonly ILogger<SourceController> _logger;
     private readonly IConfiguration _config;
+    private readonly IBus _bus;
 
     public SourceController(
         ConfigParserService configParser,
@@ -27,7 +30,8 @@ public class SourceController : ControllerBase
         SourceStorageService storageService,
         SourceDbContext db,
         ILogger<SourceController> logger,
-        IConfiguration config)
+        IConfiguration config,
+        IBus bus)
     {
         _configParser = configParser;
         _fetchService = fetchService;
@@ -35,6 +39,7 @@ public class SourceController : ControllerBase
         _db = db;
         _logger = logger;
         _config = config;
+        _bus = bus;
     }
 
     /// <summary>
@@ -255,31 +260,18 @@ public class SourceController : ControllerBase
                 name, pkg.Source, pkg.SourceType, pkg.SourceBranch,
                 packageVersion, specContent);
 
-            // 4. Call BuildService to trigger the build
-            var buildServiceUrl = _config["Services:BuildService"] ?? "http://build-service:5001";
-
-            using var httpClient = new HttpClient();
-            var buildRequest = new
-            {
-                packageName = name,
-                sourceDir = prepareResult.SourceDir,
+            // 4. Publish BuildTriggerFromConfig event via MassTransit
+            await _bus.Publish(new BuildTriggerFromConfig(
+                name,
+                prepareResult.SourceDir,
                 specContent,
                 specName,
-                buildImage = pkg.BuildImage ?? request?.BuildImage
-            };
+                pkg.BuildImage ?? request?.BuildImage,
+                "source-service"
+            ));
 
-            var response = await httpClient.PostAsJsonAsync(
-                $"{buildServiceUrl}/api/builds/trigger-from-config", buildRequest);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorBody = await response.Content.ReadAsStringAsync();
-                _logger.LogError("BuildService returned {Status}: {Error}", response.StatusCode, errorBody);
-                return StatusCode(502, new { error = $"BuildService error: {response.StatusCode}", details = errorBody });
-            }
-
-            var buildResult = await response.Content.ReadFromJsonAsync<JsonElement>();
-            return Ok(new { message = $"Build triggered for {name}", package = name, version = packageVersion, build = buildResult });
+            _logger.LogInformation("Published BuildTriggerFromConfig for package {Package}", name);
+            return Ok(new { message = $"Build triggered for {name}", package = name, version = packageVersion });
         }
         catch (Exception ex)
         {

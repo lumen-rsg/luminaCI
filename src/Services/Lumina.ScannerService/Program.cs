@@ -1,5 +1,7 @@
+using Lumina.ScannerService.Consumers;
 using Lumina.ScannerService.Data;
 using Lumina.ScannerService.Services;
+using Lumina.Shared.Extensions;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -21,10 +23,24 @@ try
     builder.Services.AddDbContext<ScannerDbContext>(options =>
         options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
 
-    builder.Services.AddSingleton<TrivyScannerService>();
+    // HTTP client for Trivy Server API
+    builder.Services.AddHttpClient("TrivyServer");
 
+    // Redis distributed cache
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = builder.Configuration["Redis:ConnectionString"] ?? "redis:6379";
+        options.InstanceName = "lumina:scanner:";
+    });
+    builder.Services.AddSingleton<RedisCacheService>();
+
+    builder.Services.AddScoped<TrivyScannerService>();
+
+    // MassTransit with RabbitMQ
     builder.Services.AddMassTransit(x =>
     {
+        x.AddConsumer<CveScanRequestedConsumer>();
+
         x.UsingRabbitMq((ctx, cfg) =>
         {
             cfg.Host(builder.Configuration["RabbitMQ:Host"] ?? "rabbitmq", "/", h =>
@@ -32,6 +48,13 @@ try
                 h.Username(builder.Configuration["RabbitMQ:Username"] ?? throw new InvalidOperationException("RabbitMQ:Username not configured"));
                 h.Password(builder.Configuration["RabbitMQ:Password"] ?? throw new InvalidOperationException("RabbitMQ:Password not configured"));
             });
+
+            cfg.ReceiveEndpoint("lumina-scanner-service", e =>
+            {
+                e.ConfigureConsumer<CveScanRequestedConsumer>(ctx);
+            });
+
+            cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
         });
     });
 

@@ -1,4 +1,5 @@
 using Lumina.BuildService.Data;
+using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -10,12 +11,14 @@ public class PipelineEngine
     private readonly BuildDbContext _db;
     private readonly DockerBuildService _dockerBuild;
     private readonly ILogger<PipelineEngine> _logger;
+    private readonly RedisCacheService _cache;
 
-    public PipelineEngine(BuildDbContext db, DockerBuildService dockerBuild, ILogger<PipelineEngine> logger)
+    public PipelineEngine(BuildDbContext db, DockerBuildService dockerBuild, ILogger<PipelineEngine> logger, RedisCacheService cache)
     {
         _db = db;
         _dockerBuild = dockerBuild;
         _logger = logger;
+        _cache = cache;
     }
 
     public async Task<Pipeline> CreatePipelineAsync(Shared.DTOs.CreatePipelineRequest request, string createdBy)
@@ -245,39 +248,57 @@ public class PipelineEngine
 
     public async Task<(List<Pipeline> Items, int TotalCount)> ListPipelinesAsync(int page = 1, int pageSize = 20)
     {
-        var totalCount = await _db.Pipelines.CountAsync();
-        var items = await _db.Pipelines
-            .Include(p => p.Steps)
-            .OrderByDescending(p => p.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync();
-        return (items, totalCount);
+        return await _cache.GetOrSetAsync(
+            CacheKeys.PipelineList(page, pageSize),
+            async () =>
+            {
+                var totalCount = await _db.Pipelines.CountAsync();
+                var items = await _db.Pipelines
+                    .Include(p => p.Steps)
+                    .OrderByDescending(p => p.CreatedAt)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToListAsync();
+                return (items, totalCount);
+            },
+            TimeSpan.FromMinutes(2));
     }
 
     public async Task<Pipeline?> GetPipelineAsync(Guid id)
     {
-        return await _db.Pipelines
-            .Include(p => p.Steps)
-            .FirstOrDefaultAsync(p => p.Id == id);
+        return await _cache.GetOrSetAsync(
+            CacheKeys.Pipeline(id),
+            async () => await _db.Pipelines
+                .Include(p => p.Steps)
+                .FirstOrDefaultAsync(p => p.Id == id),
+            TimeSpan.FromMinutes(5));
     }
 
     public async Task<BuildJob?> GetBuildJobAsync(Guid id)
     {
-        return await _db.BuildJobs
-            .Include(b => b.Artifacts)
-            .FirstOrDefaultAsync(b => b.Id == id);
+        return await _cache.GetOrSetAsync(
+            CacheKeys.BuildJob(id),
+            async () => await _db.BuildJobs
+                .Include(b => b.Artifacts)
+                .FirstOrDefaultAsync(b => b.Id == id),
+            TimeSpan.FromMinutes(3));
     }
 
     public async Task<(List<BuildJob> Items, int TotalCount)> ListBuildJobsAsync(int page = 1, int pageSize = 20)
     {
-        var totalCount = await _db.BuildJobs.CountAsync();
-        var items = await _db.BuildJobs
-            .OrderByDescending(b => b.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync();
-        return (items, totalCount);
+        return await _cache.GetOrSetAsync(
+            CacheKeys.BuildJobList(page, pageSize),
+            async () =>
+            {
+                var totalCount = await _db.BuildJobs.CountAsync();
+                var items = await _db.BuildJobs
+                    .OrderByDescending(b => b.CreatedAt)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToListAsync();
+                return (items, totalCount);
+            },
+            TimeSpan.FromMinutes(1));
     }
 
     public async Task<List<BuildJob>> GetActiveBuildsAsync()
@@ -376,5 +397,7 @@ public class PipelineEngine
     {
         _db.BuildJobs.Update(job);
         await _db.SaveChangesAsync();
+        await _cache.RemoveAsync(CacheKeys.BuildJob(job.Id));
+        await _cache.RemoveAsync(CacheKeys.BuildQueue);
     }
  }

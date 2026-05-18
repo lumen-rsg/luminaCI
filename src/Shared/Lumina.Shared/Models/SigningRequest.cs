@@ -12,4 +12,10 @@ public class SigningRequest
     public string? Error { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }
+
+    /// <summary>
+    /// Transient — the PGP signature content, not persisted to DB.
+    /// Used to pass signature from PgpSigningService to consumer.
+    /// </summary>
+    public string? SignatureContent { get; set; }
 }

@@ -1,5 +1,6 @@
 using Lumina.SourceService.Data;
 using Lumina.SourceService.Services;
+using Lumina.Shared.Extensions;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -27,7 +28,15 @@ try
     builder.Services.AddScoped<SourceStorageService>();
     builder.Services.AddScoped<SourceFetchService>();
 
-    // MassTransit
+    // Redis distributed cache
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = builder.Configuration["Redis:ConnectionString"] ?? "redis:6379";
+        options.InstanceName = "lumina:source:";
+    });
+    builder.Services.AddSingleton<RedisCacheService>();
+
+    // MassTransit — SourceService only publishes, no consumers
     builder.Services.AddMassTransit(x =>
     {
         x.UsingRabbitMq((ctx, cfg) =>
@@ -37,6 +46,8 @@ try
                 h.Username(builder.Configuration["RabbitMQ:Username"] ?? throw new InvalidOperationException("RabbitMQ:Username not configured"));
                 h.Password(builder.Configuration["RabbitMQ:Password"] ?? throw new InvalidOperationException("RabbitMQ:Password not configured"));
             });
+
+            cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
         });
     });
 

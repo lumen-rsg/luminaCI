@@ -47,6 +47,11 @@ public record CveReportListResponse(List<CveReportSummaryResponse> Reports, int 
 
 public record CveReportSummaryResponse(Guid Id, Guid ArtifactId, string ScannerType, ScanStatus Status, DateTime ScannedAt, int TotalVulnerabilities);
 
+// Scan summary for paginated lists (used by ScannerService)
+public record ScanSummaryResponse(Guid Id, Guid ArtifactId, string ScannerType, ScanStatus Status, int TotalVulnerabilities, int CriticalCount, int HighCount, DateTime CreatedAt, DateTime? CompletedAt);
+
+public record ScanPaginatedResponse(List<ScanSummaryResponse> Scans, int TotalCount, int Page, int PageSize);
+
 // Repository Responses
 public record RepositoryResponse(Guid Id, string Name, string DisplayName, string BasePath, string Arch, string Distribution, bool IsActive, DateTime CreatedAt, int PackageCount);
 

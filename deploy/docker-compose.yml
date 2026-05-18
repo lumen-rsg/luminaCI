@@ -131,8 +131,6 @@ services:
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
       - Docker__SocketPath=/var/run/docker.sock
-      - Services__ScannerService=http://scanner-service:5003
-      - Services__SecurityService=http://security-service:5002
     ports:
       - "5001:5001"
     user: "root"
@@ -203,9 +201,7 @@ services:
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
-      - Trivy__Endpoint=http://trivy:8080
-      - Trivy__Path=/usr/local/bin/trivy
-      - Services__BuildService=http://build-service:5001
+      - Trivy__ServerUrl=http://trivy:8080
     ports:
       - "5003:5003"
     user: "root"
@@ -270,6 +266,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5006
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - Redis__ConnectionString=redis:6379
       - RabbitMQ__Host=rabbitmq
       - RabbitMQ__Username=lumina
       - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}

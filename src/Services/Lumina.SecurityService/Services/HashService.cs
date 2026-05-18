@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Lumina.SecurityService.Data;
+using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,11 +10,13 @@ public class HashService
 {
     private readonly SecurityDbContext _db;
     private readonly ILogger<HashService> _logger;
+    private readonly RedisCacheService _cache;
 
-    public HashService(SecurityDbContext db, ILogger<HashService> logger)
+    public HashService(SecurityDbContext db, ILogger<HashService> logger, RedisCacheService cache)
     {
         _db = db;
         _logger = logger;
+        _cache = cache;
     }
 
     public async Task<HashRecord> ComputeHashesAsync(Guid artifactId, string filePath)
@@ -75,10 +78,13 @@ public class HashService
 
     public async Task<List<HashRecord>> GetHashHistoryAsync(Guid artifactId)
     {
-        return await _db.HashRecords
-            .Where(h => h.ArtifactId == artifactId)
-            .OrderByDescending(h => h.CreatedAt)
-            .ToListAsync();
+        return await _cache.GetOrSetAsync(
+            CacheKeys.HashHistory(artifactId),
+            async () => await _db.HashRecords
+                .Where(h => h.ArtifactId == artifactId)
+                .OrderByDescending(h => h.CreatedAt)
+                .ToListAsync(),
+            TimeSpan.FromMinutes(5));
     }
 
     /// <summary>
@@ -117,6 +123,7 @@ public class HashService
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Stored pre-computed hash for {FileName}: SHA256={Sha256}", fileName, sha256[..Math.Min(16, sha256.Length)] + "...");
+        await _cache.RemoveAsync(CacheKeys.HashHistory(artifactId));
         return record;
     }
 
@@ -125,11 +132,14 @@ public class HashService
     /// </summary>
     public async Task<List<HashRecord>> GetAllHashesAsync(int page = 1, int pageSize = 20)
     {
-        return await _db.HashRecords
-            .OrderByDescending(h => h.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync();
+        return await _cache.GetOrSetAsync(
+            CacheKeys.HashList(page, pageSize),
+            async () => await _db.HashRecords
+                .OrderByDescending(h => h.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync(),
+            TimeSpan.FromMinutes(2));
     }
 
     public async Task<int> GetTotalHashCountAsync()

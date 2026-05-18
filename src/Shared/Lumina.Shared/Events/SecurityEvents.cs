@@ -1,9 +1,6 @@
 namespace Lumina.Shared.Events;
 
-// Security Events
-public record PackageSigningRequested(Guid ArtifactId, string FileName, string StoragePath, Guid KeyId, DateTime RequestedAt);
-
-public record PackageSigned(Guid ArtifactId, string PgpSignature, DateTime SignedAt);
+// Note: PackageSigningRequested and PackageSigned are defined in BuildEvents.cs
 
 public record HashComputed(Guid ArtifactId, string HashSha256, string HashSha512, string HashMd5, DateTime ComputedAt);
 
