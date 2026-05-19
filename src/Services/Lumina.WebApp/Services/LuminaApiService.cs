@@ -217,10 +217,17 @@ public class LuminaApiService
         return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
     }
 
-    public async Task<ApiResponse<object>?> BuildSourceAsync(string name)
+    public async Task<ApiResponse<object>?> BuildSourceAsync(string name, string? specContent = null)
     {
-        var resp = await _http.PostAsync($"/api/sources/{name}/build", null);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
+        var body = specContent != null ? new { SpecContent = specContent } : (object?)null;
+        var resp = await _http.PostAsJsonAsync($"/api/sources/{name}/build", body);
+        if (resp.IsSuccessStatusCode)
+        {
+            return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
+        }
+        var errorContent = await resp.Content.ReadAsStringAsync();
+        _logger.LogWarning("Build source failed for {Name}: {Status} {Error}", name, resp.StatusCode, errorContent);
+        return new ApiResponse<object>(false, null, $"Build failed ({resp.StatusCode}): {errorContent}", null);
     }
 
     // === Auth ===

@@ -56,8 +56,11 @@ public class TrivyScannerService
         _db.CveReports.Add(report);
         await _db.SaveChangesAsync();
 
-        // Run scan in background
-        _ = RunScanAsync(report, artifactPath);
+        // IMPORTANT: await the scan so the consumer gets the completed report
+        // with actual vulnerability counts before publishing CveScanCompleted.
+        // Previously this was fire-and-forget (_ = RunScanAsync), which caused
+        // the consumer to publish CveScanCompleted with Status=Running and 0 counts.
+        await RunScanAsync(report, artifactPath);
 
         return report;
     }
@@ -81,10 +84,14 @@ public class TrivyScannerService
                 vulnerabilities = await ScanViaCliAsync(artifactPath);
             }
 
-            // Update report
+            // Update report with vulnerability counts
             report.Status = ScanStatus.Completed;
             report.CompletedAt = DateTime.UtcNow;
-            report.Summary = $"Found {vulnerabilities.Count} vulnerabilities";
+            report.CriticalCount = vulnerabilities.Count(v => v.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase));
+            report.HighCount = vulnerabilities.Count(v => v.Severity.Equals("HIGH", StringComparison.OrdinalIgnoreCase));
+            report.MediumCount = vulnerabilities.Count(v => v.Severity.Equals("MEDIUM", StringComparison.OrdinalIgnoreCase));
+            report.LowCount = vulnerabilities.Count(v => v.Severity.Equals("LOW", StringComparison.OrdinalIgnoreCase));
+            report.Summary = $"Found {vulnerabilities.Count} vulnerabilities ({report.CriticalCount} critical, {report.HighCount} high)";
             report.RawOutput = JsonSerializer.Serialize(vulnerabilities);
 
             foreach (var vuln in vulnerabilities)
@@ -161,7 +168,7 @@ public class TrivyScannerService
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "trivy",
-                ArgumentList = { "image", "--format", "json", "--output", tempReport, "--exit-code", "0", "--no-progress", artifactPath },
+                ArgumentList = { "fs", "--format", "json", "--output", tempReport, "--exit-code", "0", "--no-progress", artifactPath },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

@@ -45,6 +45,8 @@ public class DockerBuildService
 
         try
         {
+            // Ensure the build image exists locally — try to pull if missing
+            await EnsureImageExistsAsync(imageName);
             job.Status = BuildStatus.Building;
             job.StartedAt = DateTime.UtcNow;
             _db.BuildJobs.Update(job);
@@ -309,7 +311,8 @@ public class DockerBuildService
     }
 
     /// <summary>
-    /// Publish post-build events via MassTransit: CVE scan requests, hash storage, and PGP signing.
+    /// Publish post-build events via MassTransit: CVE scan requests and hash storage.
+    /// PGP signing is now handled by CveScanCompletedConsumer after CVE scan passes.
     /// </summary>
     private async Task PublishPostBuildEventsAsync(Guid jobId)
     {
@@ -319,40 +322,10 @@ public class DockerBuildService
             var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
             var artifacts = await db.BuildArtifacts.Where(a => a.BuildJobId == jobId).ToListAsync();
 
-            // Get the first active PGP key for signing
-            // We need to query SecurityService for keys — use a dedicated endpoint or publish without keyId
-            // For now, we'll publish signing requests without a specific key and let SecurityService pick the active one
-            Guid? activeKeyId = null;
-
-            // Try to get active key via a temporary HTTP call (this will be replaced when SecurityService publishes key info)
-            try
-            {
-                var securityServiceUrl = _config["Services:SecurityService"] ?? "http://security-service:5002";
-                using var httpClient = new HttpClient { BaseAddress = new Uri(securityServiceUrl) };
-                var keysResponse = await httpClient.GetAsync("/api/security/keys");
-                if (keysResponse.IsSuccessStatusCode)
-                {
-                    var keysContent = await keysResponse.Content.ReadAsStringAsync();
-                    using var keysDoc = JsonDocument.Parse(keysContent);
-                    var keysArray = keysDoc.RootElement.GetProperty("data").EnumerateArray();
-                    foreach (var key in keysArray)
-                    {
-                        if (key.TryGetProperty("isActive", out var isActive) && isActive.GetBoolean())
-                        {
-                            activeKeyId = key.GetProperty("id").GetGuid();
-                            break;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to get PGP keys from SecurityService — skipping signing");
-            }
-
             foreach (var artifact in artifacts)
             {
                 // Publish CVE scan request
+                // After scan completes, CveScanCompletedConsumer will request PGP signing if no critical/high vulns
                 await _bus.Publish(new CveScanRequested(
                     artifact.Id,
                     artifact.FilePath,
@@ -372,28 +345,68 @@ public class DockerBuildService
                     DateTime.UtcNow
                 ));
                 _logger.LogInformation("Published HashStoreRequested for artifact {ArtifactId}", artifact.Id);
-
-                // Publish PGP signing request (only if we have an active key)
-                if (activeKeyId.HasValue)
-                {
-                    await _bus.Publish(new PackageSigningRequested(
-                        artifact.Id,
-                        artifact.FilePath,
-                        artifact.FileName,
-                        activeKeyId.Value,
-                        DateTime.UtcNow
-                    ));
-                    _logger.LogInformation("Published PackageSigningRequested for artifact {ArtifactId}", artifact.Id);
-                }
-                else
-                {
-                    _logger.LogWarning("No active PGP key found — skipping signing for artifact {ArtifactId}", artifact.Id);
-                }
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to publish post-build events for job {JobId}", jobId);
+        }
+    }
+
+    /// <summary>
+    /// Ensure the specified Docker image exists locally. If not found, attempt to pull it.
+    /// This prevents build failures when images haven't been pre-built on a new device.
+    /// </summary>
+    private async Task EnsureImageExistsAsync(string imageName)
+    {
+        try
+        {
+            // Check if image exists locally
+            var images = await _docker.Images.ListImagesAsync(new ImagesListParameters
+            {
+                Filters = new Dictionary<string, IDictionary<string, bool>>
+                {
+                    ["reference"] = new Dictionary<string, bool> { [imageName] = true }
+                }
+            });
+
+            if (images.Count > 0)
+            {
+                _logger.LogDebug("Build image {Image} found locally", imageName);
+                return;
+            }
+
+            _logger.LogWarning("Build image {Image} not found locally, attempting to pull...", imageName);
+
+            // Try to pull the image from a registry
+            try
+            {
+                await _docker.Images.CreateImageAsync(
+                    new ImagesCreateParameters { FromImage = imageName },
+                    null,
+                    new Progress<JSONMessage>(msg =>
+                    {
+                        if (!string.IsNullOrEmpty(msg.Status))
+                            _logger.LogDebug("Pull {Image}: {Status}", imageName, msg.Status);
+                    }));
+                _logger.LogInformation("Successfully pulled build image {Image}", imageName);
+            }
+            catch (Exception pullEx)
+            {
+                _logger.LogError(pullEx, "Failed to pull build image {Image}. " +
+                    "Build it manually: docker compose -f deploy/docker-compose.yml build rpm-build-image", imageName);
+                throw new InvalidOperationException(
+                    $"Build image '{imageName}' is not available locally and could not be pulled. " +
+                    "Build it first with: docker compose -f deploy/docker-compose.yml build rpm-build-image", pullEx);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            throw; // Re-throw our own exception
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not verify build image {Image} existence, proceeding anyway", imageName);
         }
     }
 

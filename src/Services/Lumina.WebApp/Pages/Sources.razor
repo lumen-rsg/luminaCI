@@ -305,8 +305,17 @@ else
     {
         try
         {
-            await Api.BuildSourceAsync(name);
-            _statusMessage = $"Build triggered for '{name}'";
+            // SpecContent is not needed — the server looks for spec files in
+            // /app/specs/{name}.spec or /app/Test/{name}.txt automatically.
+            var result = await Api.BuildSourceAsync(name);
+            if (result?.Success == true)
+            {
+                _statusMessage = $"Build triggered for '{name}'";
+            }
+            else
+            {
+                _errorMessage = result?.Error ?? $"Build failed for '{name}'";
+            }
         }
         catch (Exception ex)
         {

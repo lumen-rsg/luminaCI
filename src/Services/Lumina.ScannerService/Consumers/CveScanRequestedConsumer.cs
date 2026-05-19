@@ -24,7 +24,7 @@ public class CveScanRequestedConsumer : IConsumer<CveScanRequested>
 
         try
         {
-            var report = await _scannerService.ScanArtifactAsync(msg.ArtifactId, msg.ArtifactPath, msg.FileName);
+            var report = await _scannerService.ScanArtifactAsync(msg.ArtifactId, msg.ArtifactPath, msg.ScannerType);
 
             await context.Publish(new CveScanCompleted(
                 msg.ArtifactId, report.Status, report.CriticalCount,

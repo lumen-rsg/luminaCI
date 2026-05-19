@@ -69,6 +69,20 @@ try
     {
         var db = scope.ServiceProvider.GetRequiredService<SecurityDbContext>();
         await CreateTablesWithScriptAsync(db);
+
+        // Auto-generate a default PGP key if none exists
+        var pgpService = scope.ServiceProvider.GetRequiredService<PgpSigningService>();
+        var keys = await pgpService.ListKeysAsync();
+        if (keys.Count == 0)
+        {
+            var passphrase = builder.Configuration["Gpg:Passphrase"] ?? "lumina_pgp_dev_2024";
+            await pgpService.GenerateKeyAsync("Lumina CI", "lumina@ci.local", passphrase, "system");
+            Log.Information("Auto-generated default PGP key (Lumina CI / lumina@ci.local)");
+        }
+        else
+        {
+            Log.Information("Found {Count} existing PGP key(s)", keys.Count);
+        }
     }
 
     if (app.Environment.IsDevelopment())

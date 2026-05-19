@@ -69,6 +69,7 @@ try
     {
         var db = scope.ServiceProvider.GetRequiredService<ScannerDbContext>();
         await CreateTablesWithScriptAsync(db);
+        await RunMigrationsAsync(db);
     }
 
     if (app.Environment.IsDevelopment())
@@ -101,5 +102,26 @@ static async Task CreateTablesWithScriptAsync(DbContext db)
     catch (Exception ex)
     {
         Log.Warning(ex, "Table creation skipped (tables may already exist)");
+    }
+}
+
+static async Task RunMigrationsAsync(DbContext db)
+{
+    var migrations = new (string Sql, string Description)[]
+    {
+        ("ALTER TABLE \"CveReports\" ALTER COLUMN \"ScannerType\" TYPE varchar(50)", "Widen ScannerType varchar(20)->varchar(50)"),
+    };
+
+    foreach (var (sql, desc) in migrations)
+    {
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(sql);
+            Log.Information("Applied migration: {Description}", desc);
+        }
+        catch (Exception ex)
+        {
+            Log.Verbose(ex, "Migration skipped (may already be applied): {Description}", desc);
+        }
     }
 }

@@ -131,6 +131,7 @@ services:
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
       - Docker__SocketPath=/var/run/docker.sock
+      - Services__SecurityService=http://security-service:5002
     ports:
       - "5001:5001"
     user: "root"
@@ -223,6 +224,7 @@ services:
       - "8081:8080"
     volumes:
       - trivy_cache:/root/.cache/trivy
+      - /opt/lumina/builds:/app/builds:z
     networks:
       - lumina-network
 
@@ -309,21 +311,23 @@ services:
       - lumina-network
 
   # === Build Images (pre-built, used by build-service for RPM containers) ===
+  # These build the Docker images and exit — the images are then used by build-service
+  # to spin up ephemeral build containers.
   rpm-build-image:
     build:
       context: ../
       dockerfile: deploy/docker/rpm-build.Dockerfile
     image: lumina-rpm-build:latest
-    profiles:
-      - build-images
+    restart: "no"
+    entrypoint: ["true"]
 
   dotnet-build-image:
     build:
       context: ../
       dockerfile: deploy/docker/dotnet-build.Dockerfile
     image: lumina-dotnet-build:latest
-    profiles:
-      - build-images
+    restart: "no"
+    entrypoint: ["true"]
 
   nginx:
     image: nginx:alpine

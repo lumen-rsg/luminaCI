@@ -63,6 +63,7 @@ try
         });
     });
 
+    builder.Services.AddHttpClient(); // IHttpClientFactory for inter-service calls
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
@@ -74,13 +75,40 @@ try
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
+
+        // Ensure PostgreSQL extensions required by the schema (e.g., hstore for PipelineStep.Configuration)
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("CREATE EXTENSION IF NOT EXISTS hstore");
+            Log.Information("Ensured hstore extension is available");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not create hstore extension — some features may not work");
+        }
+
         await CreateTablesWithScriptAsync(db);
+    }
+
+    // Ensure required host directories exist for build artifacts and sources
+    foreach (var dir in new[] { "/app/builds", "/opt/lumina/builds", "/opt/lumina/sources" })
+    {
+        try
+        {
+            Directory.CreateDirectory(dir);
+            Log.Information("Ensured directory exists: {Dir}", dir);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not create directory {Dir} (may already exist or be a volume mount)", dir);
+        }
     }
 
     if (app.Environment.IsDevelopment())
     {
         app.UseSwagger();
         app.UseSwaggerUI();
+        app.UseDeveloperExceptionPage();
     }
 
     app.MapControllers();
@@ -119,6 +147,7 @@ static async Task CreateTablesWithScriptAsync(DbContext db)
         ("\"build\".\"build_jobs\"", "\"Branch\"", "text NULL"),
         ("\"build\".\"build_jobs\"", "\"CommitMessage\"", "text NULL"),
         ("\"build\".\"build_jobs\"", "\"CommitAuthor\"", "text NULL"),
+        ("\"build\".\"pipeline_steps\"", "\"Configuration\"", "hstore DEFAULT ''"),
     };
 
     foreach (var (table, column, def) in migrations)

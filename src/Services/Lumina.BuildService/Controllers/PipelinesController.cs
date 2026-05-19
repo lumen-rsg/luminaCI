@@ -20,11 +20,19 @@ public class PipelinesController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PipelineListResponse>>> List([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var (pipelines, totalCount) = await _engine.ListPipelinesAsync(page, pageSize);
-        var response = new PipelineListResponse(
-            pipelines.Select(p => new PipelineSummaryResponse(p.Id, p.Name, p.Description, p.Status, p.CreatedBy, p.CreatedAt, p.Steps.Count, p.GitRepoUrl, p.GitBranch)).ToList(),
-            totalCount, page, pageSize);
-        return Ok(new ApiResponse<PipelineListResponse>(true, response, null, null));
+        try
+        {
+            var (pipelines, totalCount) = await _engine.ListPipelinesAsync(page, pageSize);
+            var response = new PipelineListResponse(
+                pipelines.Select(p => new PipelineSummaryResponse(p.Id, p.Name, p.Description, p.Status, p.CreatedBy, p.CreatedAt, p.Steps.Count, p.GitRepoUrl, p.GitBranch)).ToList(),
+                totalCount, page, pageSize);
+            return Ok(new ApiResponse<PipelineListResponse>(true, response, null, null));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list pipelines (page={Page}, pageSize={PageSize})", page, pageSize);
+            return StatusCode(500, new ApiResponse<PipelineListResponse>(false, null, $"Failed to load pipelines: {ex.Message}", null));
+        }
     }
 
     [HttpGet("{id:guid}")]
@@ -43,13 +51,21 @@ public class PipelinesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ApiResponse<PipelineResponse>>> Create([FromBody] CreatePipelineRequest request)
     {
-        var p = await _engine.CreatePipelineAsync(request, "system");
-        var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
-        var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
-            p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
-            p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
-            p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
-        return CreatedAtAction(nameof(Get), new { id = p.Id }, new ApiResponse<PipelineResponse>(true, response, null, "Pipeline created"));
+        try
+        {
+            var p = await _engine.CreatePipelineAsync(request, "system");
+            var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
+            var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
+                p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
+                p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
+                p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
+            return CreatedAtAction(nameof(Get), new { id = p.Id }, new ApiResponse<PipelineResponse>(true, response, null, "Pipeline created"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create pipeline {Name}", request.Name);
+            return StatusCode(500, new ApiResponse<PipelineResponse>(false, null, $"Failed to create pipeline: {ex.Message}", null));
+        }
     }
 
     [HttpPost("{id:guid}/trigger")]

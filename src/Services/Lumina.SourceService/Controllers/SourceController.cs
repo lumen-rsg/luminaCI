@@ -271,12 +271,12 @@ public class SourceController : ControllerBase
             ));
 
             _logger.LogInformation("Published BuildTriggerFromConfig for package {Package}", name);
-            return Ok(new { message = $"Build triggered for {name}", package = name, version = packageVersion });
+            return Ok(new ApiResponse<object>(true, new { package = name, version = packageVersion }, null, $"Build triggered for {name}"));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to build package {Package}", name);
-            return StatusCode(500, new { error = $"Build failed: {ex.Message}" });
+            return StatusCode(500, new ApiResponse<object>(false, null, $"Build failed: {ex.Message}", null));
         }
     }
 

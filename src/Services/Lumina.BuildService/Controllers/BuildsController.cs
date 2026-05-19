@@ -22,11 +22,19 @@ public class BuildsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ApiResponse<BuildListResponse>>> List([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var (builds, totalCount) = await _engine.ListBuildJobsAsync(page, pageSize);
-        var response = new BuildListResponse(
-            builds.Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy, b.CommitSha, b.Branch)).ToList(),
-            totalCount, page, pageSize);
-        return Ok(new ApiResponse<BuildListResponse>(true, response, null, null));
+        try
+        {
+            var (builds, totalCount) = await _engine.ListBuildJobsAsync(page, pageSize);
+            var response = new BuildListResponse(
+                builds.Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy, b.CommitSha, b.Branch)).ToList(),
+                totalCount, page, pageSize);
+            return Ok(new ApiResponse<BuildListResponse>(true, response, null, null));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list builds (page={Page}, pageSize={PageSize})", page, pageSize);
+            return StatusCode(500, new ApiResponse<BuildListResponse>(false, null, $"Failed to load builds: {ex.Message}", null));
+        }
     }
 
     [HttpGet("{id:guid}")]
