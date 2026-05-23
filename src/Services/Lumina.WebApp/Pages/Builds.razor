@@ -15,27 +15,42 @@
     </div>
 </div>
 
-<!-- Filter Bar -->
-<div class="filter-bar">
-    <span class="text-xs text-muted" style="margin-right:4px;">Filter:</span>
-    <button class="filter-btn @_allActive" @onclick="FilterAll">
-        All <span class="filter-count">@(_builds?.Data?.TotalCount ?? 0)</span>
-    </button>
-    <button class="filter-btn @_successActive" @onclick="FilterSuccess">
-        ✅ Success
-    </button>
-    <button class="filter-btn @_failedActive" @onclick="FilterFailed">
-        ❌ Failed
-    </button>
-    <button class="filter-btn @_buildingActive" @onclick="FilterBuilding">
-        ⚡ Building
-    </button>
-    <button class="filter-btn @_queuedActive" @onclick="FilterQueued">
-        ⏳ Queued
-    </button>
-</div>
+    <!-- Filter Bar -->
+    @if (!_error)
+    {
+        <div class="filter-bar">
+            <span class="text-xs text-muted" style="margin-right:4px;">Filter:</span>
+            <button class="filter-btn @_allActive" @onclick="FilterAll">
+                All <span class="filter-count">@(_builds?.Data?.TotalCount ?? 0)</span>
+            </button>
+            <button class="filter-btn @_successActive" @onclick="FilterSuccess">
+                ✅ Success
+            </button>
+            <button class="filter-btn @_failedActive" @onclick="FilterFailed">
+                ❌ Failed
+            </button>
+            <button class="filter-btn @_buildingActive" @onclick="FilterBuilding">
+                ⚡ Building
+            </button>
+            <button class="filter-btn @_queuedActive" @onclick="FilterQueued">
+                ⏳ Queued
+            </button>
+        </div>
+    }
 
-@if (_loading)
+    <!-- Error State -->
+    @if (_error)
+    {
+        <div class="card animate-slide-in">
+            <div class="card-body text-center p-5">
+                <div style="font-size:3rem;">⚠️</div>
+                <h4 class="mt-3">Сервер временно недоступен</h4>
+                <p class="text-muted">Не удалось загрузить список сборок. Проверьте подключение к серверу и попробуйте снова.</p>
+                <button class="btn btn-primary mt-2" @onclick="LoadBuilds">🔄 Повторить</button>
+            </div>
+        </div>
+    }
+    else if (_loading)
 {
     <div class="card">
         <div class="card-body p-4">
@@ -180,6 +195,7 @@ else
 @code {
     private ApiResponse<BuildListResponse>? _builds;
     private bool _loading = true;
+    private bool _error = false;
     private int _page = 1;
     private string _filter = "all";
 
@@ -206,8 +222,15 @@ else
 
     private async Task LoadBuilds()
     {
+        _loading = true;
+        _error = false;
+        StateHasChanged();
         try { _builds = await Api.GetBuildsAsync(_page, 20); }
-        catch (Exception ex) { Logger.LogError(ex, "Failed to load builds"); }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load builds");
+            _error = true;
+        }
         finally { _loading = false; }
     }
 

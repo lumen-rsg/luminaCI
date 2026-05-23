@@ -1,3 +1,4 @@
+
 @page "/pipelines"
 @using Lumina.Shared.DTOs
 @using Lumina.Shared.Models.Enums
@@ -80,10 +81,21 @@
             </div>
             <div class="mb-3">
                 <label class="form-label">RPM Spec Content</label>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <label class="btn btn-outline-primary btn-sm mb-0">
+                        📁 Загрузить .spec файл
+                        <InputFile OnChange="@OnCreateSpecFileUploaded" Accept=".spec,.spec.in" style="display:none" />
+                    </label>
+                    @if (!string.IsNullOrEmpty(_newSpecFileName))
+                    {
+                        <span class="text-sm text-muted">📎 @_newSpecFileName</span>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _newSpecContent = ""; _newSpecFileName = ""; })" title="Очистить">✕</button>
+                    }
+                </div>
                 <textarea class="form-control font-monospace" rows="8" @bind="_newSpecContent" style="font-size:0.82rem;" placeholder="Name: my-package
 Version: 1.0
 ..."></textarea>
-                <div class="form-text">Required if the git repo has no .spec file. This spec will be used for RPM packaging.</div>
+                <div class="form-text">Загрузите .spec файл или введите содержимое вручную. Требуется, если в git-репозитории нет .spec файла.</div>
             </div>
             <div class="mb-3 form-check">
                 <input type="checkbox" class="form-check-input" id="autoBuildCheck" @bind="_autoBuildAfterCreate" />
@@ -131,6 +143,17 @@ Version: 1.0
             </div>
             <div class="mb-3">
                 <label class="form-label">RPM Spec Content</label>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <label class="btn btn-outline-primary btn-sm mb-0">
+                        📁 Загрузить .spec файл
+                        <InputFile OnChange="@OnTriggerSpecFileUploaded" Accept=".spec,.spec.in" style="display:none" />
+                    </label>
+                    @if (!string.IsNullOrEmpty(_triggerSpecFileName))
+                    {
+                        <span class="text-sm text-muted">📎 @_triggerSpecFileName</span>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _triggerSpecContent = ""; _triggerSpecFileName = ""; })" title="Очистить">✕</button>
+                    }
+                </div>
                 <textarea class="form-control font-monospace" rows="10" @bind="_triggerSpecContent" style="font-size:0.82rem;"></textarea>
                 @if (_triggerPipelineHasGit)
                 {
@@ -201,6 +224,17 @@ Version: 1.0
             </div>
             <div class="mb-3">
                 <label class="form-label">RPM Spec Content (inline)</label>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <label class="btn btn-outline-primary btn-sm mb-0">
+                        📁 Загрузить .spec файл
+                        <InputFile OnChange="@OnEditSpecFileUploaded" Accept=".spec,.spec.in" style="display:none" />
+                    </label>
+                    @if (!string.IsNullOrEmpty(_editSpecFileName))
+                    {
+                        <span class="text-sm text-muted">📎 @_editSpecFileName</span>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _editSpecContent = ""; _editSpecFileName = ""; })" title="Очистить">✕</button>
+                    }
+                </div>
                 <textarea class="form-control font-monospace" rows="6" @bind="_editSpecContent" style="font-size:0.82rem;"></textarea>
             </div>
             <div class="d-flex gap-2 mt-3">
@@ -238,15 +272,25 @@ Version: 1.0
     </div>
 }
 
-<!-- Pipeline List -->
-@if (_loading)
-{
-    <div class="card"><div class="card-body p-4">
-        <div class="skeleton skeleton-card"></div>
-        <div class="skeleton skeleton-card"></div>
-    </div></div>
-}
-else if (_pipelines?.Data?.Pipelines != null && _pipelines.Data.Pipelines.Any())
+    @if (_error)
+    {
+        <div class="card animate-slide-in">
+            <div class="card-body text-center p-5">
+                <div style="font-size:3rem;">⚠️</div>
+                <h4 class="mt-3">Сервер временно недоступен</h4>
+                <p class="text-muted">Не удалось загрузить список пайплайнов. Проверьте подключение к серверу и попробуйте снова.</p>
+                <button class="btn btn-primary mt-2" @onclick="ReloadPipelines">🔄 Повторить</button>
+            </div>
+        </div>
+    }
+    else if (_loading)
+    {
+        <div class="card"><div class="card-body p-4">
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+        </div></div>
+    }
+    else if (_pipelines?.Data?.Pipelines != null && _pipelines.Data.Pipelines.Any())
 {
     <div class="section-title">
         @(_pipelines.Data.TotalCount) Pipeline(s)
@@ -325,6 +369,7 @@ else
 @code {
     private ApiResponse<PipelineListResponse>? _pipelines;
     private bool _loading = true;
+    private bool _error = false;
     private bool _showCreate = false;
     private string _newName = "";
     private string _newDescription = "";
@@ -337,6 +382,7 @@ else
     private string _newGitUsername = "";
     private string _newGitToken = "";
     private string _newSpecContent = "";
+    private string _newSpecFileName = "";
     private bool _autoBuildAfterCreate = false;
 
     // Trigger build dialog
@@ -365,6 +411,7 @@ else
     private string _editGitUsername = "";
     private string _editGitToken = "";
     private string _editSpecContent = "";
+    private string _editSpecFileName = "";
 
     // Delete dialog
     private bool _showDeleteConfirm = false;
@@ -396,12 +443,29 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
 ";
 
     private string _triggerSpecContent = "";
+    private string _triggerSpecFileName = "";
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadPipelinesInternal();
+    }
+
+    private async Task LoadPipelinesInternal()
+    {
+        _loading = true;
+        _error = false;
         try { _pipelines = await Api.GetPipelinesAsync(1, 50); }
-        catch (Exception ex) { Logger.LogError(ex, "Failed to load pipelines"); }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load pipelines");
+            _error = true;
+        }
         finally { _loading = false; }
+    }
+
+    private async Task ReloadPipelines()
+    {
+        await LoadPipelinesInternal();
     }
 
     private async Task ShowCreateDialog()
@@ -448,6 +512,7 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             _newGitUsername = "";
             _newGitToken = "";
             _newSpecContent = "";
+            _newSpecFileName = "";
             _autoBuildAfterCreate = false;
             _triggerMessage = "✅ Pipeline created successfully!";
             IsSuccess = true;
@@ -487,7 +552,8 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
     {
         _triggerPipelineId = pipeline.Id;
         _triggerPipelineName = pipeline.Name;
-        _triggerSpecContent = _defaultSpec;
+        _triggerSpecContent = "";
+        _triggerSpecFileName = "";
         _triggerSourceUrl = "";
         _triggerMessage = null;
 
@@ -514,6 +580,12 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
                     _triggerSpecName = System.IO.Path.GetFileName(detail.Data.SpecPath);
                 else
                     _triggerSpecName = $"{detail.Data.Name}.spec";
+
+                if (!string.IsNullOrEmpty(detail.Data.SpecContent))
+                {
+                    _triggerSpecContent = detail.Data.SpecContent;
+                    _triggerSpecFileName = "";
+                }
 
                 StateHasChanged();
             }
@@ -614,6 +686,7 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
         _editDescription = pipeline.Description;
         _editGitRepoUrl = pipeline.GitRepoUrl ?? "";
         _editGitBranch = pipeline.GitBranch ?? "main";
+        _editSpecFileName = "";
         _showEdit = true;
 
         // Load full details
@@ -705,6 +778,60 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
         {
             _triggerMessage = $"❌ Error: {ex.Message}";
             IsSuccess = false;
+        }
+    }
+
+    private async Task OnCreateSpecFileUploaded(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            _newSpecContent = await reader.ReadToEndAsync();
+            _newSpecFileName = file.Name;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to read spec file {FileName}", file.Name);
+        }
+    }
+
+    private async Task OnTriggerSpecFileUploaded(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            _triggerSpecContent = await reader.ReadToEndAsync();
+            _triggerSpecFileName = file.Name;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to read spec file {FileName}", file.Name);
+        }
+    }
+
+    private async Task OnEditSpecFileUploaded(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            _editSpecContent = await reader.ReadToEndAsync();
+            _editSpecFileName = file.Name;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to read spec file {FileName}", file.Name);
         }
     }
 

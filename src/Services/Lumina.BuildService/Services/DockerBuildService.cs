@@ -66,8 +66,17 @@ public class DockerBuildService
                 "AUTO_DOWNLOAD=true"
             };
 
+            // Write spec content to a file and mount it — avoids "argument list too long" for large specs
+            // Uses /opt/lumina/sources which is mounted from the host, so the ephemeral build container can access it
+            string? hostSpecDir = null;
             if (!string.IsNullOrEmpty(specContent))
-                envVars.Add($"SPEC_CONTENT={Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(specContent))}");
+            {
+                hostSpecDir = $"/opt/lumina/sources/_specs/{job.Id}";
+                Directory.CreateDirectory(hostSpecDir);
+                var specFilePath = Path.Combine(hostSpecDir, job.SpecName);
+                await File.WriteAllTextAsync(specFilePath, specContent);
+                _logger.LogInformation("Spec file written to {SpecFilePath} ({Size} bytes)", specFilePath, specContent.Length);
+            }
 
             if (!string.IsNullOrEmpty(sourceUrl))
                 envVars.Add($"SOURCE_URL={sourceUrl}");
@@ -93,6 +102,13 @@ public class DockerBuildService
             {
                 $"{hostArtifactDir}:/artifacts:z"
             };
+
+            // Mount spec file into container at /specs/
+            if (!string.IsNullOrEmpty(hostSpecDir) && Directory.Exists(hostSpecDir))
+            {
+                binds.Add($"{hostSpecDir}:/specs:z");
+                _logger.LogInformation("Mounting spec file from {SpecDir} to /specs", hostSpecDir);
+            }
 
             // Mount pre-fetched sources if available
             if (!string.IsNullOrEmpty(sourceDir) && Directory.Exists(sourceDir))

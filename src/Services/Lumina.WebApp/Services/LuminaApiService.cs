@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using Lumina.Shared.DTOs;
 
@@ -8,54 +9,137 @@ public class LuminaApiService
     private readonly HttpClient _http;
     private readonly ILogger<LuminaApiService> _logger;
 
+    private static readonly HashSet<int> TransientStatusCodes = [502, 503, 504];
+    private const int MaxRetries = 3;
+    private static readonly TimeSpan[] RetryDelays =
+    [
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(2),
+        TimeSpan.FromSeconds(4)
+    ];
+
     public LuminaApiService(HttpClient http, ILogger<LuminaApiService> logger)
     {
         _http = http;
         _logger = logger;
     }
 
+    /// <summary>
+    /// Executes an HTTP request with automatic retry for transient failures (502, 503, 504).
+    /// </summary>
+    private async Task<HttpResponseMessage> SendWithRetryAsync(
+        Func<Task<HttpResponseMessage>> sendFunc, string requestLabel)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var response = await sendFunc();
+
+                if (response.IsSuccessStatusCode || !TransientStatusCodes.Contains((int)response.StatusCode))
+                    return response;
+
+                var status = (int)response.StatusCode;
+                if (attempt < MaxRetries - 1)
+                {
+                    _logger.LogWarning(
+                        "Transient {Status} for {Label}, retrying ({Attempt}/{Max})...",
+                        status, requestLabel, attempt + 1, MaxRetries);
+                    await Task.Delay(RetryDelays[attempt]);
+                    continue;
+                }
+
+                _logger.LogError(
+                    "Transient {Status} for {Label} persisted after {Max} retries",
+                    status, requestLabel, MaxRetries);
+                return response;
+            }
+            catch (HttpRequestException ex) when (attempt < MaxRetries - 1)
+            {
+                _logger.LogWarning(ex,
+                    "Connection error for {Label}, retrying ({Attempt}/{Max})...",
+                    requestLabel, attempt + 1, MaxRetries);
+                await Task.Delay(RetryDelays[attempt]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// GET with retry, then deserialise. Returns null on non-success (including 401).
+    /// </summary>
+    private async Task<T?> GetJsonWithRetryAsync<T>(string url, string label)
+    {
+        var response = await SendWithRetryAsync(
+            () => _http.GetAsync(url), label);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("{Label} returned {Status}, returning null", label, (int)response.StatusCode);
+            return default;
+        }
+
+        return await response.Content.ReadFromJsonAsync<T>();
+    }
+
+    /// <summary>
+    /// Sends a request with retry and deserialises the JSON body.
+    /// Returns null-deserialised result on failure instead of throwing.
+    /// </summary>
+    private async Task<T?> SendAndReadJsonAsync<T>(
+        Func<Task<HttpResponseMessage>> sendFunc, string label)
+    {
+        var response = await SendWithRetryAsync(sendFunc, label);
+        return await response.Content.ReadFromJsonAsync<T>();
+    }
+
     // === Builds ===
     public async Task<ApiResponse<BuildListResponse>?> GetBuildsAsync(int page = 1, int pageSize = 20)
     {
-        return await _http.GetFromJsonAsync<ApiResponse<BuildListResponse>>($"/api/builds?page={page}&pageSize={pageSize}");
+        return await GetJsonWithRetryAsync<ApiResponse<BuildListResponse>>(
+            $"/api/builds?page={page}&pageSize={pageSize}", nameof(GetBuildsAsync));
     }
 
     public async Task<ApiResponse<object>?> CancelBuildAsync(Guid buildId)
     {
-        var response = await _http.PostAsync($"/api/builds/{buildId}/cancel", null);
-        return await response.Content.ReadFromJsonAsync<ApiResponse<object>>();
+        return await SendAndReadJsonAsync<ApiResponse<object>>(
+            () => _http.PostAsync($"/api/builds/{buildId}/cancel", null), nameof(CancelBuildAsync));
     }
 
     public async Task<ApiResponse<object>?> ClearBuildQueueAsync()
     {
-        var response = await _http.DeleteAsync("/api/builds/queue/clear");
-        return await response.Content.ReadFromJsonAsync<ApiResponse<object>>();
+        return await SendAndReadJsonAsync<ApiResponse<object>>(
+            () => _http.DeleteAsync("/api/builds/queue/clear"), nameof(ClearBuildQueueAsync));
     }
 
     public async Task<ApiResponse<BuildQueueResponse>?> GetBuildQueueAsync()
     {
-        return await _http.GetFromJsonAsync<ApiResponse<BuildQueueResponse>>("/api/builds/queue");
+        return await GetJsonWithRetryAsync<ApiResponse<BuildQueueResponse>>(
+            "/api/builds/queue", nameof(GetBuildQueueAsync));
     }
 
     public async Task<ApiResponse<BuildJobResponse>?> GetBuildAsync(Guid id)
     {
-        return await _http.GetFromJsonAsync<ApiResponse<BuildJobResponse>>($"/api/builds/{id}");
+        return await GetJsonWithRetryAsync<ApiResponse<BuildJobResponse>>(
+            $"/api/builds/{id}", nameof(GetBuildAsync));
     }
 
     public async Task<ApiResponse<string>?> GetBuildLogsAsync(Guid id)
     {
-        return await _http.GetFromJsonAsync<ApiResponse<string>>($"/api/builds/{id}/logs");
+        return await GetJsonWithRetryAsync<ApiResponse<string>>(
+            $"/api/builds/{id}/logs", nameof(GetBuildLogsAsync));
     }
 
     // === Pipelines ===
     public async Task<ApiResponse<PipelineListResponse>?> GetPipelinesAsync(int page = 1, int pageSize = 20)
     {
-        return await _http.GetFromJsonAsync<ApiResponse<PipelineListResponse>>($"/api/pipelines?page={page}&pageSize={pageSize}");
+        return await GetJsonWithRetryAsync<ApiResponse<PipelineListResponse>>(
+            $"/api/pipelines?page={page}&pageSize={pageSize}", nameof(GetPipelinesAsync));
     }
 
     public async Task<ApiResponse<PipelineResponse>?> GetPipelineAsync(Guid id)
     {
-        return await _http.GetFromJsonAsync<ApiResponse<PipelineResponse>>($"/api/pipelines/{id}");
+        return await GetJsonWithRetryAsync<ApiResponse<PipelineResponse>>(
+            $"/api/pipelines/{id}", nameof(GetPipelineAsync));
     }
 
     public async Task<ApiResponse<PipelineResponse>?> CreatePipelineAsync(CreatePipelineRequest request)
