@@ -314,6 +314,124 @@ public class LuminaApiService
         return new ApiResponse<object>(false, null, $"Build failed ({resp.StatusCode}): {errorContent}", null);
     }
 
+    // === Extra Sources (pipeline & build level) ===
+    public async Task<ApiResponse<List<UploadedSourceResponse>>?> GetPipelineSourcesAsync(Guid pipelineId)
+    {
+        return await GetJsonWithRetryAsync<ApiResponse<List<UploadedSourceResponse>>>(
+            $"/api/extra-sources/pipeline/{pipelineId}", nameof(GetPipelineSourcesAsync));
+    }
+
+    public async Task<ApiResponse<List<UploadedSourceResponse>>?> UploadPipelineSourceAsync(
+        Guid pipelineId, Stream fileStream, string fileName, string? subFolder = null,
+        IProgress<(long Uploaded, long Total)>? progress = null)
+    {
+        var totalBytes = fileStream.CanSeek ? fileStream.Length : -1;
+        Stream uploadStream = progress != null && totalBytes > 0
+            ? new ProgressStream(fileStream, totalBytes, progress)
+            : fileStream;
+
+        using var content = new MultipartFormDataContent();
+        var fileContent = new StreamContent(uploadStream);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        content.Add(fileContent, "files", fileName);
+        if (!string.IsNullOrEmpty(subFolder))
+            content.Add(new StringContent(subFolder), "subFolder");
+
+        var resp = await _http.PostAsync($"/api/extra-sources/pipeline/{pipelineId}", content);
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<List<UploadedSourceResponse>>>();
+    }
+
+    /// <summary>
+    /// Wraps a Stream and reports read progress via IProgress.
+    /// </summary>
+    private class ProgressStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly long _total;
+        private readonly IProgress<(long Uploaded, long Total)> _progress;
+        private long _bytesRead;
+        private long _lastReported;
+
+        public ProgressStream(Stream inner, long total, IProgress<(long Uploaded, long Total)> progress)
+        {
+            _inner = inner;
+            _total = total;
+            _progress = progress;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = _inner.Read(buffer, offset, count);
+            ReportProgress(read);
+            return read;
+        }
+
+        public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            var read = await _inner.ReadAsync(buffer, offset, count, cancellationToken);
+            ReportProgress(read);
+            return read;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await _inner.ReadAsync(buffer, cancellationToken);
+            ReportProgress(read);
+            return read;
+        }
+
+        private void ReportProgress(int bytesRead)
+        {
+            if (bytesRead <= 0) return;
+            _bytesRead += bytesRead;
+            // Throttle progress reports to ~1% increments
+            var pct = _bytesRead * 100 / _total;
+            var lastPct = _lastReported * 100 / _total;
+            if (pct != lastPct || _bytesRead >= _total)
+            {
+                _lastReported = _bytesRead;
+                _progress.Report((_bytesRead, _total));
+            }
+        }
+
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanSeek => _inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => _inner.Length;
+        public override long Position { get => _inner.Position; set => _inner.Position = value; }
+        public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+        public override void Flush() => _inner.Flush();
+        public override void SetLength(long value) => _inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { _inner.Dispose(); base.Dispose(disposing); }
+    }
+
+    public async Task<ApiResponse<object>?> DeletePipelineSourceAsync(Guid pipelineId, string filePath)
+    {
+        var resp = await _http.DeleteAsync($"/api/extra-sources/pipeline/{pipelineId}/{filePath}");
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
+    }
+
+    public async Task<ApiResponse<object>?> ClearPipelineSourcesAsync(Guid pipelineId)
+    {
+        var resp = await _http.DeleteAsync($"/api/extra-sources/pipeline/{pipelineId}");
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
+    }
+
+    public async Task<ApiResponse<List<UploadedSourceResponse>>?> UploadBuildSourceAsync(
+        Guid buildId, Stream fileStream, string fileName, string? subFolder = null)
+    {
+        using var content = new MultipartFormDataContent();
+        var fileContent = new StreamContent(fileStream);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        content.Add(fileContent, "files", fileName);
+        if (!string.IsNullOrEmpty(subFolder))
+            content.Add(new StringContent(subFolder), "subFolder");
+
+        var resp = await _http.PostAsync($"/api/extra-sources/build/{buildId}", content);
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<List<UploadedSourceResponse>>>();
+    }
+
     // === Auth ===
     public async Task<string?> LoginAsync(string username, string password)
     {

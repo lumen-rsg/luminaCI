@@ -1,10 +1,10 @@
 @page "/builds/{id:guid}"
 @using Lumina.Shared.DTOs
 @using Lumina.Shared.Models.Enums
+@implements IDisposable
 @inject Lumina.WebApp.Services.LuminaApiService Api
 @inject ILogger<BuildDetail> Logger
 @inject NavigationManager Nav
-@inject IJSRuntime JS
 
 <PageTitle>Build @Id — Lumina CI</PageTitle>
 
@@ -15,12 +15,29 @@
         <code style="font-size:0.85em">@Id.ToString()[..8]</code>
     </h1>
     <div class="page-header-actions">
-        <button class="btn btn-outline-primary btn-sm" @onclick="DownloadSpec">📄 Spec</button>
-        @if (_build?.Data != null && _build.Data.Artifacts.Any())
+        @if (_build?.Data != null)
         {
-            <button class="btn btn-outline-success btn-sm" @onclick="DownloadAllArtifacts">💾 Download RPM</button>
+            var isRunning = _build.Data.Status == BuildStatus.Building || _build.Data.Status == BuildStatus.Queued;
+            @if (isRunning)
+            {
+                <button class="btn btn-outline-danger btn-sm" @onclick="CancelBuild" disabled="@_cancelling">
+                    @if (_cancelling)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1"></span>
+                        <span>Cancelling...</span>
+                    }
+                    else
+                    {
+                        <span>🚫 Cancel</span>
+                    }
+                </button>
+            }
+            @if (_build.Data.Artifacts.Any())
+            {
+                <button class="btn btn-outline-success btn-sm" @onclick="DownloadAllArtifacts">💾 Download RPM</button>
+            }
+            <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadSpec">📄 Spec</button>
         }
-        <button class="btn btn-outline-secondary btn-sm" @onclick="RefreshBuild">🔄 Refresh</button>
         <button class="btn btn-outline-secondary btn-sm" @onclick="GoBack">← Back</button>
     </div>
 </div>
@@ -59,7 +76,10 @@ else
                         <h3 class="mb-0 @GetStatusTextClass(build.Status)">@build.Status</h3>
                         @if (isRunning)
                         {
-                            <span class="badge bg-primary building-pulse">Live</span>
+                            <span class="badge bg-primary building-pulse">
+                                <span class="spinner-border spinner-border-sm" style="width:10px;height:10px;border-width:1px;"></span>
+                                Live
+                            </span>
                         }
                     </div>
                     <table class="table table-sm" style="border-collapse:collapse;">
@@ -323,36 +343,39 @@ else
                 {
                     <span class="badge bg-primary building-pulse">
                         <span class="spinner-border spinner-border-sm" style="width:12px;height:12px;border-width:1px;"></span>
-                        Streaming
+                        @(_polling ? "Live" : "Connecting...")
                     </span>
                 }
-                @if (!string.IsNullOrEmpty(build.Logs))
+                @if (_logLines.Count > 0)
                 {
                     <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;padding:2px 8px;" @onclick="CopyLogs">📋 Copy</button>
                 }
             </div>
         </div>
-        @if (!string.IsNullOrEmpty(build.Logs))
-        {
-            <div class="console-body">
-                @foreach (var line in CleanLogs(build.Logs))
+        <div class="console-body" id="console-body">
+            @if (_logLines.Count == 0)
+            {
+                @if (isRunning)
+                {
+                    <div class="text-center p-4">
+                        <div class="spinner-border spinner-border-sm me-2"></div>
+                        <span class="text-muted">Waiting for output...</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="text-center p-4 text-muted">No logs available.</div>
+                }
+            }
+            else
+            {
+                @foreach (var line in _logLines)
                 {
                     var lineClass = GetLineClass(line);
                     <span class="console-line @lineClass">@line</span>
                 }
-            </div>
-        }
-        else if (build.Status == BuildStatus.Building)
-        {
-            <div class="text-center p-4">
-                <div class="spinner-border spinner-border-sm me-2"></div>
-                <span class="text-muted">Waiting for output...</span>
-            </div>
-        }
-        else
-        {
-            <div class="text-center p-4 text-muted">No logs available.</div>
-        }
+            }
+        </div>
     </div>
 }
 
@@ -361,7 +384,12 @@ else
 
     private ApiResponse<BuildJobResponse>? _build;
     private bool _loading = true;
-    private Timer? _autoRefreshTimer;
+    private bool _cancelling = false;
+    private bool _polling = false;
+    private Timer? _pollTimer;
+
+    // Log state
+    private List<string> _logLines = new();
 
     // Publish state
     private ApiResponse<RepositoryListResponse>? _repos;
@@ -374,45 +402,44 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadBuild();
+        StartPollingIfRunning();
     }
 
-    protected override void OnAfterRender(bool firstRender)
+    private void StartPollingIfRunning()
     {
-        if (firstRender && _build?.Data != null)
-        {
-            var status = _build.Data.Status;
-            if (status == BuildStatus.Building || status == BuildStatus.Queued)
-            {
-                StartAutoRefresh();
-            }
-        }
-    }
+        var isRunning = _build?.Data?.Status == BuildStatus.Building ||
+                        _build?.Data?.Status == BuildStatus.Queued;
 
-    private void StartAutoRefresh()
-    {
-        _autoRefreshTimer?.Dispose();
-        _autoRefreshTimer = new Timer(async _ =>
+        if (!isRunning) return;
+
+        _polling = true;
+        _pollTimer = new Timer(async _ =>
         {
             await InvokeAsync(async () =>
             {
                 await LoadBuild();
                 StateHasChanged();
 
-                // Stop auto-refresh if build finished
-                if (_build?.Data != null &&
-                    _build.Data.Status != BuildStatus.Building &&
-                    _build.Data.Status != BuildStatus.Queued)
+                // Stop polling if build finished
+                var status = _build?.Data?.Status;
+                if (status != BuildStatus.Building && status != BuildStatus.Queued)
                 {
-                    _autoRefreshTimer?.Dispose();
-                    _autoRefreshTimer = null;
+                    StopPolling();
                 }
             });
-        }, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+        }, null, TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(100));
+    }
+
+    private void StopPolling()
+    {
+        _polling = false;
+        _pollTimer?.Dispose();
+        _pollTimer = null;
     }
 
     public void Dispose()
     {
-        _autoRefreshTimer?.Dispose();
+        StopPolling();
     }
 
     private async Task LoadBuild()
@@ -428,6 +455,21 @@ else
                 try { _repos ??= await Api.GetRepositoriesAsync(); }
                 catch { /* non-critical */ }
             }
+
+            // Update log lines from API data
+            if (_build?.Data != null && !string.IsNullOrEmpty(_build.Data.Logs))
+            {
+                var newLines = CleanLogs(_build.Data.Logs);
+                if (newLines.Count != _logLines.Count)
+                {
+                    _logLines = newLines;
+                }
+                else if (newLines.Count > 0)
+                {
+                    // Check if content changed (for partial updates)
+                    _logLines = newLines;
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -436,6 +478,30 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    private async Task CancelBuild()
+    {
+        _cancelling = true;
+        StateHasChanged();
+        try
+        {
+            var result = await Api.CancelBuildAsync(Id);
+            if (result?.Success == true)
+            {
+                await LoadBuild();
+                StopPolling();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to cancel build {BuildId}", Id);
+        }
+        finally
+        {
+            _cancelling = false;
+            StateHasChanged();
         }
     }
 
@@ -457,12 +523,6 @@ else
             _publishMessage = $"❌ Error: {ex.Message}";
         }
         finally { _publishing = false; StateHasChanged(); }
-    }
-
-    private async Task RefreshBuild()
-    {
-        _loading = true;
-        await LoadBuild();
     }
 
     private void GoBack() => Nav.NavigateTo("/builds");
@@ -606,4 +666,6 @@ else
         ScanStatus.Failed => "badge bg-danger",
         _ => "badge bg-secondary"
     };
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
 }

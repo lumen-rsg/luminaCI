@@ -75,3 +75,6 @@ public record SourcePackageResponse(string PackageName, string SourceUrl, Source
 public record SourceListResponse(List<SourcePackageResponse> Packages, int TotalCount);
 
 public record SourceFetchResponse(Guid JobId, string PackageName, SourceStatus Status, string? ErrorMessage);
+
+// Uploaded Extra Source Responses (pipeline-level & build-level)
+public record UploadedSourceResponse(string FileName, string Path, long FileSize, DateTime UploadedAt, string? SubFolder);

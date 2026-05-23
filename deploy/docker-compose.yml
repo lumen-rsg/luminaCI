@@ -141,6 +141,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/lumina/builds:/app/builds
       - /opt/lumina/sources:/opt/lumina/sources:z
+      - /opt/lumina/extra-sources:/opt/lumina/extra-sources:z
     depends_on:
       postgres:
         condition: service_healthy

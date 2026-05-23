@@ -242,7 +242,89 @@ if [ -n "${SOURCE_URL:-}" ]; then
     fi
 fi
 
-# ─── Step 1b: Copy pre-fetched sources from SOURCE_DIR if mounted ───
+# ─── Step 1b: Copy extra uploaded sources from /extra-sources ───
+if [ -d "/extra-sources" ]; then
+    echo "=== Copying extra uploaded sources ==="
+    echo "Contents of /extra-sources:"
+    find /extra-sources -type f 2>/dev/null || echo "(empty or not accessible)"
+
+    # Helper: copy all files from a source directory into SOURCES/
+    # Files in subdirectories are flattened to SOURCES/ root so rpmbuild can find them.
+    # Subdirectory structure is preserved as well (both flat and nested copies exist).
+    copy_extra_sources() {
+        local src_dir="$1"
+        local label="$2"
+        if [ ! -d "$src_dir" ]; then
+            echo "  No ${label} extra sources directory found"
+            return 0
+        fi
+
+        local file_count
+        file_count=$(find "$src_dir" -type f 2>/dev/null | wc -l)
+        echo "  ${label}: found ${file_count} file(s) in ${src_dir}"
+
+        if [ "$file_count" -eq 0 ]; then
+            return 0
+        fi
+
+        # Copy preserving directory structure first
+        echo "  Copying ${label} sources (preserving subdirectories)..."
+        cp -rv "$src_dir"/* "${BUILD_DIR}/SOURCES/" 2>&1 || echo "  Warning: some files may have failed to copy"
+
+        # Also flatten: copy files from subdirectories directly into SOURCES/
+        # This ensures files like patches/fix.patch are available as both
+        # SOURCES/patches/fix.patch AND SOURCES/fix.patch
+        local flattened=0
+        while IFS= read -r -d '' file; do
+            local basename
+            basename=$(basename "$file")
+            local target="${BUILD_DIR}/SOURCES/${basename}"
+            if [ ! -f "$target" ]; then
+                cp -v "$file" "$target" 2>&1
+                flattened=$((flattened + 1))
+            fi
+        done < <(find "$src_dir" -mindepth 2 -type f -print0 2>/dev/null)
+        echo "  Flattened ${flattened} file(s) from subdirectories to SOURCES/ root"
+    }
+
+    copy_extra_sources "/extra-sources/pipeline" "pipeline-level"
+    copy_extra_sources "/extra-sources/build" "build-level"
+
+    # Auto-extract any archive files that were copied to SOURCES/
+    # (tar, tar.gz, tar.bz2, tar.xz, tgz, zip)
+    echo "  Checking for archives to auto-extract in SOURCES/..."
+    EXTRACT_DIR=$(mktemp -d)
+    for archive in "${BUILD_DIR}/SOURCES/"*.tar "${BUILD_DIR}/SOURCES/"*.tar.gz "${BUILD_DIR}/SOURCES/"*.tar.bz2 "${BUILD_DIR}/SOURCES/"*.tar.xz "${BUILD_DIR}/SOURCES/"*.tgz "${BUILD_DIR}/SOURCES/"*.zip; do
+        [ -f "$archive" ] || continue
+        archive_name=$(basename "$archive")
+        echo "  Extracting archive: ${archive_name}"
+        rm -rf "${EXTRACT_DIR:?}"/*
+        case "$archive" in
+            *.tar.gz|*.tgz)  tar -xzf "$archive" -C "$EXTRACT_DIR" 2>&1 || echo "  Warning: failed to extract ${archive_name}" ;;
+            *.tar.bz2)       tar -xjf "$archive" -C "$EXTRACT_DIR" 2>&1 || echo "  Warning: failed to extract ${archive_name}" ;;
+            *.tar.xz)        tar -xJf "$archive" -C "$EXTRACT_DIR" 2>&1 || echo "  Warning: failed to extract ${archive_name}" ;;
+            *.tar)            tar -xf  "$archive" -C "$EXTRACT_DIR" 2>&1 || echo "  Warning: failed to extract ${archive_name}" ;;
+            *.zip)            unzip -o -q "$archive" -d "$EXTRACT_DIR" 2>&1 || echo "  Warning: failed to extract ${archive_name}" ;;
+        esac
+        # Copy all extracted files to SOURCES/ (flattened)
+        extracted_count=0
+        while IFS= read -r -d '' file; do
+            dest_name=$(basename "$file")
+            if [ ! -f "${BUILD_DIR}/SOURCES/${dest_name}" ]; then
+                cp -v "$file" "${BUILD_DIR}/SOURCES/${dest_name}" 2>&1
+                extracted_count=$((extracted_count + 1))
+            fi
+        done < <(find "$EXTRACT_DIR" -type f -print0 2>/dev/null)
+        echo "  Extracted ${extracted_count} file(s) from ${archive_name}"
+    done
+    rm -rf "$EXTRACT_DIR"
+
+    echo "Extra sources copy completed"
+    echo "SOURCES directory after extra sources:"
+    find "${BUILD_DIR}/SOURCES" -type f | sort | head -50
+fi
+
+# ─── Step 1c: Copy pre-fetched sources from SOURCE_DIR if mounted ───
 if [ -n "${SOURCE_DIR:-}" ] && [ -d "${SOURCE_DIR}" ]; then
     echo "=== Using pre-fetched sources from ${SOURCE_DIR} ==="
     

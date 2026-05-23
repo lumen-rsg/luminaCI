@@ -38,9 +38,37 @@ try
                 IssuerSigningKey = jwtKey,
                 ClockSkew = TimeSpan.Zero
             };
+
+            // Support JWT token via query string for SSE/EventSource connections
+            // (EventSource API doesn't support custom headers)
+            options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var accessToken = context.Request.Query["access_token"];
+                    if (!string.IsNullOrEmpty(accessToken))
+                    {
+                        context.Token = accessToken;
+                    }
+                    return Task.CompletedTask;
+                }
+            };
         });
 
     builder.Services.AddAuthorization();
+
+    // Allow unlimited file uploads (extra sources can be large)
+    builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+    {
+        options.MultipartBodyLengthLimit = long.MaxValue;
+        options.ValueLengthLimit = int.MaxValue;
+    });
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        options.Limits.MaxRequestBodySize = long.MaxValue;
+        options.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(30);
+        options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(30);
+    });
 
     // YARP Reverse Proxy
     builder.Services.AddReverseProxy()

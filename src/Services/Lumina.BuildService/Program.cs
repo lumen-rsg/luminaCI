@@ -66,6 +66,19 @@ try
     builder.Services.AddHttpClient(); // IHttpClientFactory for inter-service calls
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
+
+    // Allow unlimited file uploads for extra sources
+    builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+    {
+        options.MultipartBodyLengthLimit = long.MaxValue;
+        options.ValueLengthLimit = int.MaxValue;
+    });
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        options.Limits.MaxRequestBodySize = long.MaxValue;
+        options.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(30);
+        options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(30);
+    });
     builder.Services.AddSwaggerGen();
     builder.Services.AddHealthChecks();
 
@@ -91,7 +104,7 @@ try
     }
 
     // Ensure required host directories exist for build artifacts and sources
-    foreach (var dir in new[] { "/app/builds", "/opt/lumina/builds", "/opt/lumina/sources" })
+    foreach (var dir in new[] { "/app/builds", "/opt/lumina/builds", "/opt/lumina/sources", "/opt/lumina/extra-sources/pipelines", "/opt/lumina/extra-sources/builds" })
     {
         try
         {

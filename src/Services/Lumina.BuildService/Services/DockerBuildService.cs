@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Threading.Channels;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Lumina.BuildService.Data;
@@ -10,6 +12,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.BuildService.Services;
 
+/// <summary>
+/// Manages Docker-based builds with real-time log streaming.
+/// Logs are streamed from Docker containers as they arrive and made available
+/// to SSE subscribers via Channel-based pub/sub.
+/// </summary>
 public class DockerBuildService
 {
     private readonly DockerClient _docker;
@@ -18,6 +25,12 @@ public class DockerBuildService
     private readonly IConfiguration _config;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IBus _bus;
+
+    /// <summary>Full accumulated logs per build job (in-memory buffer).</summary>
+    private static readonly ConcurrentDictionary<Guid, string> _logBuffers = new();
+
+    /// <summary>Subscribers per build job that receive new log lines in real-time.</summary>
+    private static readonly ConcurrentDictionary<Guid, List<Channel<string>>> _subscribers = new();
 
     public DockerBuildService(
         BuildDbContext db,
@@ -38,7 +51,85 @@ public class DockerBuildService
         _docker = new DockerClientConfiguration(new Uri(dockerUrl)).CreateClient();
     }
 
-    public async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? sourceDir = null)
+    /// <summary>
+    /// Get current accumulated logs for a build job (from in-memory buffer or database).
+    /// </summary>
+    public async Task<string> GetLogsAsync(Guid jobId)
+    {
+        if (_logBuffers.TryGetValue(jobId, out var logs))
+            return logs;
+
+        // Fallback to database
+        var job = await _db.BuildJobs.FindAsync(jobId);
+        return job?.Logs ?? "";
+    }
+
+    /// <summary>
+    /// Subscribe to real-time log updates for a build job.
+    /// Returns a Channel reader that receives new log lines as they arrive.
+    /// </summary>
+    public (string existingLogs, ChannelReader<string> reader) SubscribeToLogs(Guid jobId)
+    {
+        var existingLogs = _logBuffers.TryGetValue(jobId, out var buf) ? buf : "";
+        var channel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
+
+        _subscribers.AddOrUpdate(
+            jobId,
+            [channel],
+            (_, list) => { lock (list) { list.Add(channel); } return list; }
+        );
+
+        return (existingLogs, channel.Reader);
+    }
+
+    /// <summary>
+    /// Unsubscribe from log updates. Must be called when SSE connection closes.
+    /// </summary>
+    public void UnsubscribeFromLogs(Guid jobId, ChannelReader<string> reader)
+    {
+        if (_subscribers.TryGetValue(jobId, out var list))
+        {
+            lock (list)
+            {
+                list.RemoveAll(ch => ch.Reader == reader);
+            }
+            if (list.Count == 0)
+                _subscribers.TryRemove(jobId, out _);
+        }
+    }
+
+    /// <summary>
+    /// Check if a build is currently being monitored (streaming logs).
+    /// </summary>
+    public static bool IsStreaming(Guid jobId) => _logBuffers.ContainsKey(jobId);
+
+    private void PublishLogLine(Guid jobId, string line)
+    {
+        if (!_subscribers.TryGetValue(jobId, out var list)) return;
+        lock (list)
+        {
+            foreach (var channel in list)
+            {
+                channel.Writer.TryWrite(line);
+            }
+        }
+    }
+
+    private void CleanupLogStreaming(Guid jobId)
+    {
+        _logBuffers.TryRemove(jobId, out _);
+        if (_subscribers.TryRemove(jobId, out var list))
+        {
+            foreach (var channel in list)
+                channel.Writer.TryComplete();
+        }
+    }
+
+    public async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? sourceDir = null, string? extraSourcesPipelineDir = null, string? extraSourcesBuildDir = null)
     {
         var imageName = !string.IsNullOrWhiteSpace(buildImage) ? buildImage : "lumina-rpm-build:latest";
         _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName}) with image {Image}", job.Id, job.SpecName, imageName);
@@ -117,6 +208,56 @@ public class DockerBuildService
                 _logger.LogInformation("Mounting pre-fetched sources from {SourceDir}", sourceDir);
             }
 
+            // Mount extra uploaded sources (pipeline-level and/or build-level)
+            var hasExtraSources = false;
+            var hostExtraDir = $"/opt/lumina/extra-sources/_builds/{job.Id}";
+            if (!string.IsNullOrEmpty(extraSourcesPipelineDir) && Directory.Exists(extraSourcesPipelineDir)
+                || !string.IsNullOrEmpty(extraSourcesBuildDir) && Directory.Exists(extraSourcesBuildDir))
+            {
+                // Create a merged directory with pipeline/ and build/ subdirs
+                Directory.CreateDirectory($"{hostExtraDir}/pipeline");
+                Directory.CreateDirectory($"{hostExtraDir}/build");
+
+                if (!string.IsNullOrEmpty(extraSourcesPipelineDir) && Directory.Exists(extraSourcesPipelineDir))
+                {
+                    // Copy all pipeline extra sources preserving subdirectory structure
+                    foreach (var dir in Directory.GetDirectories(extraSourcesPipelineDir, "*", SearchOption.AllDirectories))
+                    {
+                        var relPath = Path.GetRelativePath(extraSourcesPipelineDir, dir);
+                        Directory.CreateDirectory(Path.Combine(hostExtraDir, "pipeline", relPath));
+                    }
+                    foreach (var file in Directory.GetFiles(extraSourcesPipelineDir, "*", SearchOption.AllDirectories))
+                    {
+                        var relPath = Path.GetRelativePath(extraSourcesPipelineDir, file);
+                        var dest = Path.Combine(hostExtraDir, "pipeline", relPath);
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                        File.Copy(file, dest, true);
+                    }
+                    _logger.LogInformation("Copied pipeline extra sources from {Dir}", extraSourcesPipelineDir);
+                }
+
+                if (!string.IsNullOrEmpty(extraSourcesBuildDir) && Directory.Exists(extraSourcesBuildDir))
+                {
+                    foreach (var dir in Directory.GetDirectories(extraSourcesBuildDir, "*", SearchOption.AllDirectories))
+                    {
+                        var relPath = Path.GetRelativePath(extraSourcesBuildDir, dir);
+                        Directory.CreateDirectory(Path.Combine(hostExtraDir, "build", relPath));
+                    }
+                    foreach (var file in Directory.GetFiles(extraSourcesBuildDir, "*", SearchOption.AllDirectories))
+                    {
+                        var relPath = Path.GetRelativePath(extraSourcesBuildDir, file);
+                        var dest = Path.Combine(hostExtraDir, "build", relPath);
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                        File.Copy(file, dest, true);
+                    }
+                    _logger.LogInformation("Copied build extra sources from {Dir}", extraSourcesBuildDir);
+                }
+
+                binds.Add($"{hostExtraDir}:/extra-sources:z");
+                hasExtraSources = true;
+                _logger.LogInformation("Mounted extra sources at /extra-sources for job {JobId}", job.Id);
+            }
+
             var createParams = new CreateContainerParameters
             {
                 Image = imageName,
@@ -162,33 +303,168 @@ public class DockerBuildService
 
     private async Task MonitorBuildAsync(BuildJob job, string containerId)
     {
+        var logBuilder = new System.Text.StringBuilder();
+        var logLock = new object();
+
+        // Initialize the in-memory log buffer for SSE subscribers
+        _logBuffers[job.Id] = "";
+
         try
         {
-            var waitResult = await _docker.Containers.WaitContainerAsync(containerId);
+            // Stream logs in parallel with waiting for container completion
+            var waitTask = _docker.Containers.WaitContainerAsync(containerId);
+            var cts = new CancellationTokenSource();
 
-            string logs = "";
+            // Background task: stream logs from Docker container in real-time
+            var streamTask = Task.Run(async () =>
+            {
+                try
+                {
+                    var logsStream = await _docker.Containers.GetContainerLogsAsync(containerId, true, new ContainerLogsParameters
+                    {
+                        ShowStdout = true,
+                        ShowStderr = true,
+                        Follow = true,
+                        Timestamps = false
+                    });
+
+                    var buffer = new byte[8192];
+                    while (!cts.Token.IsCancellationRequested)
+                    {
+                        var readResult = await logsStream.ReadOutputAsync(buffer, 0, buffer.Length, cts.Token);
+                        if (readResult.EOF || readResult.Count == 0) break;
+
+                        var text = System.Text.Encoding.UTF8.GetString(buffer, 0, readResult.Count)
+                            .Replace("\0", "");
+
+                        if (string.IsNullOrEmpty(text)) continue;
+
+                        // Append to log builder and update buffer
+                        List<string> newLines;
+                        lock (logLock)
+                        {
+                            logBuilder.Append(text);
+                            var fullText = logBuilder.ToString();
+
+                            // Update the in-memory buffer atomically
+                            _logBuffers[job.Id] = fullText;
+
+                            // Extract only the newly added lines for SSE subscribers
+                            newLines = text.Split('\n').ToList();
+                        }
+
+                        // Publish each new line to SSE subscribers
+                        foreach (var line in newLines)
+                        {
+                            var trimmed = line.TrimEnd('\r');
+                            if (!string.IsNullOrEmpty(trimmed))
+                            {
+                                PublishLogLine(job.Id, trimmed);
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when build completes
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Log streaming ended for container {ContainerId}", containerId);
+                }
+            }, cts.Token);
+
+            // Also run periodic DB flush for log persistence (every 5 seconds)
+            var dbFlushCts = new CancellationTokenSource();
+            var dbFlushTask = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!dbFlushCts.Token.IsCancellationRequested)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(5), dbFlushCts.Token);
+                        try
+                        {
+                            string currentLogs;
+                            lock (logLock)
+                            {
+                                currentLogs = logBuilder.ToString();
+                            }
+
+                            if (!string.IsNullOrEmpty(currentLogs))
+                            {
+                                using var scope = _scopeFactory.CreateScope();
+                                var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
+                                var dbJob = await db.BuildJobs.FindAsync(job.Id);
+                                if (dbJob != null)
+                                {
+                                    dbJob.Logs = currentLogs;
+                                    db.BuildJobs.Update(dbJob);
+                                    await db.SaveChangesAsync();
+                                }
+                            }
+                        }
+                        catch (OperationCanceledException) { }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Periodic log flush failed for job {JobId}", job.Id);
+                        }
+                    }
+                }
+                catch (OperationCanceledException) { }
+            }, dbFlushCts.Token);
+
+            // Wait for the container to finish
+            var waitResult = await waitTask;
+
+            // Stop streaming — container is done
+            cts.Cancel();
+            dbFlushCts.Cancel();
+
+            try { await streamTask; } catch { /* ignore */ }
+            try { await dbFlushTask; } catch { /* ignore */ }
+
+            // Final log read (in case streaming missed the tail)
             try
             {
-                var logsStream = await _docker.Containers.GetContainerLogsAsync(containerId, true, new ContainerLogsParameters
+                var finalStream = await _docker.Containers.GetContainerLogsAsync(containerId, true, new ContainerLogsParameters
                 {
                     ShowStdout = true,
                     ShowStderr = true,
                     Follow = false
                 });
 
-                var logsBuilder = new System.Text.StringBuilder();
-                var buffer = new byte[4096];
+                var finalBuilder = new System.Text.StringBuilder();
+                var buffer = new byte[8192];
                 while (true)
                 {
-                    var readResult = await logsStream.ReadOutputAsync(buffer, 0, buffer.Length, CancellationToken.None);
+                    var readResult = await finalStream.ReadOutputAsync(buffer, 0, buffer.Length, CancellationToken.None);
                     if (readResult.EOF || readResult.Count == 0) break;
-                    logsBuilder.Append(System.Text.Encoding.UTF8.GetString(buffer, 0, readResult.Count));
+                    finalBuilder.Append(System.Text.Encoding.UTF8.GetString(buffer, 0, readResult.Count));
                 }
-                logs = logsBuilder.ToString();
+
+                var finalLogs = finalBuilder.ToString().Replace("\0", "");
+                if (finalLogs.Length > logBuilder.Length)
+                {
+                    // Update with more complete logs from final read
+                    lock (logLock)
+                    {
+                        logBuilder.Clear();
+                        logBuilder.Append(finalLogs);
+                    }
+                    _logBuffers[job.Id] = finalLogs;
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to read logs for container {ContainerId}", containerId);
+                _logger.LogDebug(ex, "Final log read failed for container {ContainerId}, using streamed logs", containerId);
+            }
+
+            // Get the final logs
+            string logs;
+            lock (logLock)
+            {
+                logs = logBuilder.ToString();
             }
 
             // Use a fresh scope for DB access (original context may be disposed)
@@ -202,7 +478,7 @@ public class DockerBuildService
                 return;
             }
 
-            dbJob.Logs = logs.Replace("\0", "");
+            dbJob.Logs = logs;
             dbJob.ContainerId = containerId;
 
             if (waitResult.StatusCode == 0)
@@ -230,6 +506,10 @@ public class DockerBuildService
             db.BuildJobs.Update(dbJob);
             await db.SaveChangesAsync();
 
+            // Notify SSE subscribers that build is complete
+            var buildResult = waitResult.StatusCode == 0 ? "SUCCESS" : "FAILED";
+            PublishLogLine(job.Id, $"[BUILD {buildResult}]");
+
             // Trigger CVE scan, hash storage, and PGP signing via MassTransit for all registered artifacts
             if (waitResult.StatusCode == 0)
             {
@@ -250,6 +530,10 @@ public class DockerBuildService
         {
             _logger.LogError(ex, "Error monitoring build job {JobId}", job.Id);
 
+            // Notify subscribers about the error
+            PublishLogLine(job.Id, "[BUILD ERROR - monitoring failed]");
+            try { _logBuffers[job.Id] = logBuilder.ToString(); } catch { }
+
             // Try to mark as failed with a fresh scope
             try
             {
@@ -258,6 +542,7 @@ public class DockerBuildService
                 var dbJob = await db.BuildJobs.FindAsync(job.Id);
                 if (dbJob != null)
                 {
+                    dbJob.Logs = logBuilder.ToString();
                     dbJob.Status = BuildStatus.Failed;
                     dbJob.CompletedAt = DateTime.UtcNow;
                     db.BuildJobs.Update(dbJob);
@@ -265,6 +550,11 @@ public class DockerBuildService
                 }
             }
             catch { /* best effort */ }
+        }
+        finally
+        {
+            // Clean up in-memory streaming state (subscribers will get channel completion)
+            CleanupLogStreaming(job.Id);
         }
     }
 

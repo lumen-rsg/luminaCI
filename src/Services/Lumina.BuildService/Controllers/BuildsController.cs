@@ -84,6 +84,101 @@ public class BuildsController : ControllerBase
         return Ok(new ApiResponse<string>(true, job.Logs, null, null));
     }
 
+    /// <summary>
+    /// SSE endpoint for streaming build logs in real-time.
+    /// Uses Server-Sent Events to push new log lines to the client as they arrive.
+    /// Falls back to existing DB logs for completed builds.
+    /// </summary>
+    [HttpGet("{id:guid}/logs/stream")]
+    public async Task LogsStream(Guid id, CancellationToken cancellationToken)
+    {
+        var job = await _engine.GetBuildJobAsync(id);
+        if (job == null)
+        {
+            Response.StatusCode = 404;
+            return;
+        }
+
+        Response.ContentType = "text/event-stream";
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("Connection", "keep-alive");
+        Response.Headers.Append("X-Accel-Buffering", "no");
+
+        var isRunning = job.Status == BuildStatus.Building ||
+                        job.Status == BuildStatus.Queued;
+
+        if (!isRunning || !Services.DockerBuildService.IsStreaming(id))
+        {
+            // Build is completed — send all logs at once and finish
+            var allLogs = job.Logs ?? "";
+            if (!string.IsNullOrEmpty(allLogs))
+            {
+                foreach (var line in allLogs.Split('\n'))
+                {
+                    var cleaned = new string(line.Where(c => !char.IsControl(c) || c == '\t').ToArray());
+                    if (!string.IsNullOrWhiteSpace(cleaned))
+                    {
+                        await WriteSseEvent(cleaned);
+                    }
+                }
+            }
+            await WriteSseEvent("[STREAM_END]");
+            await Response.Body.FlushAsync(cancellationToken);
+            return;
+        }
+
+        // Live streaming — subscribe to the log channel
+        var (existingLogs, reader) = _dockerBuild.SubscribeToLogs(id);
+        try
+        {
+            // Send existing logs first
+            if (!string.IsNullOrEmpty(existingLogs))
+            {
+                foreach (var line in existingLogs.Split('\n'))
+                {
+                    var cleaned = new string(line.Where(c => !char.IsControl(c) || c == '\t').ToArray());
+                    if (!string.IsNullOrWhiteSpace(cleaned))
+                    {
+                        await WriteSseEvent(cleaned);
+                    }
+                }
+            }
+
+            // Stream new lines as they arrive
+            await foreach (var line in reader.ReadAllAsync(cancellationToken))
+            {
+                var cleaned = new string(line.Where(c => !char.IsControl(c) || c == '\t').ToArray());
+                if (!string.IsNullOrWhiteSpace(cleaned))
+                {
+                    await WriteSseEvent(cleaned);
+                }
+
+                // Check if this is the build completion marker
+                if (line.StartsWith("[BUILD ") || line == "[STREAM_END]")
+                {
+                    await WriteSseEvent("[STREAM_END]");
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Client disconnected
+        }
+        finally
+        {
+            _dockerBuild.UnsubscribeFromLogs(id, reader);
+        }
+
+        async Task WriteSseEvent(string data)
+        {
+            var sseData = data.Replace("\n", "\\n");
+            var bytes = System.Text.Encoding.UTF8.GetBytes($"data: {sseData}\n\n");
+            await Response.Body.WriteAsync(bytes, cancellationToken);
+            await Response.Body.FlushAsync(cancellationToken);
+        }
+    }
+
     [HttpGet("{id:guid}/spec")]
     public async Task<IActionResult> DownloadSpec(Guid id)
     {

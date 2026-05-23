@@ -126,8 +126,13 @@ public class PipelineEngine
         {
             try
             {
+                // Pipeline-level extra sources directory
+                var pipelineExtraDir = $"/opt/lumina/extra-sources/pipelines/{pipelineId}";
+                var pipelineExtraExists = Directory.Exists(pipelineExtraDir) && Directory.GetFiles(pipelineExtraDir, "*", SearchOption.AllDirectories).Length > 0;
+
                 await _dockerBuild.StartBuildAsync(job, specContent, sourceUrl, pipeline.BuildImage,
-                    pipeline.GitUsername, pipeline.GitToken);
+                    pipeline.GitUsername, pipeline.GitToken,
+                    extraSourcesPipelineDir: pipelineExtraExists ? pipelineExtraDir : null);
             }
             catch (Exception ex)
             {

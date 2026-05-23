@@ -5,6 +5,7 @@
 @inject Lumina.WebApp.Services.LuminaApiService Api
 @inject ILogger<Pipelines> Logger
 @inject IJSRuntime JS
+@implements IDisposable
 
 <PageTitle>Pipelines — Lumina CI</PageTitle>
 
@@ -344,11 +345,98 @@ Version: 1.0
                         <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(pipeline)" title="Delete Pipeline">
                             🗑️
                         </button>
+                        <button class="btn btn-sm @(IsSourcesExpanded(pipeline.Id) ? "btn-info" : "btn-outline-info")" @onclick="() => TogglePipelineSources(pipeline.Id)" title="Extra Sources">
+                            📦 Sources
+                        </button>
                         <a href="/builds" class="btn btn-sm btn-outline-primary" title="View Builds">
                             📋 Builds
                         </a>
                     </div>
                 </div>
+                <!-- Extra Sources Section -->
+                @if (IsSourcesExpanded(pipeline.Id))
+                {
+                    <div class="mt-3 pt-3" style="border-top: 1px solid var(--border, #dee2e6);">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">📦 Extra Sources <span class="text-muted text-sm">(patches, archives, etc.)</span></h6>
+                        </div>
+                        <p class="text-sm text-muted mb-2">Files uploaded here will be copied to <code>SOURCES/</code> inside the build container on every build. Use subfolders to organize.</p>
+
+                        <div class="row mb-2">
+                            <div class="col-md-8">
+                                <div class="d-flex gap-2 align-items-center">
+                                    <label class="btn btn-primary btn-sm mb-0 @(_uploading ? "disabled" : "")">
+                                        📤 Upload Files
+                                        <InputFile OnChange="@(e => OnExtraSourceUploaded(e, pipeline.Id))" Accept=".tar.gz,.tar.bz2,.tar.xz,.tgz,.zip,.patch,.diff,.gz,.bz2,.xz,.rar,.7z,.tar" multiple style="display:none" disabled="@_uploading" />
+                                    </label>
+                                    <input type="text" class="form-control form-control-sm" style="max-width:200px"
+                                           @bind:get="GetSubfolderBinding(pipeline.Id)"
+                                           @bind:set="(v) => SetSubfolder(pipeline.Id, v)"
+                                           placeholder="Subfolder (optional)" disabled="@_uploading" />
+                                </div>
+                            </div>
+                            <div class="col-md-4 text-end">
+                                @if (GetPipelineSourcesList(pipeline.Id)?.Count > 0 && !_uploading)
+                                {
+                                    <button class="btn btn-outline-danger btn-sm" @onclick="() => ClearSources(pipeline.Id)" title="Delete all extra sources">🗑️ Clear All</button>
+                                }
+                            </div>
+                        </div>
+
+                        @if (_uploading)
+                        {
+                            <div class="mb-3 p-2 rounded" style="background:rgba(56,139,253,0.05); border:1px solid rgba(56,139,253,0.2);">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="text-sm">
+                                        📤 @(_uploadFileCount > 1 ? $"File {_uploadFileIndex}/{_uploadFileCount}: " : "")<strong>@_uploadFileName</strong>
+                                    </span>
+                                    <span class="text-sm text-muted">
+                                        @FormatFileSize(_uploadBytesRead) / @FormatFileSize(_uploadTotalBytes) — @_uploadPercent.ToString("F0")%
+                                    </span>
+                                </div>
+                                <div class="progress" style="height: 20px;">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                         role="progressbar"
+                                         style="width: @_uploadPercent.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)%"
+                                         aria-valuenow="@_uploadPercent.ToString("F0")"
+                                         aria-valuemin="0"
+                                         aria-valuemax="100">
+                                        @_uploadPercent.ToString("F0")%
+                                    </div>
+                                </div>
+                            </div>
+                        }
+
+                        @if (IsSourcesLoading(pipeline.Id))
+                        {
+                            <div class="text-sm text-muted">Loading...</div>
+                        }
+                        else if (GetPipelineSourcesList(pipeline.Id) is { Count: > 0 } files)
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm" style="font-size:0.82rem;">
+                                    <thead><tr><th>File</th><th>Subfolder</th><th>Size</th><th>Uploaded</th><th></th></tr></thead>
+                                    <tbody>
+                                        @foreach (var src in files)
+                                        {
+                                            <tr>
+                                                <td class="font-monospace">@src.FileName</td>
+                                                <td>@(src.SubFolder ?? "/")</td>
+                                                <td>@FormatFileSize(src.FileSize)</td>
+                                                <td>@src.UploadedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
+                                                <td><button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size:0.75rem" @onclick="() => DeleteSource(pipeline.Id, src.Path)">✕</button></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="text-sm text-muted fst-italic">No extra sources uploaded yet</div>
+                        }
+                    </div>
+                }
             </div>
         </div>
     }
@@ -444,6 +532,22 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
 
     private string _triggerSpecContent = "";
     private string _triggerSpecFileName = "";
+
+    // Extra sources state
+    private readonly HashSet<Guid> _expandedSources = new();
+    private readonly HashSet<Guid> _loadingSources = new();
+    private readonly Dictionary<Guid, List<UploadedSourceResponse>> _pipelineSources = new();
+    private readonly Dictionary<Guid, string> _subfolders = new();
+    private readonly Dictionary<Guid, CancellationTokenSource> _uploadCts = new();
+
+    // Upload progress state
+    private bool _uploading;
+    private string _uploadFileName = "";
+    private long _uploadBytesRead;
+    private long _uploadTotalBytes;
+    private double _uploadPercent;
+    private int _uploadFileIndex;
+    private int _uploadFileCount;
 
     protected override async Task OnInitializedAsync()
     {
@@ -843,4 +947,154 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
         PipelineStatus.Archived => "badge bg-dark",
         _ => "badge bg-secondary"
     };
+
+    // === Extra Sources Methods ===
+    private bool IsSourcesExpanded(Guid pipelineId) => _expandedSources.Contains(pipelineId);
+    private bool IsSourcesLoading(Guid pipelineId) => _loadingSources.Contains(pipelineId);
+    private List<UploadedSourceResponse>? GetPipelineSourcesList(Guid pipelineId)
+        => _pipelineSources.TryGetValue(pipelineId, out var list) ? list : null;
+    private string GetSubfolderBinding(Guid pipelineId)
+        => _subfolders.TryGetValue(pipelineId, out var val) ? val : "";
+
+    private void SetSubfolder(Guid pipelineId, string value) => _subfolders[pipelineId] = value;
+
+    private async Task TogglePipelineSources(Guid pipelineId)
+    {
+        if (_expandedSources.Contains(pipelineId))
+        {
+            _expandedSources.Remove(pipelineId);
+        }
+        else
+        {
+            _expandedSources.Add(pipelineId);
+            await LoadPipelineSourcesAsync(pipelineId);
+        }
+    }
+
+    private async Task LoadPipelineSourcesAsync(Guid pipelineId)
+    {
+        _loadingSources.Add(pipelineId);
+        StateHasChanged();
+        try
+        {
+            var result = await Api.GetPipelineSourcesAsync(pipelineId);
+            _pipelineSources[pipelineId] = result?.Data ?? new();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load extra sources for pipeline {PipelineId}", pipelineId);
+            _pipelineSources[pipelineId] = new();
+        }
+        finally
+        {
+            _loadingSources.Remove(pipelineId);
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnExtraSourceUploaded(InputFileChangeEventArgs e, Guid pipelineId)
+    {
+        _uploading = true;
+        _uploadFileCount = e.FileCount;
+        _uploadFileIndex = 0;
+        StateHasChanged();
+
+        try
+        {
+            var subfolder = _subfolders.TryGetValue(pipelineId, out var sf) ? sf : "";
+            subfolder = string.IsNullOrWhiteSpace(subfolder) ? null : subfolder.Trim().Trim('/', '\\');
+
+            foreach (var file in e.GetMultipleFiles(e.FileCount))
+            {
+                _uploadFileIndex++;
+                _uploadFileName = file.Name;
+                _uploadBytesRead = 0;
+                _uploadPercent = 0;
+                _uploadTotalBytes = (long)file.Size;
+                StateHasChanged();
+
+                var progress = new Progress<(long Uploaded, long Total)>(p =>
+                {
+                    _uploadBytesRead = p.Uploaded;
+                    _uploadTotalBytes = p.Total;
+                    _uploadPercent = p.Total > 0 ? p.Uploaded * 100.0 / p.Total : 0;
+                    InvokeAsync(StateHasChanged);
+                });
+
+                // Run upload on background thread so Blazor circuit can render progress
+                await Task.Run(async () =>
+                {
+                    using var stream = file.OpenReadStream(maxAllowedSize: long.MaxValue);
+                    await Api.UploadPipelineSourceAsync(pipelineId, stream, file.Name, subfolder, progress);
+                });
+            }
+
+            _triggerMessage = $"✅ Uploaded {e.FileCount} file(s) to pipeline sources";
+            IsSuccess = true;
+            await LoadPipelineSourcesAsync(pipelineId);
+        }
+        catch (Exception ex)
+        {
+            _triggerMessage = $"❌ Upload failed: {ex.Message}";
+            IsSuccess = false;
+            Logger.LogWarning(ex, "Failed to upload extra sources for pipeline {PipelineId}", pipelineId);
+        }
+        finally
+        {
+            _uploading = false;
+            _uploadFileName = "";
+            _uploadBytesRead = 0;
+            _uploadPercent = 0;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteSource(Guid pipelineId, string path)
+    {
+        try
+        {
+            // Extract relative path from full path (format: "pipelines/{id}/...")
+            var prefix = $"pipelines/{pipelineId}/";
+            var relativePath = path.StartsWith(prefix) ? path[prefix.Length..] : path;
+
+            await Api.DeletePipelineSourceAsync(pipelineId, relativePath);
+            await LoadPipelineSourcesAsync(pipelineId);
+        }
+        catch (Exception ex)
+        {
+            _triggerMessage = $"❌ Delete failed: {ex.Message}";
+            IsSuccess = false;
+            Logger.LogWarning(ex, "Failed to delete extra source {Path}", path);
+        }
+    }
+
+    private async Task ClearSources(Guid pipelineId)
+    {
+        try
+        {
+            await Api.ClearPipelineSourcesAsync(pipelineId);
+            await LoadPipelineSourcesAsync(pipelineId);
+            _triggerMessage = "✅ All extra sources cleared";
+            IsSuccess = true;
+        }
+        catch (Exception ex)
+        {
+            _triggerMessage = $"❌ Clear failed: {ex.Message}";
+            IsSuccess = false;
+        }
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F1} GB";
+    }
+
+    public void Dispose()
+    {
+        foreach (var cts in _uploadCts.Values) cts.Cancel();
+        GC.SuppressFinalize(this);
+    }
 }
