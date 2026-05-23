@@ -81,6 +81,40 @@ expand_spec_macros() {
     echo "$result"
 }
 
+# ─── Helper: get fully-expanded Source0 filename using rpmspec ───
+# Uses rpmspec -P which expands ALL macros (including custom %define)
+# Falls back to expand_spec_macros if rpmspec is unavailable or fails
+get_expanded_source0_filename() {
+    local spec_file="${BUILD_DIR}/SPECS/${SPEC_NAME}"
+    local result=""
+
+    # Try rpmspec -P (fully expands all macros)
+    if command -v rpmspec &>/dev/null; then
+        result=$(rpmspec -P "$spec_file" 2>/dev/null | grep -i "^Source0:" | head -1 | sed 's/^Source0:[[:space:]]*//' || true)
+        if [ -n "$result" ]; then
+            local filename
+            filename=$(basename "$result")
+            echo "  [rpmspec] Source0 expanded: ${result} → filename: ${filename}" >&2
+            echo "$filename"
+            return
+        fi
+    fi
+
+    # Fallback to manual expansion
+    local source0_ref
+    source0_ref=$(grep -i "^Source0:" "$spec_file" 2>/dev/null | head -1 | sed 's/^Source0:[[:space:]]*//' || true)
+    if [ -n "$source0_ref" ]; then
+        result=$(expand_spec_macros "$source0_ref")
+        local filename
+        filename=$(basename "$result")
+        echo "  [manual] Source0 expanded: ${result} → filename: ${filename}" >&2
+        echo "$filename"
+        return
+    fi
+
+    echo ""
+}
+
 # ─── Helper: download a source URL to SOURCES with correct filename ───
 download_source() {
     local source_tag="$1"  # e.g. "Source0: https://..."
@@ -171,13 +205,24 @@ if [ -n "${SOURCE_URL:-}" ]; then
         fi
 
         CLONE_DIR=$(mktemp -d)
-        git clone --depth 50 --branch "${GIT_BRANCH}" "${AUTH_REPO}" "${CLONE_DIR}/repo" || {
+        git clone --depth 500 --branch "${GIT_BRANCH}" "${AUTH_REPO}" "${CLONE_DIR}/repo" || {
             echo "ERROR: git clone failed"
             exit 1
         }
 
         if [ -n "${GIT_COMMIT}" ]; then
-            cd "${CLONE_DIR}/repo" && git checkout "${GIT_COMMIT}" 2>/dev/null || echo "Warning: could not checkout ${GIT_COMMIT}"
+            echo "Checking out commit: ${GIT_COMMIT}"
+            cd "${CLONE_DIR}/repo"
+            # Try checkout directly; if fails due to shallow depth, fetch more
+            if ! git checkout "${GIT_COMMIT}" 2>&1; then
+                echo "Commit not in shallow clone, fetching full history..."
+                git fetch --unshallow 2>&1 || git fetch --depth=5000 2>&1 || true
+                git checkout "${GIT_COMMIT}" 2>&1 || {
+                    echo "ERROR: Could not checkout commit ${GIT_COMMIT}"
+                    cd /
+                    exit 1
+                }
+            fi
             cd /
         fi
 
@@ -218,17 +263,58 @@ if [ -n "${SOURCE_URL:-}" ]; then
                 fi
             done
 
-            # Create source tarball from repo if Source0 expects one
+            # Create source tarball matching Source0 filename from spec
             PKG_NAME_FROM_SPEC=$(grep -i "^Name:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
             PKG_VERSION_FROM_SPEC=$(grep -i "^Version:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
-            if [ -n "${PKG_NAME_FROM_SPEC}" ] && [ -n "${PKG_VERSION_FROM_SPEC}" ]; then
-                TARBALL_NAME="${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}.tar.gz"
-                if [ ! -f "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" ]; then
-                    echo "Creating source tarball: ${TARBALL_NAME}"
-                    mkdir -p "${CLONE_DIR}/tardir/${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}"
-                    cp -r "${CLONE_DIR}/repo"/* "${CLONE_DIR}/tardir/${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}/" 2>/dev/null || true
-                    tar -czf "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" -C "${CLONE_DIR}/tardir" "${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}"
+
+            # Determine the expected tarball name from Source0 in spec
+            EXPECTED_TARBALL=$(get_expanded_source0_filename)
+
+            # Fallback to Name-Version.tar.gz
+            if [ -z "${EXPECTED_TARBALL}" ] && [ -n "${PKG_NAME_FROM_SPEC}" ] && [ -n "${PKG_VERSION_FROM_SPEC}" ]; then
+                EXPECTED_TARBALL="${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}.tar.gz"
+            fi
+
+            if [ -n "${EXPECTED_TARBALL}" ] && [ ! -f "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" ]; then
+                echo "Creating source tarball: ${EXPECTED_TARBALL}"
+                TARBALL_STEM="${EXPECTED_TARBALL%.tar.xz}"
+                TARBALL_STEM="${TARBALL_STEM%.tar.gz}"
+                TARBALL_STEM="${TARBALL_STEM%.tar.bz2}"
+                TARBALL_STEM="${TARBALL_STEM%.tgz}"
+                TARBALL_STEM="${TARBALL_STEM%.tar}"
+
+                # Log repo contents for debugging
+                echo "  Repository contents (${CLONE_DIR}/repo):"
+                ls -la "${CLONE_DIR}/repo/" 2>/dev/null | head -20
+                echo "  File count: $(find "${CLONE_DIR}/repo" -type f 2>/dev/null | wc -l)"
+
+                mkdir -p "${CLONE_DIR}/tardir/${TARBALL_STEM}"
+                # Use rsync or cp -a to preserve everything including dotfiles
+                cp -a "${CLONE_DIR}/repo"/. "${CLONE_DIR}/tardir/${TARBALL_STEM}/" 2>/dev/null || true
+
+                # Verify copy worked
+                local_file_count=$(find "${CLONE_DIR}/tardir/${TARBALL_STEM}" -type f 2>/dev/null | wc -l)
+                echo "  Files in tarball directory: ${local_file_count}"
+
+                if [ "${local_file_count}" -eq 0 ]; then
+                    echo "  WARNING: No files found in tarball directory! Check git clone/checkout."
                 fi
+
+                # Use correct compression matching the extension
+                case "${EXPECTED_TARBALL}" in
+                    *.tar.xz)  tar -cJf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" -C "${CLONE_DIR}/tardir" "${TARBALL_STEM}" ;;
+                    *.tar.bz2) tar -cjf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" -C "${CLONE_DIR}/tardir" "${TARBALL_STEM}" ;;
+                    *.tar.gz|*.tgz) tar -czf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" -C "${CLONE_DIR}/tardir" "${TARBALL_STEM}" ;;
+                    *)         tar -czf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" -C "${CLONE_DIR}/tardir" "${TARBALL_STEM}" ;;
+                esac
+                echo "Tarball created: ${EXPECTED_TARBALL} ($(stat -c%s "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" 2>/dev/null || echo '?') bytes)"
+
+                # Verify tarball contents
+                echo "  Tarball contents (top 20):"
+                tar -tf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" 2>/dev/null | head -20
+                echo "  Total entries in tarball: $(tar -tf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" 2>/dev/null | wc -l)"
+            elif [ -n "${EXPECTED_TARBALL}" ]; then
+                echo "Tarball already exists: ${EXPECTED_TARBALL}, skipping creation"
             fi
         fi
 
@@ -354,19 +440,34 @@ if [ -n "${SOURCE_DIR:-}" ] && [ -d "${SOURCE_DIR}" ]; then
             fi
         done
         
-        # Create source tarball from repo content
+        # Create source tarball matching Source0 filename from spec
         PKG_NAME_FROM_SPEC=$(grep -i "^Name:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
         PKG_VERSION_FROM_SPEC=$(grep -i "^Version:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null | awk '{print $2}' | tr -d '[:space:]')
-        if [ -n "${PKG_NAME_FROM_SPEC}" ] && [ -n "${PKG_VERSION_FROM_SPEC}" ]; then
-            TARBALL_NAME="${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}.tar.gz"
-            if [ ! -f "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" ]; then
-                echo "Creating source tarball from pre-fetched repo: ${TARBALL_NAME}"
-                TMP_TARDIR=$(mktemp -d)
-                mkdir -p "${TMP_TARDIR}/${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}"
-                cp -r "${REPO_DIR}"/* "${TMP_TARDIR}/${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}/" 2>/dev/null || true
-                tar -czf "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" -C "${TMP_TARDIR}" "${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}"
-                rm -rf "${TMP_TARDIR}"
-            fi
+
+        EXPECTED_TARBALL=$(get_expanded_source0_filename)
+        if [ -z "${EXPECTED_TARBALL}" ] && [ -n "${PKG_NAME_FROM_SPEC}" ] && [ -n "${PKG_VERSION_FROM_SPEC}" ]; then
+            EXPECTED_TARBALL="${PKG_NAME_FROM_SPEC}-${PKG_VERSION_FROM_SPEC}.tar.gz"
+        fi
+
+        if [ -n "${EXPECTED_TARBALL}" ] && [ ! -f "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" ]; then
+            echo "Creating source tarball from pre-fetched repo: ${EXPECTED_TARBALL}"
+            TARBALL_STEM="${EXPECTED_TARBALL%.tar.xz}"
+            TARBALL_STEM="${TARBALL_STEM%.tar.gz}"
+            TARBALL_STEM="${TARBALL_STEM%.tar.bz2}"
+            TARBALL_STEM="${TARBALL_STEM%.tgz}"
+            TARBALL_STEM="${TARBALL_STEM%.tar}"
+
+            TMP_TARDIR=$(mktemp -d)
+            mkdir -p "${TMP_TARDIR}/${TARBALL_STEM}"
+            cp -r "${REPO_DIR}"/* "${TMP_TARDIR}/${TARBALL_STEM}/" 2>/dev/null || true
+
+            case "${EXPECTED_TARBALL}" in
+                *.tar.xz)  tar -cJf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" -C "${TMP_TARDIR}" "${TARBALL_STEM}" ;;
+                *.tar.bz2) tar -cjf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" -C "${TMP_TARDIR}" "${TARBALL_STEM}" ;;
+                *.tar.gz|*.tgz) tar -czf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" -C "${TMP_TARDIR}" "${TARBALL_STEM}" ;;
+                *)         tar -czf "${BUILD_DIR}/SOURCES/${EXPECTED_TARBALL}" -C "${TMP_TARDIR}" "${TARBALL_STEM}" ;;
+            esac
+            rm -rf "${TMP_TARDIR}"
         fi
     else
         # SOURCE_DIR contains tarballs or other files — copy directly to SOURCES
@@ -415,26 +516,23 @@ fi
 
 # ─── Step 3: Create dummy tarball if needed ───
 # If Source0 references a file that doesn't exist yet, create a dummy
-SOURCE0_LINE=$(grep -i "^Source0:" "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null || true)
-if [ -n "${SOURCE0_LINE}" ]; then
-    SOURCE0_FILENAME=$(expand_spec_macros "$(echo "$SOURCE0_LINE" | sed 's/^Source0:[[:space:]]*//' | sed 's/.*\///')")
-    if [ -n "${SOURCE0_FILENAME}" ] && [ ! -f "${BUILD_DIR}/SOURCES/${SOURCE0_FILENAME}" ]; then
-        # Derive directory name from Source0 filename (e.g. aurora.net-2.1.tar.gz → aurora.net-2.1)
-        TARBALL_STEM="${SOURCE0_FILENAME%.tar.gz}"
-        TARBALL_STEM="${TARBALL_STEM%.tar.bz2}"
-        TARBALL_STEM="${TARBALL_STEM%.tar.xz}"
-        TARBALL_STEM="${TARBALL_STEM%.tgz}"
+SOURCE0_FILENAME=$(get_expanded_source0_filename)
+if [ -n "${SOURCE0_FILENAME}" ] && [ ! -f "${BUILD_DIR}/SOURCES/${SOURCE0_FILENAME}" ]; then
+    # Derive directory name from Source0 filename (e.g. aurora.net-2.1.tar.gz → aurora.net-2.1)
+    TARBALL_STEM="${SOURCE0_FILENAME%.tar.gz}"
+    TARBALL_STEM="${TARBALL_STEM%.tar.bz2}"
+    TARBALL_STEM="${TARBALL_STEM%.tar.xz}"
+    TARBALL_STEM="${TARBALL_STEM%.tgz}"
 
-        if [ -n "${TARBALL_STEM}" ]; then
-            TARBALL_NAME="${SOURCE0_FILENAME}"
-            echo "Creating dummy source tarball: ${TARBALL_NAME} (dir: ${TARBALL_STEM})"
-            TMP_DIR=$(mktemp -d)
-            mkdir -p "${TMP_DIR}/${TARBALL_STEM}"
-            echo "Lumina CI dummy build: ${TARBALL_STEM}" > "${TMP_DIR}/${TARBALL_STEM}/README"
-            tar -czf "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" -C "${TMP_DIR}" "${TARBALL_STEM}"
-            rm -rf "${TMP_DIR}"
-            echo "Dummy tarball created successfully"
-        fi
+    if [ -n "${TARBALL_STEM}" ]; then
+        TARBALL_NAME="${SOURCE0_FILENAME}"
+        echo "Creating dummy source tarball: ${TARBALL_NAME} (dir: ${TARBALL_STEM})"
+        TMP_DIR=$(mktemp -d)
+        mkdir -p "${TMP_DIR}/${TARBALL_STEM}"
+        echo "Lumina CI dummy build: ${TARBALL_STEM}" > "${TMP_DIR}/${TARBALL_STEM}/README"
+        tar -czf "${BUILD_DIR}/SOURCES/${TARBALL_NAME}" -C "${TMP_DIR}" "${TARBALL_STEM}"
+        rm -rf "${TMP_DIR}"
+        echo "Dummy tarball created successfully"
     fi
 fi
 
