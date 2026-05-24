@@ -1,4 +1,4 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 @inject NavigationManager Navigation
 @inject Lumina.WebApp.Services.AuthService Auth
 @inject Lumina.WebApp.Services.ThemeService Theme
@@ -8,7 +8,7 @@
     <main class="main-content">
         <header class="top-bar">
             <div class="breadcrumb">
-                <a href="/">🏠 console.lumina.1t.ru</a>
+                <a href="/">console.lumina.1t.ru</a>
                 @foreach (var seg in GetBreadcrumbs())
                 {
                     <span class="separator">/</span>
@@ -23,8 +23,8 @@
                 }
             </div>
             <div class="top-bar-actions">
-                <button class="theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Переключить на светлую тему" : "Переключить на тёмную тему")">
-                    @(Theme.IsDark ? "☀️" : "🌙")
+                <button class="theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Switch to light theme" : "Switch to dark theme")">
+                    @(Theme.IsDark ? "Light" : "Dark")
                 </button>
                 <span class="text-xs text-muted">@DateTime.Now.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
             </div>
@@ -60,7 +60,7 @@
         for (int i = 0; i < segments.Length; i++)
         {
             var seg = segments[i];
-            var label = seg.Length <= 8 ? seg : seg[..8] + "…";
+            var label = seg.Length <= 8 ? seg : seg[..8] + "...";
 
             // Try to make it readable
             label = label switch

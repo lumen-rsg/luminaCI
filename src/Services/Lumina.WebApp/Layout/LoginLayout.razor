@@ -2,12 +2,12 @@
 @inject Lumina.WebApp.Services.ThemeService Theme
 
 <div class="login-layout">
-    <button class="theme-toggle login-theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Переключить на светлую тему" : "Переключить на тёмную тему")">
-        @(Theme.IsDark ? "☀️" : "🌙")
+    <button class="theme-toggle login-theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Switch to light theme" : "Switch to dark theme")">
+        @(Theme.IsDark ? "Light" : "Dark")
     </button>
     <div class="login-container">
         <div class="login-logo">
-            <span style="font-size:3rem;">🏗️</span>
+            <div class="login-logo-icon">L</div>
             <h1>Lumina CI</h1>
             <p class="text-muted">Continuous Integration Platform</p>
         </div>
@@ -33,7 +33,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-card) 50%, var(--bg-dark) 100%);
+        background: var(--bg-dark);
         position: relative;
     }
     .login-theme-toggle {
@@ -54,5 +54,19 @@
         color: var(--text-white);
         margin-top: 0.5rem;
         font-size: 1.8rem;
+    }
+    .login-logo-icon {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto;
+        background: var(--accent);
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-weight: 700;
+        font-size: 1.4rem;
+        box-shadow: var(--neu-shadow);
     }
 </style>

@@ -6,8 +6,8 @@
 <PageTitle>Security — Lumina CI</PageTitle>
 
 <div class="page-header">
-    <h1>🔐 Security</h1>
-    <button class="btn btn-outline-secondary btn-sm" @onclick="RefreshAll">🔄 Refresh</button>
+    <h1>Security</h1>
+    <button class="btn btn-outline-secondary btn-sm" @onclick="RefreshAll">Refresh</button>
 </div>
 
 <div class="row">
@@ -15,7 +15,7 @@
     <div class="col-md-6">
         <div class="card animate-slide-in">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h3 class="mb-0">🔑 PGP Keys & Signing</h3>
+                <h3 class="mb-0">PGP Keys &amp; Signing</h3>
                 <button class="btn btn-sm btn-outline-primary" @onclick="ToggleGenerateKey">
                     @(_showGenerateKey ? "Cancel" : "+ Generate Key")
                 </button>
@@ -23,7 +23,7 @@
             <div class="card-body">
                 @if (_showGenerateKey)
                 {
-                    <div class="border rounded p-3 mb-3" style="background: var(--bg-dark); border-color: var(--border-light) !important;">
+                    <div class="p-3 mb-3" style="background: var(--bg-input); border-radius: var(--radius-sm); box-shadow: var(--neu-shadow-inset);">
                         <h6>Generate New PGP Key</h6>
                         <div class="mb-2">
                             <label class="form-label small">Key Name</label>
@@ -83,7 +83,7 @@
     <div class="col-md-6">
         <div class="card animate-slide-in">
             <div class="card-header">
-                <h3>📋 Hash Records</h3>
+                <h3>Hash Records</h3>
             </div>
             <div class="card-body p-0">
                 @if (_hashes?.Data?.Hashes != null && _hashes.Data.Hashes.Any())
@@ -103,7 +103,7 @@
                                     <td><code>@hash.ArtifactId.ToString()[..8]</code></td>
                                     <td>
                                         <code style="font-size:0.7em;" title="@hash.HashSha256">
-                                            @hash.HashSha256?[..Math.Min(24, hash.HashSha256?.Length ?? 0)]…
+                                            @hash.HashSha256?[..Math.Min(24, hash.HashSha256?.Length ?? 0)]...
                                         </code>
                                     </td>
                                     <td class="text-xs text-muted">@hash.HashMd5</td>
@@ -115,7 +115,7 @@
                 else
                 {
                     <div class="empty-state">
-                        <div class="empty-state-icon">📋</div>
+                        <div class="empty-state-icon"><span class="icon-inner"></span></div>
                         <h3>No hash records</h3>
                         <p>Hashes are computed automatically after builds.</p>
                     </div>
@@ -128,7 +128,7 @@
 <!-- CVE Scans -->
 <div class="card mt-4 animate-slide-in">
     <div class="card-header">
-        <h3>🛡️ CVE Scan Reports</h3>
+        <h3>CVE Scan Reports</h3>
         <span class="badge bg-secondary">@(_scans?.Data?.TotalCount ?? 0) scans</span>
     </div>
     <div class="card-body p-0">
@@ -166,7 +166,7 @@
         else
         {
             <div class="empty-state">
-                <div class="empty-state-icon">🛡️</div>
+                <div class="empty-state-icon"><span class="icon-inner"></span></div>
                 <h3>No CVE scans yet</h3>
                 <p>Artifacts are scanned automatically after build.</p>
             </div>

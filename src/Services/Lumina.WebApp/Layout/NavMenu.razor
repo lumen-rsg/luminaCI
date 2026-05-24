@@ -1,11 +1,11 @@
-﻿@inject Lumina.WebApp.Services.LuminaApiService Api
+@inject Lumina.WebApp.Services.LuminaApiService Api
 @inject Lumina.WebApp.Services.AuthService Auth
 @inject NavigationManager Nav
 
 <div class="sidebar">
     <div class="sidebar-brand">
         <a href="/">
-            <span class="brand-icon">🏗️</span>
+            <span class="brand-icon">L</span>
             <span>Lumina CI</span>
         </a>
     </div>
@@ -17,7 +17,7 @@
             <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
                 <li class="nav-item">
                     <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                        <span class="nav-icon">📊</span> Dashboard
+                        <span class="nav-icon"><span class="nav-icon-dot blue"></span></span> Dashboard
                     </NavLink>
                 </li>
             </ul>
@@ -26,19 +26,19 @@
             <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
                 <li class="nav-item">
                     <NavLink class="nav-link" href="pipelines">
-                        <span class="nav-icon">🔄</span> Pipelines
+                        <span class="nav-icon"><span class="nav-icon-dot orange"></span></span> Pipelines
                     </NavLink>
                 </li>
                 <li class="nav-item">
                     <NavLink class="nav-link" href="builds">
-                        <span class="nav-icon">📦</span> Builds
+                        <span class="nav-icon"><span class="nav-icon-dot green"></span></span> Builds
                         @if (_queueBadge > 0)
                         {
                             <span class="nav-badge">@_queueBadge</span>
                         }
                     </NavLink>
                     <NavLink class="nav-link" href="sources">
-                        <span class="nav-icon">📡</span> Sources
+                        <span class="nav-icon"><span class="nav-icon-dot purple"></span></span> Sources
                     </NavLink>
                 </li>
             </ul>
@@ -47,12 +47,12 @@
             <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
                 <li class="nav-item">
                     <NavLink class="nav-link" href="security">
-                        <span class="nav-icon">🔐</span> Security
+                        <span class="nav-icon"><span class="nav-icon-dot red"></span></span> Security
                     </NavLink>
                 </li>
                 <li class="nav-item">
                     <NavLink class="nav-link" href="repositories">
-                        <span class="nav-icon">📂</span> Repositories
+                        <span class="nav-icon"><span class="nav-icon-dot yellow"></span></span> Repositories
                     </NavLink>
                 </li>
             </ul>
@@ -63,12 +63,12 @@
         @if (Auth.IsAuthenticated)
         {
             <button class="btn btn-sm btn-outline-secondary w-100" @onclick="DoLogout">
-                🚪 Logout
+                Logout
             </button>
         }
         else
         {
-            <a href="/login" class="btn btn-sm btn-primary w-100">🔐 Sign In</a>
+            <a href="/login" class="btn btn-sm btn-primary w-100">Sign In</a>
         }
         <small class="mt-2 d-block text-muted">Lumina CI v1.0</small>
     </div>

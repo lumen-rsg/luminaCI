@@ -500,6 +500,9 @@ public class DockerBuildService
             {
                 dbJob.Status = BuildStatus.Failed;
                 _logger.LogWarning("Build job {JobId} failed with exit code {ExitCode}", job.Id, waitResult.StatusCode);
+
+                // Save failed build log to file for diagnostics
+                SaveFailedBuildLog(job.Id, job.SpecName, logs);
             }
 
             dbJob.CompletedAt = DateTime.UtcNow;
@@ -537,17 +540,21 @@ public class DockerBuildService
             // Try to mark as failed with a fresh scope
             try
             {
+                string errorLogs = logBuilder.ToString();
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
                 var dbJob = await db.BuildJobs.FindAsync(job.Id);
                 if (dbJob != null)
                 {
-                    dbJob.Logs = logBuilder.ToString();
+                    dbJob.Logs = errorLogs;
                     dbJob.Status = BuildStatus.Failed;
                     dbJob.CompletedAt = DateTime.UtcNow;
                     db.BuildJobs.Update(dbJob);
                     await db.SaveChangesAsync();
                 }
+
+                // Save failed build log to file for diagnostics
+                SaveFailedBuildLog(job.Id, job.SpecName, errorLogs);
             }
             catch { /* best effort */ }
         }
@@ -713,6 +720,49 @@ public class DockerBuildService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Could not verify build image {Image} existence, proceeding anyway", imageName);
+        }
+    }
+
+    /// <summary>
+    /// Save failed build log to a file for diagnostics.
+    /// Keeps only the last 5 failed build logs, deleting older ones.
+    /// </summary>
+    private void SaveFailedBuildLog(Guid jobId, string specName, string logs)
+    {
+        try
+        {
+            var failedLogsDir = "/opt/lumina/sources/failed-build-logs";
+            Directory.CreateDirectory(failedLogsDir);
+
+            // Create log filename with timestamp and spec name for easy identification
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var safeSpecName = string.IsNullOrWhiteSpace(specName) ? "unknown" : specName.Replace(".spec", "").Replace("/", "_");
+            var logFileName = $"{timestamp}_{safeSpecName}_{jobId:N}.log";
+            var logFilePath = Path.Combine(failedLogsDir, logFileName);
+
+            File.WriteAllText(logFilePath, logs);
+            _logger.LogInformation("Saved failed build log to {LogFilePath} ({Size} bytes)", logFilePath, logs.Length);
+
+            // Cleanup: keep only last 5 failed build logs
+            var existingLogs = new DirectoryInfo(failedLogsDir)
+                .GetFiles("*.log")
+                .OrderByDescending(f => f.CreationTimeUtc)
+                .Skip(5)
+                .ToList();
+
+            foreach (var oldLog in existingLogs)
+            {
+                try
+                {
+                    oldLog.Delete();
+                    _logger.LogDebug("Deleted old failed build log: {FileName}", oldLog.Name);
+                }
+                catch { /* best effort */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to save failed build log for job {JobId}", jobId);
         }
     }
 

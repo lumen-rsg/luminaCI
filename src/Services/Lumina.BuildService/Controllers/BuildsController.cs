@@ -286,6 +286,44 @@ public class BuildsController : ControllerBase
     }
 
     /// <summary>
+    /// List saved failed build log files for diagnostics.
+    /// Returns filenames of the last 5 failed builds.
+    /// </summary>
+    [HttpGet("failed-logs")]
+    public IActionResult ListFailedLogs()
+    {
+        var failedLogsDir = "/opt/lumina/sources/failed-build-logs";
+        if (!Directory.Exists(failedLogsDir))
+            return Ok(new ApiResponse<string[]>(true, [], null, null));
+
+        var files = new DirectoryInfo(failedLogsDir)
+            .GetFiles("*.log")
+            .OrderByDescending(f => f.CreationTimeUtc)
+            .Take(10)
+            .Select(f => new { fileName = f.Name, size = f.Length, createdAt = f.CreationTimeUtc })
+            .ToList();
+
+        return Ok(new ApiResponse<object>(true, files, null, null));
+    }
+
+    /// <summary>
+    /// Read a specific failed build log file by filename.
+    /// </summary>
+    [HttpGet("failed-logs/{fileName}")]
+    public IActionResult GetFailedLog(string fileName)
+    {
+        // Sanitize filename to prevent path traversal
+        var safeName = Path.GetFileName(fileName);
+        var logFilePath = Path.Combine("/opt/lumina/sources/failed-build-logs", safeName);
+
+        if (!System.IO.File.Exists(logFilePath))
+            return NotFound(new ApiResponse<string>(false, null, "Log file not found", null));
+
+        var content = System.IO.File.ReadAllText(logFilePath);
+        return Ok(new ApiResponse<string>(true, content, null, null));
+    }
+
+    /// <summary>
     /// Download all artifacts — for a single artifact serves it directly,
     /// for multiple artifacts creates a zip archive.
     /// </summary>

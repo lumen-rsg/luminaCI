@@ -7,45 +7,45 @@
 <PageTitle>Dashboard — Lumina CI</PageTitle>
 
 <div class="page-header">
-    <h1>🏠 Dashboard</h1>
+    <h1>Dashboard</h1>
     <div class="page-header-actions">
-        <a href="/pipelines" class="btn btn-outline-success">▶ New Build</a>
-        <button class="btn btn-outline-secondary" @onclick="RefreshAll">🔄 Refresh</button>
+        <a href="/pipelines" class="btn btn-outline-success">New Build</a>
+        <button class="btn btn-outline-secondary" @onclick="RefreshAll">Refresh</button>
     </div>
 </div>
 
 <!-- Stats -->
 <div class="stats-grid animate-slide-in">
     <div class="stat-card">
-        <div class="stat-icon blue">📦</div>
+        <div class="stat-icon blue"><span class="stat-icon-inner"></span></div>
         <div class="stat-info">
             <div class="stat-value">@(_buildQueue?.Data?.QueuedCount ?? 0)</div>
             <div class="stat-label">In Queue</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon yellow">⚡</div>
+        <div class="stat-icon yellow"><span class="stat-icon-inner"></span></div>
         <div class="stat-info">
             <div class="stat-value">@(_buildQueue?.Data?.RunningCount ?? 0)</div>
             <div class="stat-label">Building</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon green">✅</div>
+        <div class="stat-icon green"><span class="stat-icon-inner"></span></div>
         <div class="stat-info">
             <div class="stat-value">@(_successCount)</div>
             <div class="stat-label">Completed</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon red">❌</div>
+        <div class="stat-icon red"><span class="stat-icon-inner"></span></div>
         <div class="stat-info">
             <div class="stat-value">@(_failedCount)</div>
             <div class="stat-label">Failed</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon purple">📈</div>
+        <div class="stat-icon purple"><span class="stat-icon-inner"></span></div>
         <div class="stat-info">
             <div class="stat-value">@(_successRate)%</div>
             <div class="stat-label">Success Rate</div>
@@ -58,7 +58,7 @@
 {
     <div class="card mb-4 animate-slide-in">
         <div class="card-header">
-            <h3>📊 Build Trend</h3>
+            <h3>Build Trend</h3>
             <span class="text-xs text-muted">Last @(_builds.Data.Builds.Take(20).Count()) builds</span>
         </div>
         <div class="card-body">
@@ -89,7 +89,7 @@
     <div class="col-md-8">
         <div class="card animate-slide-in">
             <div class="card-header">
-                <h3>⚡ Executors</h3>
+                <h3>Executors</h3>
                 <span class="text-xs text-muted">@(_buildQueue?.Data?.RunningCount ?? 0) running</span>
             </div>
             <div class="card-body">
@@ -115,7 +115,9 @@
                 else
                 {
                     <div class="text-center p-4 text-muted">
-                        <div style="font-size:2rem;opacity:0.3;margin-bottom:8px;">💤</div>
+                        <div style="opacity:0.3;margin-bottom:8px;">
+                            <span class="status-dot pending"></span>
+                        </div>
                         <div>No builds running</div>
                     </div>
                 }
@@ -125,8 +127,8 @@
         <!-- Recent Builds -->
         <div class="card animate-slide-in">
             <div class="card-header">
-                <h3>📋 Build History</h3>
-                <a href="/builds" class="text-xs">View all →</a>
+                <h3>Build History</h3>
+                <a href="/builds" class="text-xs">View all &rarr;</a>
             </div>
             <div class="card-body p-0">
                 @if (_builds?.Data?.Builds != null && _builds.Data.Builds.Any())
@@ -150,10 +152,10 @@
                                     BuildStatus.Failed => "var(--accent-red)",
                                     BuildStatus.Building => "var(--accent)",
                                     BuildStatus.Queued => "var(--accent-yellow)",
-                                    _ => "var(--border-light)"
+                                    _ => "var(--text-primary)"
                                 };
                                 <tr onclick="window.location.href='/builds/@build.Id'" style="cursor:pointer;">
-                                    <td style="width:6px;padding:0;background:@statusColor;"></td>
+                                    <td style="width:6px;padding:0;background:@statusColor;border-radius:3px;"></td>
                                     <td>
                                         <code>@build.Id.ToString()[..8]</code>
                                         <div class="text-xs text-muted">@build.SpecName</div>
@@ -180,7 +182,7 @@
                 else
                 {
                     <div class="empty-state">
-                        <div class="empty-state-icon">📦</div>
+                        <div class="empty-state-icon"><span class="icon-inner"></span></div>
                         <h3>No builds yet</h3>
                         <p>Create a pipeline and trigger a build to get started.</p>
                     </div>
@@ -193,7 +195,7 @@
     <div class="col-md-4">
         <div class="card animate-slide-in">
             <div class="card-header">
-                <h3>📥 Build Queue</h3>
+                <h3>Build Queue</h3>
                 <span class="badge bg-warning">@(_buildQueue?.Data?.QueuedCount ?? 0)</span>
             </div>
             <div class="card-body">
@@ -230,8 +232,8 @@
                     if (!_buildQueue.Data.Queued.Any() && !_buildQueue.Data.Running.Any())
                     {
                         <div class="text-center p-3 text-muted">
-                            <div style="font-size:1.5rem;opacity:0.3;">✓</div>
-                            <div class="text-sm">Queue is empty</div>
+                            <span class="status-dot success"></span>
+                            <div class="text-sm mt-2">Queue is empty</div>
                         </div>
                     }
                 }
@@ -241,7 +243,7 @@
         <!-- Quick Stats -->
         <div class="card animate-slide-in">
             <div class="card-header">
-                <h3>📈 Statistics</h3>
+                <h3>Statistics</h3>
             </div>
             <div class="card-body">
                 <div class="d-flex justify-content-between align-items-center mb-3">

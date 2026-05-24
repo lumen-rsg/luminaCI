@@ -7,6 +7,9 @@
     <title>Lumina.WebApp</title>
     <base href="/" />
     <link rel="preload" id="webassembly" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Elms+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="css/app.css" />
     <link rel="icon" type="image/png" href="favicon.png" />
@@ -24,6 +27,52 @@
         // Named function for Blazor JSInterop (CSP-safe, no eval needed)
         window.setLuminaTheme = function(theme) {
             document.documentElement.setAttribute('data-bs-theme', theme);
+        };
+
+        // SSE build log streaming — EventSource with JWT token via query string
+        window.buildLogStream = null;
+
+        window.connectBuildLogStream = function(buildId, dotNetRef) {
+            // Close any existing connection
+            if (window.buildLogStream) {
+                window.buildLogStream.close();
+                window.buildLogStream = null;
+            }
+
+            var token = localStorage.getItem('lumina_token');
+            if (!token) return false;
+
+            var url = '/api/builds/' + buildId + '/logs/stream?access_token=' + encodeURIComponent(token);
+            var source = new EventSource(url);
+            window.buildLogStream = source;
+
+            source.onmessage = function(event) {
+                var data = event.data;
+                if (data === '[STREAM_END]') {
+                    source.close();
+                    window.buildLogStream = null;
+                    dotNetRef.invokeMethodAsync('OnStreamEnd');
+                    return;
+                }
+                dotNetRef.invokeMethodAsync('OnLogLine', data);
+            };
+
+            source.onerror = function(event) {
+                // EventSource auto-reconnects, but if readyState is CLOSED, it's done
+                if (source.readyState === EventSource.CLOSED) {
+                    window.buildLogStream = null;
+                    dotNetRef.invokeMethodAsync('OnStreamEnd');
+                }
+            };
+
+            return true;
+        };
+
+        window.disconnectBuildLogStream = function() {
+            if (window.buildLogStream) {
+                window.buildLogStream.close();
+                window.buildLogStream = null;
+            }
         };
 
         // Authenticated file download — fetches with JWT token and triggers browser download
@@ -81,7 +130,7 @@
     <div id="blazor-error-ui">
         An unhandled error has occurred.
         <a href="." class="reload">Reload</a>
-        <span class="dismiss">🗙</span>
+        <a href="" class="dismiss">&#x2715;</a>
     </div>
     <script>
         // Auth guard: redirect to /login if no token (before Blazor loads)

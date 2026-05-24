@@ -10,7 +10,7 @@
 
 <div class="page-header">
     <h1>
-        <a href="/builds" class="text-decoration-none text-muted">📦 Builds</a>
+        <a href="/builds" class="text-decoration-none text-muted">Builds</a>
         <span class="mx-2 text-muted" style="font-weight:300;">/</span>
         <code style="font-size:0.85em">@Id.ToString()[..8]</code>
     </h1>
@@ -28,17 +28,17 @@
                     }
                     else
                     {
-                        <span>🚫 Cancel</span>
+                        <span>Cancel</span>
                     }
                 </button>
             }
             @if (_build.Data.Artifacts.Any())
             {
-                <button class="btn btn-outline-success btn-sm" @onclick="DownloadAllArtifacts">💾 Download RPM</button>
+                <button class="btn btn-outline-success btn-sm" @onclick="DownloadAllArtifacts">Download RPM</button>
             }
-            <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadSpec">📄 Spec</button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadSpec">Spec</button>
         }
-        <button class="btn btn-outline-secondary btn-sm" @onclick="GoBack">← Back</button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="GoBack">&larr; Back</button>
     </div>
 </div>
 
@@ -71,7 +71,7 @@ else
                         }
                         else
                         {
-                            <span style="font-size:1.5em;">@GetStatusIcon(build.Status)</span>
+                            <span class="@GetStatusDotClass(build.Status)"></span>
                         }
                         <h3 class="mb-0 @GetStatusTextClass(build.Status)">@build.Status</h3>
                         @if (isRunning)
@@ -89,7 +89,7 @@ else
                         </tr>
                         <tr style="border:none;">
                             <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Pipeline:</td>
-                            <td style="border:none;padding:4px 8px;"><a href="/builds" class="text-sm"><code>@build.PipelineId.ToString()[..8]…</code></a></td>
+                            <td style="border:none;padding:4px 8px;"><a href="/builds" class="text-sm"><code>@build.PipelineId.ToString()[..8]...</code></a></td>
                         </tr>
                         <tr style="border:none;">
                             <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Triggered By:</td>
@@ -100,11 +100,11 @@ else
                             <tr style="border:none;">
                                 <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Commit:</td>
                                 <td style="border:none;padding:4px 8px;">
-                                    <span class="badge bg-info me-1">🔗</span>
+                                    <span class="badge bg-info me-1">Git</span>
                                     <code style="font-size:0.85em;">@build.CommitSha</code>
                                     @if (!string.IsNullOrEmpty(build.Branch))
                                     {
-                                        <span class="badge bg-secondary ms-2">🌿 @build.Branch</span>
+                                        <span class="badge bg-secondary ms-2">@build.Branch</span>
                                     }
                                 </td>
                             </tr>
@@ -123,7 +123,7 @@ else
                             <tr style="border:none;">
                                 <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Author:</td>
                                 <td style="border:none;padding:4px 8px;">
-                                    👤 @build.CommitAuthor
+                                    @build.CommitAuthor
                                 </td>
                             </tr>
                         }
@@ -134,7 +134,7 @@ else
                                 <td style="border:none;padding:4px 8px;">
                                     @if (build.SourceUrl.StartsWith("git://"))
                                     {
-                                        <span class="badge bg-info me-1">🔗 Git</span>
+                                        <span class="badge bg-info me-1">Git</span>
                                         <code style="font-size:0.8em;">@build.SourceUrl</code>
                                     }
                                     else
@@ -147,8 +147,8 @@ else
                         @if (!string.IsNullOrEmpty(build.ContainerId))
                         {
                             <tr style="border:none;">
-                                <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Container:</td>
-                                <td style="border:none;padding:4px 8px;"><code style="font-size:0.75em;">@build.ContainerId.ToString()[..16]…</code></td>
+                                <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Container:</td>
+                                <td style="border:none;padding:4px 8px;"><code style="font-size:0.75em;">@build.ContainerId.ToString()[..16]...</code></td>
                             </tr>
                         }
                     </table>
@@ -187,7 +187,7 @@ else
                                 }
                                 else
                                 {
-                                    <span class="text-muted">—</span>
+                                    <span class="text-muted">&mdash;</span>
                                 }
                             </td>
                         </tr>
@@ -203,13 +203,13 @@ else
         @foreach (var stage in GetStages(build))
         {
             <div class="stage-item @stage.CssClass">
-                <div class="stage-icon">@stage.Icon</div>
+                <div class="stage-icon"><span class="@stage.DotClass"></span></div>
                 <div class="stage-name">@stage.Name</div>
                 <div class="stage-status @stage.TextClass">@stage.Status</div>
             </div>
             @if (stage != GetStages(build).Last())
             {
-                <div class="stage-connector">→</div>
+                <div class="stage-connector">&rarr;</div>
             }
         }
     </div>
@@ -236,7 +236,7 @@ else
                         @foreach (var artifact in build.Artifacts)
                         {
                             <tr>
-                                <td><code style="font-size:0.75em;" title="@artifact.Id.ToString()">@artifact.Id.ToString()[..8]…</code></td>
+                                <td><code style="font-size:0.75em;" title="@artifact.Id.ToString()">@artifact.Id.ToString()[..8]...</code></td>
                                 <td><strong class="text-bright">@artifact.FileName</strong></td>
                                 <td class="text-sm">@FormatFileSize(artifact.FileSize)</td>
                                 <td>
@@ -246,13 +246,13 @@ else
                                     }
                                     else
                                     {
-                                        <span class="text-muted">—</span>
+                                        <span class="text-muted">&mdash;</span>
                                     }
                                 </td>
                                 <td>
                                     @if (!string.IsNullOrEmpty(artifact.PgpSignature))
                                     {
-                                        <span class="badge bg-success">✅ Signed</span>
+                                        <span class="badge bg-success">Signed</span>
                                     }
                                     else
                                     {
@@ -263,7 +263,7 @@ else
                                     <span class="@GetScanBadge(artifact.CveScanStatus)">@artifact.CveScanStatus</span>
                                 </td>
                                 <td>
-                                    <button class="btn btn-sm btn-outline-success" @onclick="() => DownloadArtifact(artifact.FileName)" title="Download @artifact.FileName">💾</button>
+                                    <button class="btn btn-sm btn-outline-success" @onclick="() => DownloadArtifact(artifact.FileName)" title="Download @artifact.FileName">Download</button>
                                 </td>
                             </tr>
                         }
@@ -276,7 +276,7 @@ else
     <!-- Publish to Repository -->
     @if (build.Status == BuildStatus.Success && build.Artifacts.Any())
     {
-        <div class="section-title mt-4">📂 Publish to Repository</div>
+        <div class="section-title mt-4">Publish to Repository</div>
         <div class="card animate-slide-in">
             <div class="card-body">
                 @if (_publishMessage != null)
@@ -323,7 +323,7 @@ else
                                 }
                                 else
                                 {
-                                    <span>📤 Publish</span>
+                                    <span>Publish</span>
                                 }
                             </button>
                         </div>
@@ -337,18 +337,18 @@ else
     <div class="section-title mt-4">Console Output</div>
     <div class="console-output animate-slide-in">
         <div class="console-header">
-            <span>📋 Build Logs</span>
+            <span>Build Logs</span>
             <div class="d-flex gap-2">
                 @if (isRunning)
                 {
                     <span class="badge bg-primary building-pulse">
                         <span class="spinner-border spinner-border-sm" style="width:12px;height:12px;border-width:1px;"></span>
-                        @(_polling ? "Live" : "Connecting...")
+                        @(_streaming ? "Live" : "Connecting...")
                     </span>
                 }
                 @if (_logLines.Count > 0)
                 {
-                    <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;padding:2px 8px;" @onclick="CopyLogs">📋 Copy</button>
+                    <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;padding:2px 8px;" @onclick="CopyLogs">Copy</button>
                 }
             </div>
         </div>
@@ -385,8 +385,9 @@ else
     private ApiResponse<BuildJobResponse>? _build;
     private bool _loading = true;
     private bool _cancelling = false;
-    private bool _polling = false;
-    private Timer? _pollTimer;
+    private bool _streaming = false;
+    private Timer? _statusTimer;
+    private DotNetObjectReference<BuildDetail>? _dotNetRef;
 
     // Log state
     private List<string> _logLines = new();
@@ -402,44 +403,87 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadBuild();
-        StartPollingIfRunning();
+        StartStreamingIfRunning();
     }
 
-    private void StartPollingIfRunning()
+    private void StartStreamingIfRunning()
     {
         var isRunning = _build?.Data?.Status == BuildStatus.Building ||
                         _build?.Data?.Status == BuildStatus.Queued;
 
         if (!isRunning) return;
 
-        _polling = true;
-        _pollTimer = new Timer(async _ =>
+        // Connect SSE for real-time log streaming
+        _dotNetRef = DotNetObjectReference.Create(this);
+        _streaming = true;
+        StateHasChanged();
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("connectBuildLogStream", Id.ToString(), _dotNetRef);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to connect SSE stream for build {BuildId}", Id);
+                _streaming = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        });
+
+        // Slow status polling (every 5 seconds) to refresh build metadata (status, artifacts, duration)
+        _statusTimer = new Timer(async _ =>
         {
             await InvokeAsync(async () =>
             {
                 await LoadBuild();
                 StateHasChanged();
 
-                // Stop polling if build finished
                 var status = _build?.Data?.Status;
                 if (status != BuildStatus.Building && status != BuildStatus.Queued)
                 {
-                    StopPolling();
+                    StopStreaming();
                 }
             });
-        }, null, TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(100));
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
-    private void StopPolling()
+    [JSInvokable]
+    public void OnLogLine(string line)
     {
-        _polling = false;
-        _pollTimer?.Dispose();
-        _pollTimer = null;
+        InvokeAsync(() =>
+        {
+            _logLines.Add(line);
+            StateHasChanged();
+        });
+    }
+
+    [JSInvokable]
+    public void OnStreamEnd()
+    {
+        InvokeAsync(async () =>
+        {
+            StopStreaming();
+            // Final refresh to get complete build state
+            await LoadBuild();
+            StateHasChanged();
+        });
+    }
+
+    private void StopStreaming()
+    {
+        _streaming = false;
+        _statusTimer?.Dispose();
+        _statusTimer = null;
+        _dotNetRef?.Dispose();
+        _dotNetRef = null;
+        try { JS.InvokeVoidAsync("disconnectBuildLogStream"); } catch { }
     }
 
     public void Dispose()
     {
-        StopPolling();
+        StopStreaming();
     }
 
     private async Task LoadBuild()
@@ -456,19 +500,11 @@ else
                 catch { /* non-critical */ }
             }
 
-            // Update log lines from API data
-            if (_build?.Data != null && !string.IsNullOrEmpty(_build.Data.Logs))
+            // Update log lines from API data only when not streaming via SSE
+            // (SSE delivers log lines in real-time, so don't overwrite them)
+            if (!_streaming && _build?.Data != null && !string.IsNullOrEmpty(_build.Data.Logs))
             {
-                var newLines = CleanLogs(_build.Data.Logs);
-                if (newLines.Count != _logLines.Count)
-                {
-                    _logLines = newLines;
-                }
-                else if (newLines.Count > 0)
-                {
-                    // Check if content changed (for partial updates)
-                    _logLines = newLines;
-                }
+                _logLines = CleanLogs(_build.Data.Logs);
             }
         }
         catch (Exception ex)
@@ -490,8 +526,8 @@ else
             var result = await Api.CancelBuildAsync(Id);
             if (result?.Success == true)
             {
+                StopStreaming();
                 await LoadBuild();
-                StopPolling();
             }
         }
         catch (Exception ex)
@@ -514,20 +550,20 @@ else
             var result = await Api.PublishPackageAsync(_selectedArtifactId.Value, _selectedRepoId.Value, "admin");
             _publishSuccess = result?.Success == true;
             _publishMessage = _publishSuccess
-                ? $"✅ Published to repository successfully!"
-                : $"❌ Publish failed: {result?.Error ?? "Unknown error"}";
+                ? "Published to repository successfully!"
+                : $"Publish failed: {result?.Error ?? "Unknown error"}";
         }
         catch (Exception ex)
         {
             _publishSuccess = false;
-            _publishMessage = $"❌ Error: {ex.Message}";
+            _publishMessage = $"Error: {ex.Message}";
         }
         finally { _publishing = false; StateHasChanged(); }
     }
 
     private void GoBack() => Nav.NavigateTo("/builds");
 
-    private record StageInfo(string Name, string Icon, string Status, string CssClass, string TextClass);
+    private record StageInfo(string Name, string DotClass, string Status, string CssClass, string TextClass);
 
     private List<StageInfo> GetStages(BuildJobResponse build)
     {
@@ -540,7 +576,7 @@ else
         // Build stage
         stages.Add(new StageInfo(
             "Build",
-            isSuccess || (isRunning && hasArtifacts) ? "✅" : isFailed && !hasArtifacts ? "❌" : isRunning ? "🔨" : "⏳",
+            isSuccess || (isRunning && hasArtifacts) ? "status-dot success" : isFailed && !hasArtifacts ? "status-dot failed" : isRunning ? "status-dot running" : "status-dot pending",
             isSuccess || (isRunning && hasArtifacts) ? "Passed" : isFailed && !hasArtifacts ? "Failed" : isRunning ? "Running..." : "Pending",
             isSuccess || (isRunning && hasArtifacts) ? "stage-success" : isFailed && !hasArtifacts ? "stage-failed" : isRunning ? "stage-running" : "stage-pending",
             isSuccess || (isRunning && hasArtifacts) ? "text-success" : isFailed && !hasArtifacts ? "text-danger" : isRunning ? "text-primary" : "text-muted"
@@ -551,7 +587,7 @@ else
         var scanRunning = hasArtifacts && build.Artifacts.Any(a => a.CveScanStatus == ScanStatus.Running);
         stages.Add(new StageInfo(
             "CVE Scan",
-            scanDone ? "✅" : scanRunning ? "🔍" : isRunning || isSuccess ? "⏳" : "—",
+            scanDone ? "status-dot success" : scanRunning ? "status-dot running" : "status-dot pending",
             scanDone ? "Clean" : scanRunning ? "Scanning..." : isRunning || isSuccess ? "Pending" : "Skipped",
             scanDone ? "stage-success" : scanRunning ? "stage-running" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
             scanDone ? "text-success" : scanRunning ? "text-primary" : "text-muted"
@@ -561,7 +597,7 @@ else
         var signed = hasArtifacts && build.Artifacts.Any(a => !string.IsNullOrEmpty(a.PgpSignature));
         stages.Add(new StageInfo(
             "PGP Sign",
-            signed ? "✅" : isRunning ? "⏳" : isSuccess ? "⚠️" : "—",
+            signed ? "status-dot success" : "status-dot pending",
             signed ? "Signed" : isRunning ? "Pending" : isSuccess ? "Unsigned" : "Skipped",
             signed ? "stage-success" : isSuccess && !signed ? "stage-failed" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
             signed ? "text-success" : "text-muted"
@@ -570,7 +606,7 @@ else
         // Publish stage
         stages.Add(new StageInfo(
             "Publish",
-            isSuccess ? "✅" : isRunning ? "⏳" : "—",
+            isSuccess ? "status-dot success" : "status-dot pending",
             isSuccess ? "Published" : isRunning ? "Pending" : "Skipped",
             isSuccess ? "stage-success" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
             isSuccess ? "text-success" : "text-muted"
@@ -639,14 +675,14 @@ else
         _ => ""
     };
 
-    private string GetStatusIcon(BuildStatus s) => s switch
+    private string GetStatusDotClass(BuildStatus s) => s switch
     {
-        BuildStatus.Queued => "⏳",
-        BuildStatus.Building => "🔨",
-        BuildStatus.Success => "✅",
-        BuildStatus.Failed => "❌",
-        BuildStatus.Cancelled => "🚫",
-        _ => "❓"
+        BuildStatus.Queued => "status-dot queued",
+        BuildStatus.Building => "status-dot running",
+        BuildStatus.Success => "status-dot success",
+        BuildStatus.Failed => "status-dot failed",
+        BuildStatus.Cancelled => "status-dot pending",
+        _ => "status-dot"
     };
 
     private string GetStatusTextClass(BuildStatus s) => s switch
