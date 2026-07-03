@@ -40,8 +40,19 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await Theme.InitializeAsync();
+        await Auth.InitializeAsync();
         Theme.OnThemeChanged += StateHasChanged;
+
+        // Auth gate (SEC-05): now that the token lives in an HttpOnly cookie, we
+        // can't read it from localStorage before Blazor loads. Resolve the auth
+        // state from the server instead and bounce anonymous users to /login.
+        if (!Auth.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/login", forceLoad: true);
+            return;
+        }
+
+        await Theme.InitializeAsync();
     }
 
     private async Task ToggleTheme()

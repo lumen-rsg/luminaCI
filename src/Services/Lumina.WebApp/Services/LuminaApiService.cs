@@ -417,18 +417,4 @@ public class LuminaApiService
         var resp = await _http.DeleteAsync($"/api/extra-sources/pipeline/{pipelineId}");
         return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
     }
-
-    // === Auth ===
-    public async Task<string?> LoginAsync(string username, string password)
-    {
-        var resp = await _http.PostAsJsonAsync("/api/auth/login", new { username, password });
-        if (resp.IsSuccessStatusCode)
-        {
-            var result = await resp.Content.ReadFromJsonAsync<LoginResult>();
-            return result?.Token;
-        }
-        return null;
-    }
-
-    private record LoginResult(string Token, DateTime Expires);
 }

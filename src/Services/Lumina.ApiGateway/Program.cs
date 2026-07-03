@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Lumina.ApiGateway.Data;
+using Lumina.ApiGateway.Services;
 using Lumina.Shared.Models;
 using Lumina.Web.Shared;
 using Microsoft.EntityFrameworkCore;
@@ -36,6 +37,17 @@ try
     // User credential store (Postgres)
     builder.Services.AddDbContext<AuthDbContext>(options =>
         options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
+
+    // Redis distributed cache — backs the refresh-token store (SEC-05).
+    // The gateway already received Redis__ConnectionString in compose but never
+    // registered the cache; the refresh/revocation machinery needs it.
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = builder.Configuration["Redis:ConnectionString"] ?? "redis:6379";
+        options.InstanceName = "lumina:auth:";
+    });
+    builder.Services.AddSingleton<RefreshTokenStore>();
+    builder.Services.AddSingleton(new CookieAuthHelper(builder.Configuration, jwtKey));
 
     // Allow unlimited file uploads (extra sources can be large)
     builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
@@ -114,14 +126,43 @@ try
     }
 
     app.UseRateLimiter();
+
+    // Cookie -> Bearer conversion (SEC-05).
+    // The browser authenticates with the lumina_access HttpOnly cookie; the rest
+    // of the pipeline (JWT validation, YARP forwarding, downstream SEC-04
+    // re-validation) all speak "Authorization: Bearer". Promote the cookie to a
+    // header here so the shared JWT wiring stays untouched. A request carrying an
+    // explicit Authorization header (e.g. an API client) wins, so this only ever
+    // fills in the gap for browser traffic.
+    app.Use(async (ctx, next) =>
+    {
+        if (ctx.Request.Headers.Authorization.Count == 0 &&
+            ctx.Request.Cookies.TryGetValue(CookieAuthHelper.AccessCookie, out var cookieToken) &&
+            !string.IsNullOrWhiteSpace(cookieToken))
+        {
+            ctx.Request.Headers.Authorization = "Bearer " + cookieToken;
+        }
+        await next();
+    });
+
     app.UseAuthentication();
     app.UseAuthorization();
 
     app.MapReverseProxy();
     app.MapHealthChecks("/health");
 
-    // Login endpoint — verifies against the DB credential store and issues a JWT
-    app.MapPost("/api/auth/login", async (LoginRequest request, AuthDbContext db, IConfiguration config) =>
+    // Login endpoint — verifies against the DB credential store and issues:
+    //   • a short-lived access JWT inside the lumina_access HttpOnly cookie, and
+    //   • a revocable refresh token inside the lumina_refresh HttpOnly cookie.
+    // The raw token is NEVER returned in the response body, so client-side JS
+    // (and therefore XSS) cannot read it (SEC-05).
+    app.MapPost("/api/auth/login", async (
+        LoginRequest request,
+        HttpContext ctx,
+        AuthDbContext db,
+        IConfiguration config,
+        CookieAuthHelper cookies,
+        RefreshTokenStore refreshStore) =>
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
 
@@ -158,39 +199,100 @@ try
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
 
-        var issuer = config["Jwt:Issuer"] ?? "LuminaCI";
-        var audience = config["Jwt:Audience"] ?? "LuminaCI";
-        var expiryHours = int.TryParse(config["Jwt:ExpiryHours"], out var h) ? h : 8;
+        // Issue access + refresh, both HttpOnly/SameSite=Strict cookies.
+        var (accessJwt, accessExpiresUtc) = cookies.IssueAccessToken(user);
+        var refreshLifetime = TimeSpan.FromHours(int.TryParse(config["Jwt:RefreshHours"], out var rh) ? rh : 8);
+        var (refreshToken, refreshRecord) = await refreshStore.IssueAsync(user, refreshLifetime);
 
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.Name, user.Username),
-            new(ClaimTypes.Role, user.Role),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-        };
-
-        var credentials = new SigningCredentials(jwtKey, SecurityAlgorithms.HmacSha256);
-
-        var token = new JwtSecurityToken(
-            issuer: issuer,
-            audience: audience,
-            claims: claims,
-            expires: DateTime.UtcNow.AddHours(expiryHours),
-            signingCredentials: credentials
-        );
-
-        var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+        cookies.SetAccessCookie(ctx.Response, accessJwt, accessExpiresUtc);
+        cookies.SetRefreshCookie(ctx.Response, refreshToken, refreshRecord.ExpiresAt);
 
         return Results.Ok(new
         {
-            token = tokenString,
-            expires = token.ValidTo,
             username = user.Username,
-            role = user.Role
+            role = user.Role,
+            expires = accessExpiresUtc
         });
     })
     .AllowAnonymous()
     .RequireRateLimiting("auth-login");
+
+    // Refresh endpoint — exchanges a valid refresh cookie for a new access cookie
+    // (and rotates the refresh token). Called by the WASM client when the access
+    // token has expired, or proactively on app startup.
+    app.MapPost("/api/auth/refresh", async (
+        HttpContext ctx,
+        IConfiguration config,
+        CookieAuthHelper cookies,
+        RefreshTokenStore refreshStore) =>
+    {
+        if (!ctx.Request.Cookies.TryGetValue(CookieAuthHelper.RefreshCookie, out var refreshToken) ||
+            string.IsNullOrWhiteSpace(refreshToken))
+        {
+            return Results.Json(new { error = "No refresh token" }, statusCode: 401);
+        }
+
+        var refreshLifetime = TimeSpan.FromHours(int.TryParse(config["Jwt:RefreshHours"], out var rh) ? rh : 8);
+        var rotated = await refreshStore.RotateAsync(refreshToken, refreshLifetime);
+        if (rotated is null)
+        {
+            // Invalid/expired/revoked — clear the stale cookies.
+            cookies.ClearCookies(ctx.Response);
+            return Results.Json(new { error = "Invalid refresh token" }, statusCode: 401);
+        }
+
+        var (newRefresh, record) = rotated.Value;
+
+        // Reconstruct a User purely to sign a fresh access JWT.
+        var user = new User
+        {
+            Id = record.UserId,
+            Username = record.Username,
+            Role = record.Role
+        };
+        var (accessJwt, accessExpiresUtc) = cookies.IssueAccessToken(user);
+        cookies.SetAccessCookie(ctx.Response, accessJwt, accessExpiresUtc);
+        cookies.SetRefreshCookie(ctx.Response, newRefresh, record.ExpiresAt);
+
+        return Results.Ok(new
+        {
+            username = record.Username,
+            role = record.Role,
+            expires = accessExpiresUtc
+        });
+    })
+    .AllowAnonymous();
+
+    // Logout endpoint — revokes the refresh token server-side and clears cookies.
+    app.MapPost("/api/auth/logout", async (HttpContext ctx, RefreshTokenStore refreshStore, CookieAuthHelper cookies) =>
+    {
+        if (ctx.Request.Cookies.TryGetValue(CookieAuthHelper.RefreshCookie, out var refreshToken))
+        {
+            await refreshStore.RevokeAsync(refreshToken);
+        }
+        cookies.ClearCookies(ctx.Response);
+        return Results.Ok(new { ok = true });
+    })
+    .AllowAnonymous();
+
+    // /me — lets the WASM client learn auth state without ever reading the
+    // cookie. Returns 200 { username, role } when the access cookie is valid
+    // (cookie->bearer promotion above makes the user available here), 401
+    // otherwise (the client then tries /refresh).
+    app.MapGet("/api/auth/me", (HttpContext ctx) =>
+    {
+        var user = ctx.User;
+        if (user.Identity?.IsAuthenticated != true)
+        {
+            return Results.Unauthorized();
+        }
+        return Results.Ok(new
+        {
+            username = user.Identity.Name,
+            role = user.FindFirst(ClaimTypes.Role)?.Value
+        });
+    })
+    .RequireAuthorization("default");
 
     app.Run();
 }

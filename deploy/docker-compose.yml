@@ -101,7 +101,9 @@ services:
       - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
       - Jwt__Issuer=LuminaCI
       - Jwt__Audience=LuminaCI
-      - Jwt__ExpiryHours=8
+      - Jwt__AccessMinutes=${JWT_ACCESS_MINUTES:-15}
+      - Jwt__RefreshHours=${JWT_REFRESH_HOURS:-8}
+      - Jwt__CookieSecure=${JWT_COOKIE_SECURE:-true}
       - Auth__AdminUsername=${ADMIN_USERNAME:-admin}
       - Auth__AdminPassword=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env (see deploy/.env.example)}
       - Auth__DeveloperUsername=${DEVELOPER_USERNAME:-developer}
