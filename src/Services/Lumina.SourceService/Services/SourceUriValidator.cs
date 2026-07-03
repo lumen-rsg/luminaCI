@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using Lumina.Shared.Extensions;
@@ -89,12 +90,18 @@ public class SourceUriValidator
         // also forwarded to external processes via ArgumentList (which is not
         // shell-vulnerable), but rejecting metacharacters here keeps malicious
         // branch names from even reaching the tools.
-        if (branch is not null && ContainsShellMetacharacters(branch))
-            throw new SourceValidationException(
-                $"Source branch contains forbidden characters: {branch}");
-        if (ContainsShellMetacharacters(url))
-            throw new SourceValidationException(
-                $"Source URL contains forbidden characters: {url}");
+        //
+        // Branch names are validated with the same allowlist the source fetcher
+        // uses (ProcessArgumentSanitizer.ValidateGitReference) — no denylist to
+        // bypass and no legitimate ref silently rejected.
+        string? safeBranch = null;
+        if (branch is not null)
+            safeBranch = ProcessArgumentSanitizer.ValidateGitReference(branch);
+
+        // The URL itself is parsed by Uri.TryCreate below; before that, only
+        // reject control characters (NUL/newline/tab). The old denylist rejected
+        // '(' and other characters that can appear in legitimate query strings.
+        AssertNoControlCharacters(url, "Source URL");
 
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             throw new SourceValidationException(
@@ -118,7 +125,7 @@ public class SourceUriValidator
         if (_blockPrivateRanges)
             await AssertHostPublicAsync(host, url);
 
-        return new ValidatedSource(uri.ToString(), type, branch, null);
+        return new ValidatedSource(uri.ToString(), type, safeBranch, null);
     }
 
     private ValidatedSource ValidateLocal(string path)
@@ -219,14 +226,13 @@ public class SourceUriValidator
     private static bool IsUniqueLocalV6(byte[] b) =>
         (b[0] & 0xFE) == 0xFC; // fc00::/7
 
-    private static bool ContainsShellMetacharacters(string value)
+    private static void AssertNoControlCharacters(string value, string fieldName)
     {
-        var dangerousChars = new[] { '`', '$', ';', '|', '&', '>', '<', '(', ')', '{', '}', '!', '\n', '\r', '\0' };
-        foreach (var c in dangerousChars)
+        foreach (var c in value)
         {
-            if (value.Contains(c))
-                return true;
+            if (char.IsControl(c))
+                throw new SourceValidationException(
+                    $"{fieldName} contains control character U+{((int)c).ToString("X4", CultureInfo.InvariantCulture)}.");
         }
-        return value.Contains("$(") || value.Contains("${");
     }
 }

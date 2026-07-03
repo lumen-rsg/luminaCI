@@ -28,10 +28,14 @@ public class PgpSigningService
 
     public async Task<SecurityKey> GenerateKeyAsync(string keyName, string email, string passphrase, string createdBy)
     {
-        // SECURITY: Sanitize all user inputs to prevent GPG batch script injection
-        var safeKeyName = ProcessArgumentSanitizer.SanitizeGpgField(keyName, nameof(keyName));
-        var safeEmail = ProcessArgumentSanitizer.SanitizeGpgField(email, nameof(email));
-        var safePassphrase = ProcessArgumentSanitizer.SanitizeGpgField(passphrase, nameof(passphrase));
+        // SECURITY: Validate all user inputs against strict allowlists to prevent
+        // GPG batch script injection. The old SanitizeGpgField used a shell-metachar
+        // denylist that wrongly rejected legitimate names (parentheses, accents);
+        // the per-field validators below define the exact character set each field
+        // may contain, so there is nothing to bypass.
+        var safeKeyName = ProcessArgumentSanitizer.ValidateKeyName(keyName);
+        var safeEmail = ProcessArgumentSanitizer.ValidateEmail(email);
+        var safePassphrase = ProcessArgumentSanitizer.ValidateGpgPassphrase(passphrase);
 
         var keyId = Guid.NewGuid().ToString("N")[..16];
         var keyDir = _config["Gpg:KeyDirectory"] ?? "/app/keys";
