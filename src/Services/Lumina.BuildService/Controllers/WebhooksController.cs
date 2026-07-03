@@ -28,14 +28,24 @@ public class WebhooksController : ControllerBase
     }
 
     /// <summary>
+    /// Hard ceiling on a webhook request body. Webhooks carry push *metadata*
+    /// (refs, commit ids, author) — never source — so 1 MiB is generous and keeps
+    /// an anonymous caller from OOM-ing the service with a multi-MB JSON blob.
+    /// </summary>
+    private const int MaxWebhookBodyBytes = 1 * 1024 * 1024; // 1 MiB
+
+    /// <summary>
     /// Generic webhook endpoint for Git push events.
     /// Supports GitHub, GitLab, and Forgejo/Gitea webhook formats.
     /// POST /api/webhooks/{pipelineId}
     /// </summary>
+    // RequestSizeLimit is enforced by Kestrel at the transport, so an oversized
+    // body is rejected before it is ever buffered/parsed. The in-action cap below
+    // is defense-in-depth for hosts that ignore the attribute / lying clients.
     [HttpPost("{pipelineId:guid}")]
-    public async Task<ActionResult<ApiResponse<BuildJobResponse?>>> HandleWebhook(
-        Guid pipelineId,
-        [FromBody] JsonElement payload)
+    [RequestSizeLimit(MaxWebhookBodyBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxWebhookBodyBytes)]
+    public async Task<ActionResult<ApiResponse<BuildJobResponse?>>> HandleWebhook(Guid pipelineId)
     {
         _logger.LogInformation("Webhook received for pipeline {PipelineId}", pipelineId);
 
@@ -43,14 +53,48 @@ public class WebhooksController : ControllerBase
         if (pipeline == null)
             return NotFound(new ApiResponse<BuildJobResponse?>(false, null, "Pipeline not found", null));
 
-        // Verify webhook secret if configured
+        // Read the RAW request body once, under a hard cap. We deliberately do NOT
+        // use [FromBody] JsonElement here:
+        //   • It would parse the entire document up front (before any signature
+        //     check), so an unauthenticated caller could push a multi-MB payload
+        //     and OOM the service.
+        //   • Verifying over payload.GetRawText() materializes the whole document
+        //     again AND recomputes the HMAC over a re-serialized representation
+        //     that does not match the bytes the provider actually signed.
+        // Reading the raw bytes lets us verify the HMAC over exactly what the
+        // provider signed, and only then parse.
+        var rawBody = await ReadBodyWithCapAsync(Request.Body, MaxWebhookBodyBytes, HttpContext.RequestAborted);
+        if (rawBody is null)
+        {
+            _logger.LogWarning(
+                "Webhook for pipeline {PipelineId} rejected: body exceeds {Limit} bytes",
+                pipelineId, MaxWebhookBodyBytes);
+            return StatusCode(413, new ApiResponse<BuildJobResponse?>(false, null, "Webhook payload too large", null));
+        }
+
+        // Verify webhook secret over the RAW bytes if configured. This runs BEFORE
+        // the body is parsed, so an invalid-signature request never reaches the
+        // JSON parser.
         if (!string.IsNullOrEmpty(pipeline.WebhookSecret))
         {
-            if (!VerifySignature(pipeline.WebhookSecret, payload))
+            if (!VerifySignature(pipeline.WebhookSecret, rawBody))
             {
                 _logger.LogWarning("Webhook signature verification failed for pipeline {PipelineId}", pipelineId);
                 return Unauthorized(new ApiResponse<BuildJobResponse?>(false, null, "Invalid signature", null));
             }
+        }
+
+        // Signature verified (or no secret configured) — safe to parse now.
+        JsonElement payload;
+        try
+        {
+            using var doc = JsonDocument.Parse(rawBody);
+            payload = doc.RootElement.Clone(); // keep alive past the using
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Webhook body for pipeline {PipelineId} is not valid JSON", pipelineId);
+            return BadRequest(new ApiResponse<BuildJobResponse?>(false, null, "Invalid JSON payload", null));
         }
 
         // Extract info from webhook payload
@@ -120,7 +164,33 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private bool VerifySignature(string secret, JsonElement payload)
+    /// <summary>
+    /// Reads <paramref name="stream"/> to end into a byte array, aborting (and
+    /// returning <c>null</c>) as soon as <paramref name="maxBytes"/> is exceeded.
+    /// The cap is enforced on bytes actually read, so an attacker streaming a
+    /// huge body is cut off mid-stream rather than after buffering it whole.
+    /// </summary>
+    private static async Task<byte[]?> ReadBodyWithCapAsync(Stream stream, int maxBytes, CancellationToken ct)
+    {
+        // If the client advertised a Content-Length, reject oversize up front
+        // without reading a single byte.
+        var cap = (long)maxBytes;
+        if (stream.CanSeek && stream.Length > cap)
+            return null;
+
+        using var ms = new MemoryStream(capacity: Math.Min(maxBytes, 8192));
+        var buffer = new byte[8192];
+        int read;
+        while ((read = await stream.ReadAsync(buffer, ct)) > 0)
+        {
+            if (ms.Length + read > cap)
+                return null; // exceeded cap — refuse without persisting the rest
+            await ms.WriteAsync(buffer.AsMemory(0, read), ct);
+        }
+        return ms.Length == 0 ? Array.Empty<byte>() : ms.ToArray();
+    }
+
+    private bool VerifySignature(string secret, byte[] rawBody)
     {
         // GitHub: X-Hub-Signature-256 header
         // GitLab: X-Gitlab-Token header
@@ -134,15 +204,15 @@ public class WebhooksController : ControllerBase
             return CryptographicOperations.FixedTimeEquals(tokenBytes, secretBytes);
         }
 
-        // Check GitHub/Forgejo HMAC signature
+        // Check GitHub/Forgejo HMAC signature. The HMAC is computed over the RAW
+        // request bytes the provider signed, not a re-serialized representation.
         var signatureHeader = Request.Headers["X-Hub-Signature-256"].FirstOrDefault()
             ?? Request.Headers["X-Forgejo-Signature"].FirstOrDefault();
 
         if (signatureHeader != null)
         {
-            var payloadBytes = Encoding.UTF8.GetBytes(payload.GetRawText());
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-            var hash = hmac.ComputeHash(payloadBytes);
+            var hash = hmac.ComputeHash(rawBody);
             var computedSig = $"sha256={Convert.ToHexString(hash).ToLowerInvariant()}";
 
             // SECURITY: Constant-time comparison to prevent timing attacks

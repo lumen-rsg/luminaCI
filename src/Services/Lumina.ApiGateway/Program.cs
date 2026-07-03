@@ -51,15 +51,24 @@ try
     builder.Services.AddSingleton<RefreshTokenStore>();
     builder.Services.AddSingleton(new CookieAuthHelper(builder.Configuration, jwtKey));
 
-    // Allow unlimited file uploads (extra sources can be large)
-    builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
-    {
-        options.MultipartBodyLengthLimit = long.MaxValue;
-        options.ValueLengthLimit = int.MaxValue;
-    });
+    // Request body limits.
+    //
+    // Kestrel's MaxRequestBodySize and FormOptions.MultipartBodyLengthLimit are
+    // process-wide; setting them to long.MaxValue (as this previously did) opens
+    // EVERY route to unbounded bodies — so /api/auth/login, /api/webhooks, etc.
+    // could be OOM'd with no valid credential. Instead we set a generous process
+    // default (well above any legitimate JSON) and then raise the limit only for
+    // the two genuine upload routes in the pipeline below (SEC-015).
+    //
+    //   • /api/repository/upload    — package uploads (capped to 500 MiB at the
+    //     downstream RepositoryService, so mirror that here rather than infinity)
+    //   • /api/extra-sources/...    — extra build sources (unbounded downstream)
+    //
+    // Every other route is bounded by the Kestrel default below.
+    const long DefaultMaxRequestBodySize = 64 * 1024 * 1024; // 64 MiB process-wide ceiling
     builder.WebHost.ConfigureKestrel(options =>
     {
-        options.Limits.MaxRequestBodySize = long.MaxValue;
+        options.Limits.MaxRequestBodySize = DefaultMaxRequestBodySize;
         options.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(30);
         options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(30);
     });
@@ -207,6 +216,41 @@ try
 
     app.UseAuthentication();
     app.UseAuthorization();
+
+    // Per-route request body limits (SEC-015 follow-up).
+    //
+    // The Kestrel process-wide MaxRequestBodySize is a transport-level ceiling
+    // applied to every connection. We set it to a modest default (above) so that
+    // non-upload routes (auth, webhooks, build control...) reject oversized
+    // bodies at the door. The genuine upload routes need more, so here we raise
+    // the per-request limit ONLY for those paths, before YARP forwards them.
+    //
+    // IRequestBodySizeFeature.MaxRequestBodySize is nullable: null means "no
+    // limit", a value caps it. Setting it here overrides the Kestrel default for
+    // just this request without affecting any other route.
+    //
+    // /api/repository/upload mirrors the downstream RepositoryService 500 MiB
+    // cap (going higher here would just let bytes through to be rejected later).
+    // /api/extra-sources/... is unbounded downstream, so it gets long.MaxValue.
+    app.Use(async (ctx, next) =>
+    {
+        var path = ctx.Request.Path.Value ?? string.Empty;
+        var feature = ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+        if (feature is not null && !feature.IsReadOnly)
+        {
+            if (path.StartsWith("/api/extra-sources/", StringComparison.OrdinalIgnoreCase))
+            {
+                feature.MaxRequestBodySize = long.MaxValue; // extra build sources
+            }
+            else if (path.StartsWith("/api/repository/", StringComparison.OrdinalIgnoreCase) &&
+                     path.EndsWith("/upload", StringComparison.OrdinalIgnoreCase))
+            {
+                feature.MaxRequestBodySize = 500L * 1024 * 1024; // 500 MiB, mirrors downstream
+            }
+            // else: keep the Kestrel default (DefaultMaxRequestBodySize above)
+        }
+        await next();
+    });
 
     app.MapReverseProxy();
     app.MapHealthChecks("/health");
