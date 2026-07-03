@@ -19,6 +19,7 @@ public class SourceController : ControllerBase
     private readonly ConfigParserService _configParser;
     private readonly SourceFetchService _fetchService;
     private readonly SourceStorageService _storageService;
+    private readonly SourceUriValidator _uriValidator;
     private readonly SourceDbContext _db;
     private readonly ILogger<SourceController> _logger;
     private readonly IConfiguration _config;
@@ -28,6 +29,7 @@ public class SourceController : ControllerBase
         ConfigParserService configParser,
         SourceFetchService fetchService,
         SourceStorageService storageService,
+        SourceUriValidator uriValidator,
         SourceDbContext db,
         ILogger<SourceController> logger,
         IConfiguration config,
@@ -36,6 +38,7 @@ public class SourceController : ControllerBase
         _configParser = configParser;
         _fetchService = fetchService;
         _storageService = storageService;
+        _uriValidator = uriValidator;
         _db = db;
         _logger = logger;
         _config = config;
@@ -117,6 +120,11 @@ public class SourceController : ControllerBase
 
         try
         {
+            // SECURITY: fail fast on unsafe sources (SSRF / arbitrary-file-read)
+            // before kicking off a background fetch. SourceFetchService validates
+            // again as defense-in-depth.
+            await _uriValidator.ValidateAsync(pkg.Source, pkg.SourceType, pkg.SourceBranch);
+
             var job = await _fetchService.FetchAsync(
                 pkg.Name,
                 pkg.Source,
@@ -125,6 +133,10 @@ public class SourceController : ControllerBase
                 request?.MaxRetries ?? 3);
 
             return Accepted(new SourceFetchResponse(job.Id, job.PackageName, job.Status, job.ErrorMessage));
+        }
+        catch (SourceValidationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -217,6 +229,9 @@ public class SourceController : ControllerBase
 
         try
         {
+            // SECURITY: validate the configured source before fetch/build.
+            await _uriValidator.ValidateAsync(pkg.Source, pkg.SourceType, pkg.SourceBranch);
+
             // 1. Find spec content — look in /app/specs/{name}.*, /app/Test/{name}.*, or use request
             var specContent = request?.SpecContent;
             var specName = request?.SpecName ?? $"{name}.spec";
@@ -273,6 +288,10 @@ public class SourceController : ControllerBase
             _logger.LogInformation("Published BuildTriggerFromConfig for package {Package}", name);
             return Ok(new ApiResponse<object>(true, new { package = name, version = packageVersion }, null, $"Build triggered for {name}"));
         }
+        catch (SourceValidationException ex)
+        {
+            return BadRequest(new ApiResponse<object>(false, null, ex.Message, null));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to build package {Package}", name);
@@ -317,6 +336,13 @@ public class SourceController : ControllerBase
     {
         try
         {
+            // SECURITY: reject unsafe sources (SSRF / arbitrary-file-read) at
+            // registration time so they can never be persisted to conf.ini and
+            // later fetched. SourceFetchService still validates as a backstop.
+            var sourceType = Enum.TryParse<Shared.Models.Enums.SourceType>(request.SourceType, true, out var st)
+                ? st : Shared.Models.Enums.SourceType.Http;
+            await _uriValidator.ValidateAsync(request.Source, sourceType, request.SourceBranch);
+
             var existing = _configParser.GetPackage(request.Name);
             if (existing != null)
                 return BadRequest(new { error = $"Package '{request.Name}' already exists in configuration" });
@@ -325,8 +351,7 @@ public class SourceController : ControllerBase
             {
                 Name = request.Name,
                 Source = request.Source,
-                SourceType = Enum.TryParse<Shared.Models.Enums.SourceType>(request.SourceType, true, out var st)
-                    ? st : Shared.Models.Enums.SourceType.Http,
+                SourceType = sourceType,
                 SourceBranch = request.SourceBranch,
                 BuildImage = request.BuildImage
             });
@@ -343,6 +368,10 @@ public class SourceController : ControllerBase
             }
 
             return Ok(new { message = $"Package '{request.Name}' added to configuration" });
+        }
+        catch (SourceValidationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
         {

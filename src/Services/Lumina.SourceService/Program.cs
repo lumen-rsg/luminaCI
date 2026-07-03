@@ -25,6 +25,7 @@ try
 
     // Services
     builder.Services.AddSingleton<ConfigParserService>();
+    builder.Services.AddSingleton<SourceUriValidator>();
     builder.Services.AddScoped<SourceStorageService>();
     builder.Services.AddScoped<SourceFetchService>();
 

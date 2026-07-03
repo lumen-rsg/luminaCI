@@ -18,6 +18,7 @@ public class SourceFetchService
     private readonly ILogger<SourceFetchService> _logger;
     private readonly IConfiguration _config;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly SourceUriValidator _uriValidator;
     private readonly string _tempDir;
     private readonly string _sourcesDir;
     private readonly int _maxRetries;
@@ -28,13 +29,15 @@ public class SourceFetchService
         SourceStorageService storage,
         ILogger<SourceFetchService> logger,
         IConfiguration config,
-        IServiceScopeFactory scopeFactory)
+        IServiceScopeFactory scopeFactory,
+        SourceUriValidator uriValidator)
     {
         _db = db;
         _storage = storage;
         _logger = logger;
         _config = config;
         _scopeFactory = scopeFactory;
+        _uriValidator = uriValidator;
         _tempDir = config["Source:TempDir"] ?? "/tmp/source-fetch";
         _sourcesDir = config["Source:SourcesDir"] ?? "/opt/lumina/sources";
         _maxRetries = int.TryParse(config["Source:MaxRetries"] ?? "3", out var r) ? r : 3;
@@ -198,15 +201,24 @@ public class SourceFetchService
     private async Task<FetchResult> FetchByProtocolAsync(
         string sourceUrl, SourceType sourceType, string? branch, string stagingDir)
     {
+        // SECURITY: single choke point for SSRF / arbitrary-file-read defense.
+        // conf.ini is user-writable, so sourceUrl/sourceType/branch are treated
+        // as untrusted here even though callers also validate. The validator
+        // canonicalizes the URL (and, for local sources, confines the path to
+        // the trusted root) before anything reaches a process or the filesystem.
+        var validated = await _uriValidator.ValidateAsync(sourceUrl, sourceType, branch);
+        var safeUrl = validated.LocalPath ?? validated.Url;
+        var safeBranch = validated.Branch;
+
         return sourceType switch
         {
-            SourceType.Git => await FetchGitAsync(sourceUrl, branch ?? "main", stagingDir),
+            SourceType.Git => await FetchGitAsync(safeUrl, safeBranch ?? "main", stagingDir),
             SourceType.Tar or SourceType.Http or SourceType.Ftp
-                => await FetchHttpAsync(sourceUrl, stagingDir),
-            SourceType.Rsync => await FetchRsyncAsync(sourceUrl, stagingDir),
-            SourceType.Svn => await FetchSvnAsync(sourceUrl, branch, stagingDir),
-            SourceType.Hg => await FetchHgAsync(sourceUrl, branch, stagingDir),
-            SourceType.Local => await FetchLocalAsync(sourceUrl, stagingDir),
+                => await FetchHttpAsync(safeUrl, stagingDir),
+            SourceType.Rsync => await FetchRsyncAsync(safeUrl, stagingDir),
+            SourceType.Svn => await FetchSvnAsync(safeUrl, safeBranch, stagingDir),
+            SourceType.Hg => await FetchHgAsync(safeUrl, safeBranch, stagingDir),
+            SourceType.Local => await FetchLocalAsync(safeUrl, stagingDir),
             _ => throw new NotSupportedException($"Source type {sourceType} is not supported")
         };
     }
@@ -219,8 +231,11 @@ public class SourceFetchService
 
         _logger.LogInformation("git clone {Url} (branch: {Branch})", url, branch);
 
+        // SECURITY: build argv via ArgumentList — never interpolate url/branch
+        // into a shell string. The trailing "--" prevents url/branch from being
+        // parsed as options if they start with "-".
         var result = await RunCommandAsync("git",
-            $"clone --depth 50 --branch {branch} \"{url}\" \"{cloneDir}\"",
+            new[] { "clone", "--depth", "50", "--branch", branch, "--", url, cloneDir },
             stagingDir, _timeoutMinutes);
 
         if (result.ExitCode != 0)
@@ -229,7 +244,9 @@ public class SourceFetchService
         // Initialize submodules if present
         if (File.Exists(Path.Combine(cloneDir, ".gitmodules")))
         {
-            await RunCommandAsync("git", "submodule update --init --recursive", cloneDir, _timeoutMinutes);
+            await RunCommandAsync("git",
+                new[] { "submodule", "update", "--init", "--recursive" },
+                cloneDir, _timeoutMinutes);
         }
 
         return new FetchResult(cloneDir, true);
@@ -242,16 +259,21 @@ public class SourceFetchService
 
         _logger.LogInformation("Downloading {Url} → {File}", url, fileName);
 
-        // Try curl first, fall back to wget
+        // SECURITY: url/targetPath are passed as discrete argv tokens; the URL
+        // has already passed SourceUriValidator (scheme/host/private-range).
+        // -L (follow redirects) is kept because legitimate upstreams (GitHub
+        // release assets, CDNs) redirect; the residual SSRF surface from a
+        // redirect to a private range is bounded by configuring a host
+        // allow-list (Source:AllowedHosts) for the initial resolution.
         var result = await RunCommandAsync("curl",
-            $"-L -f -o \"{targetPath}\" \"{url}\"",
+            new[] { "-L", "-f", "-o", targetPath, "--", url },
             stagingDir, _timeoutMinutes);
 
         if (result.ExitCode != 0)
         {
             _logger.LogInformation("curl failed, trying wget...");
             result = await RunCommandAsync("wget",
-                $"-O \"{targetPath}\" \"{url}\"",
+                new[] { "-O", targetPath, "--", url },
                 stagingDir, _timeoutMinutes);
 
             if (result.ExitCode != 0)
@@ -278,7 +300,7 @@ public class SourceFetchService
         _logger.LogInformation("rsync {Url}", url);
 
         var result = await RunCommandAsync("rsync",
-            $"-az --timeout={_timeoutMinutes * 60} \"{url}\" \"{stagingDir}/\"",
+            new[] { "-az", $"--timeout={_timeoutMinutes * 60}", "--", url, $"{stagingDir}/" },
             stagingDir, _timeoutMinutes);
 
         if (result.ExitCode != 0)
@@ -291,7 +313,10 @@ public class SourceFetchService
     {
         var checkoutDir = Path.Combine(stagingDir, "checkout");
 
-        // If branch specified, append to URL
+        // If branch specified, append to URL. branch is already validated to
+        // contain no shell metacharacters and is composed into the URL before
+        // the validator-style argv passing — the resulting svnUrl is a single
+        // argv token so no injection is possible.
         var svnUrl = url;
         if (!string.IsNullOrWhiteSpace(branch))
         {
@@ -301,7 +326,7 @@ public class SourceFetchService
         _logger.LogInformation("svn checkout {Url}", svnUrl);
 
         var result = await RunCommandAsync("svn",
-            $"checkout --non-interactive \"{svnUrl}\" \"{checkoutDir}\"",
+            new[] { "checkout", "--non-interactive", svnUrl, checkoutDir },
             stagingDir, _timeoutMinutes);
 
         if (result.ExitCode != 0)
@@ -314,13 +339,19 @@ public class SourceFetchService
     {
         var cloneDir = Path.Combine(stagingDir, "repo");
 
-        var branchArg = !string.IsNullOrWhiteSpace(branch) ? $" -b {branch}" : "";
-
         _logger.LogInformation("hg clone {Url}", url);
 
-        var result = await RunCommandAsync("hg",
-            $"clone{branchArg} \"{url}\" \"{cloneDir}\"",
-            stagingDir, _timeoutMinutes);
+        // SECURITY: argv tokens; branch is a discrete "-b" + value pair.
+        var args = new List<string> { "clone" };
+        if (!string.IsNullOrWhiteSpace(branch))
+        {
+            args.Add("-b");
+            args.Add(branch);
+        }
+        args.Add(url);
+        args.Add(cloneDir);
+
+        var result = await RunCommandAsync("hg", args, stagingDir, _timeoutMinutes);
 
         if (result.ExitCode != 0)
             throw new Exception($"hg clone failed (exit {result.ExitCode}): {result.Error}");
@@ -389,7 +420,7 @@ public class SourceFetchService
         }
 
         var result = await RunCommandAsync("tar",
-            $"-czf \"{tarballPath}\" -C \"{Path.GetDirectoryName(tarSource)}\" \"{Path.GetFileName(tarSource)}\"",
+            new[] { "-czf", tarballPath, "-C", Path.GetDirectoryName(tarSource)!, Path.GetFileName(tarSource) },
             stagingDir, _timeoutMinutes);
 
         if (result.ExitCode != 0)
@@ -401,7 +432,7 @@ public class SourceFetchService
     private async Task ExtractTarballAsync(string tarballPath, string targetDir)
     {
         var result = await RunCommandAsync("tar",
-            $"-xf \"{tarballPath}\" -C \"{targetDir}\"",
+            new[] { "-xf", tarballPath, "-C", targetDir },
             Path.GetDirectoryName(tarballPath)!, _timeoutMinutes);
 
         if (result.ExitCode != 0)
@@ -432,20 +463,27 @@ public class SourceFetchService
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
-    private async Task<CommandResult> RunCommandAsync(string command, string arguments, string workingDir, int timeoutMinutes)
+    private async Task<CommandResult> RunCommandAsync(
+        string command, IReadOnlyList<string> arguments, string workingDir, int timeoutMinutes)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(timeoutMinutes));
 
+        // SECURITY: Use ArgumentList (one token per element) instead of a single
+        // Arguments string. With UseShellExecute=false there is no shell, but
+        // ArgumentList additionally guarantees that no caller-supplied value
+        // (URL, branch, path) is ever re-parsed as multiple tokens — mirroring
+        // the PgpSigningService pattern. No string interpolation reaches here.
         var psi = new ProcessStartInfo
         {
             FileName = command,
-            Arguments = arguments,
             WorkingDirectory = workingDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        foreach (var arg in arguments)
+            psi.ArgumentList.Add(arg);
 
         using var process = new Process { StartInfo = psi };
         process.Start();
@@ -528,7 +566,7 @@ public class SourceFetchService
 
         // Create tarball
         var tarResult = await RunCommandAsync("tar",
-            $"-czf \"{tarballPath}\" -C \"{tmpTarDir}\" \"{packageName}-{packageVersion}\"",
+            new[] { "-czf", tarballPath, "-C", tmpTarDir, $"{packageName}-{packageVersion}" },
             stagingDir, _timeoutMinutes);
 
         if (tarResult.ExitCode != 0)
