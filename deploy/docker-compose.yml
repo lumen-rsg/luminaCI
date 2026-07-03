@@ -166,6 +166,11 @@ services:
       - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
       - Jwt__Issuer=LuminaCI
       - Jwt__Audience=LuminaCI
+      # SEC-013: master key for at-rest encryption of pipeline secrets
+      # (WebhookSecret, GitToken). Required — build-service refuses to start
+      # without it. NEVER change it after secrets are written, or they become
+      # undecryptable.
+      - Secrets__MasterKey=${SECRETS_MASTER_KEY:?SECRETS_MASTER_KEY must be set in .env (see deploy/.env.example)}
     volumes:
       - /opt/lumina/builds:/app/builds
       - /opt/lumina/sources:/opt/lumina/sources:z

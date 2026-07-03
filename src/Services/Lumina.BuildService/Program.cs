@@ -3,6 +3,7 @@ using Lumina.BuildService.Data;
 using Lumina.BuildService.Services;
 using Lumina.Shared.Events;
 using Lumina.Shared.Extensions;
+using Lumina.Shared.Security;
 using Lumina.Web.Shared;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +26,12 @@ try
     // Database
     builder.Services.AddDbContext<BuildDbContext>(options =>
         options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
+
+    // At-rest secret encryption (AES-256-GCM). The MasterKey comes from
+    // Secrets:MasterKey (SECRETS_MASTER_KEY env var) and is required — the
+    // service refuses to start without it so secrets are never stored in
+    // plaintext by accident. See AesSecretProtector for the on-disk format.
+    builder.Services.AddSingleton<ISecretProtector, AesSecretProtector>();
 
     // Services
     builder.Services.AddScoped<DockerBuildService>();
@@ -179,6 +186,24 @@ static async Task CreateTablesWithScriptAsync(DbContext db)
         catch (Exception ex)
         {
             Log.Verbose(ex, "Column {Table}.{Column} already exists, skipped", table, column);
+        }
+    }
+
+    // SEC-013: secret columns are now encrypted at rest, so their stored values
+    // are longer than the original plaintext. Widen GitToken from varchar(512)
+    // to text (WebhookSecret is already unbounded text). Idempotent: re-running
+    // a no-op ALTER TYPE is safe and cheap.
+    foreach (var column in new[] { "\"GitToken\"", "\"WebhookSecret\"" })
+    {
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE \"build\".\"pipelines\" ALTER COLUMN {column} TYPE text");
+            Log.Information("Widened column build.pipelines.{Column} to text", column);
+        }
+        catch (Exception ex)
+        {
+            Log.Verbose(ex, "Column type change for build.pipelines.{Column} skipped", column);
         }
     }
 }

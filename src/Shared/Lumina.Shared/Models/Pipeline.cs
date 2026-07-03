@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Lumina.Shared.Models.Enums;
 
 namespace Lumina.Shared.Models;
@@ -18,10 +19,20 @@ public class Pipeline
     public string? GitRepoUrl { get; set; }
     public string? GitBranch { get; set; }
     public string? SpecPath { get; set; }  // Path to .spec file in repo, e.g. "pkg/my-package.spec"
+
+    // WebhookSecret is stored encrypted at rest (see AesSecretProtector) and is
+    // never serialized over the wire — the PipelineResponse DTO exposes only a
+    // boolean presence flag (HasWebhookSecret). [JsonIgnore] is defense-in-depth:
+    // any code path that serializes this entity directly still omits the secret.
+    [JsonIgnore]
     public string? WebhookSecret { get; set; }
 
-    // Git credentials (for private repositories)
+    // Git credentials (for private repositories). GitUsername is non-secret
+    // (it's surfaced via PipelineResponse); GitToken is sensitive, so it is
+    // encrypted at rest and excluded from serialization entirely.
     public string? GitUsername { get; set; }
+
+    [JsonIgnore]
     public string? GitToken { get; set; }  // Personal Access Token or deploy key password
 
     // Build configuration
