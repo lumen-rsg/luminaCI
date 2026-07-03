@@ -11,24 +11,34 @@ public class HashService
     private readonly SecurityDbContext _db;
     private readonly ILogger<HashService> _logger;
     private readonly RedisCacheService _cache;
+    private readonly string _artifactsRoot;
 
-    public HashService(SecurityDbContext db, ILogger<HashService> logger, RedisCacheService cache)
+    public HashService(SecurityDbContext db, ILogger<HashService> logger, RedisCacheService cache, IConfiguration config)
     {
         _db = db;
         _logger = logger;
         _cache = cache;
+        // Artifacts are shared from the host at /opt/lumina/builds and mounted
+        // into the service at /app/builds. Only files under this root may be
+        // hashed — never trust a client-supplied absolute path.
+        _artifactsRoot = config["Builds:ArtifactsRoot"] ?? "/app/builds";
     }
 
     public async Task<HashRecord> ComputeHashesAsync(Guid artifactId, string filePath)
     {
-        if (!File.Exists(filePath))
+        // SECURITY: confine the client-supplied path to the trusted artifacts
+        // root so the endpoint cannot be used to read arbitrary files (e.g.
+        // /etc/shadow, key material, env-injected credentials).
+        var safePath = ProcessArgumentSanitizer.ResolveConfinedPath(filePath, _artifactsRoot);
+
+        if (!File.Exists(safePath))
             throw new FileNotFoundException($"File not found: {filePath}");
 
-        var fileInfo = new FileInfo(filePath);
+        var fileInfo = new FileInfo(safePath);
 
         string sha256, md5, sha1;
 
-        await using (var stream = File.OpenRead(filePath))
+        await using (var stream = File.OpenRead(safePath))
         {
             sha256 = Convert.ToHexString(await SHA256.HashDataAsync(stream)).ToLowerInvariant();
             stream.Position = 0;
@@ -61,10 +71,13 @@ public class HashService
         var existing = await _db.HashRecords.FirstOrDefaultAsync(h => h.ArtifactId == artifactId);
         if (existing == null) return null;
 
-        if (!File.Exists(filePath))
+        // SECURITY: confine the client-supplied path to the trusted artifacts root.
+        var safePath = ProcessArgumentSanitizer.ResolveConfinedPath(filePath, _artifactsRoot);
+
+        if (!File.Exists(safePath))
             throw new FileNotFoundException($"File not found: {filePath}");
 
-        await using var stream = File.OpenRead(filePath);
+        await using var stream = File.OpenRead(safePath);
         var currentSha256 = Convert.ToHexString(await SHA256.HashDataAsync(stream)).ToLowerInvariant();
 
         if (currentSha256 != existing.Sha256)

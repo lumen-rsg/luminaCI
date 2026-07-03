@@ -22,6 +22,7 @@ public class TrivyScannerService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly RedisCacheService _cache;
+    private readonly string _artifactsRoot;
 
     public TrivyScannerService(
         ScannerDbContext db,
@@ -35,6 +36,11 @@ public class TrivyScannerService
         _httpClientFactory = httpClientFactory;
         _config = config;
         _cache = cache;
+        // Artifacts are shared from the host at /opt/lumina/builds and mounted
+        // into the service at /app/builds. Only files under this root may be
+        // scanned — never hand a client-supplied absolute path to trivy, which
+        // would otherwise read and report on arbitrary filesystem locations.
+        _artifactsRoot = config["Builds:ArtifactsRoot"] ?? "/app/builds";
     }
 
     /// <summary>
@@ -42,7 +48,13 @@ public class TrivyScannerService
     /// </summary>
     public async Task<CveReport> ScanArtifactAsync(Guid artifactId, string artifactPath, string scannerType = "Trivy")
     {
-        _logger.LogInformation("Starting CVE scan for artifact {ArtifactId} at {Path}", artifactId, artifactPath);
+        // SECURITY: confine the client-supplied path to the trusted artifacts
+        // root before it reaches trivy (CLI or Server API). Without this an
+        // authenticated caller could point the scanner at arbitrary paths and
+        // read filesystem contents via the vulnerability report.
+        var safePath = ProcessArgumentSanitizer.ResolveConfinedPath(artifactPath, _artifactsRoot);
+
+        _logger.LogInformation("Starting CVE scan for artifact {ArtifactId} at {Path}", artifactId, safePath);
 
         var report = new CveReport
         {
@@ -60,7 +72,7 @@ public class TrivyScannerService
         // with actual vulnerability counts before publishing CveScanCompleted.
         // Previously this was fire-and-forget (_ = RunScanAsync), which caused
         // the consumer to publish CveScanCompleted with Status=Running and 0 counts.
-        await RunScanAsync(report, artifactPath);
+        await RunScanAsync(report, safePath);
 
         return report;
     }

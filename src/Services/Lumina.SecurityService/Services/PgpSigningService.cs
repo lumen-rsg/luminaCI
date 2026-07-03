@@ -12,6 +12,7 @@ public class PgpSigningService
     private readonly ILogger<PgpSigningService> _logger;
     private readonly IConfiguration _config;
     private readonly RedisCacheService _cache;
+    private readonly string _artifactsRoot;
 
     public PgpSigningService(SecurityDbContext db, ILogger<PgpSigningService> logger, IConfiguration config, RedisCacheService cache)
     {
@@ -19,6 +20,10 @@ public class PgpSigningService
         _logger = logger;
         _config = config;
         _cache = cache;
+        // Artifacts are shared from the host at /opt/lumina/builds and mounted
+        // into the service at /app/builds. Only files under this root may be
+        // signed — never hand a client-supplied absolute path to gpg.
+        _artifactsRoot = config["Builds:ArtifactsRoot"] ?? "/app/builds";
     }
 
     public async Task<SecurityKey> GenerateKeyAsync(string keyName, string email, string passphrase, string createdBy)
@@ -125,15 +130,19 @@ Passphrase: {safePassphrase}
         if (key == null) throw new InvalidOperationException($"Key {keyId} not found");
         if (!key.IsActive) throw new InvalidOperationException($"Key {keyId} is not active");
 
-        // SECURITY: Sanitize file paths to prevent command injection
-        var safeArtifactPath = ProcessArgumentSanitizer.SanitizeFilePath(artifactPath);
-        var signaturePath = artifactPath + ".asc";
+        // SECURITY: confine the client-supplied path to the trusted artifacts
+        // root so the endpoint cannot sign (and thereby read) arbitrary files.
+        // The previous SanitizeFilePath result was never applied to the gpg
+        // invocation, and it returns a shell-quoted form unsuitable for
+        // ArgumentList; ResolveConfinedPath returns a canonical path instead.
+        var safeArtifactPath = ProcessArgumentSanitizer.ResolveConfinedPath(artifactPath, _artifactsRoot);
+        var signaturePath = safeArtifactPath + ".asc";
 
         var request = new SigningRequest
         {
             Id = Guid.NewGuid(),
             ArtifactId = artifactId,
-            ArtifactPath = artifactPath,
+            ArtifactPath = safeArtifactPath,
             SignaturePath = signaturePath,
             KeyId = keyId,
             Status = "Pending",
@@ -163,7 +172,7 @@ Passphrase: {safePassphrase}
             startInfo.ArgumentList.Add("--armor");
             startInfo.ArgumentList.Add("--output");
             startInfo.ArgumentList.Add(signaturePath);
-            startInfo.ArgumentList.Add(artifactPath);
+            startInfo.ArgumentList.Add(safeArtifactPath);
 
             using var process = Process.Start(startInfo);
             if (process == null) throw new InvalidOperationException("Failed to start gpg process");
@@ -190,13 +199,13 @@ Passphrase: {safePassphrase}
 
             request.SignatureContent = signatureContent;
 
-            _logger.LogInformation("Artifact {ArtifactPath} signed with key {KeyId}", artifactPath, keyId);
+            _logger.LogInformation("Artifact {ArtifactPath} signed with key {KeyId}", safeArtifactPath, keyId);
 
             return request;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to sign artifact {ArtifactPath}", artifactPath);
+            _logger.LogError(ex, "Failed to sign artifact {ArtifactPath}", safeArtifactPath);
             throw;
         }
     }
