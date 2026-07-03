@@ -143,7 +143,8 @@ Passphrase: {safePassphrase}
         try
         {
             // SECURITY: Use ArgumentList instead of string concatenation
-            var passphrase = _config["Gpg:Passphrase"] ?? "lumina_pgp_dev_2024";
+            var passphrase = _config["Gpg:Passphrase"]
+                ?? throw new InvalidOperationException("Gpg:Passphrase is not configured. Set GPG_PASSPHRASE in the environment.");
             var startInfo = new ProcessStartInfo
             {
                 FileName = "gpg",

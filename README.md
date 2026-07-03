@@ -308,15 +308,20 @@ docker compose logs -f api-gateway
 
 ---
 
-## Учетные данные по умолчанию
+## Учетные данные
 
-| Сервис | Логин | Пароль |
-|---|---|---|
-| Веб-интерфейс (JWT) | `admin` | `admin` |
-| Веб-интерфейс (JWT) | `developer` | `developer` |
-| PostgreSQL | `lumina` | `lumina_dev_2024` |
-| RabbitMQ | `lumina` | `lumina_rmq_2024` |
-| MinIO | `luminaadmin` | `lumina_minio_2024` |
-| RabbitMQ Management | `lumina` | `lumina_rmq_2024` |
+В Lumina CI **нет учётных данных по умолчанию**. Перед первым запуском задайте все
+секреты в `.env` (скопируйте `deploy/.env.example`):
+
+- `ADMIN_PASSWORD` — пароль начальной учётки администратора (создаётся при первом
+  запуске, когда таблица пользователей пуста; без него api-gateway не стартует).
+  Необязательные `ADMIN_USERNAME` (по умолчанию `admin`), `DEVELOPER_USERNAME` /
+  `DEVELOPER_PASSWORD` (учётка разработчика создаётся только если задан пароль).
+- `JWT_SECRET` — ключ подписи JWT (мин. 32 символа).
+- `GPG_PASSPHRASE` — парольная фраза PGP-ключа подписи RPM.
+- `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`, `MINIO_PASSWORD` (и `MINIO_USER`).
+
+Пароли пользователей хранятся в БД в виде BCrypt-хэшей. Если переменная не задана,
+`docker compose up` завершится с ошибкой, а не откатится на дев-дефолт.
 
 > ⚠️ **Для production обязательно смените все пароли в `.env`!**

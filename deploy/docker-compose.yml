@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: lumina_ci
       POSTGRES_USER: lumina
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lumina_dev_2024}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
     ports:
       - "5432:5432"
     volumes:
@@ -40,7 +40,7 @@ services:
     container_name: lumina-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: lumina
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env (see deploy/.env.example)}
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -59,7 +59,7 @@ services:
     container_name: lumina-minio
     environment:
       MINIO_ROOT_USER: ${MINIO_USER:-luminaadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-lumina_minio_2024}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -83,11 +83,11 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5000
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
       - RabbitMQ__Host=rabbitmq
       - RabbitMQ__Username=lumina
-      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env (see deploy/.env.example)}
       - Services__BuildService=http://build-service:5001
       - Services__SecurityService=http://security-service:5002
       - Services__ScannerService=http://scanner-service:5003
@@ -98,10 +98,14 @@ services:
       - Ldap__BaseDn=${LDAP_BASE_DN:-dc=lumina,dc=1t,dc=ru}
       - Ldap__BindDn=${LDAP_BIND_DN:-cn=admin,dc=lumina,dc=1t,dc=ru}
       - Ldap__BindPassword=${LDAP_BIND_PASSWORD:-}
-      - Jwt__Secret=${JWT_SECRET:-lumina_jwt_dev_secret_key_2024_min32chars!!}
+      - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
       - Jwt__Issuer=LuminaCI
       - Jwt__Audience=LuminaCI
       - Jwt__ExpiryHours=8
+      - Auth__AdminUsername=${ADMIN_USERNAME:-admin}
+      - Auth__AdminPassword=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env (see deploy/.env.example)}
+      - Auth__DeveloperUsername=${DEVELOPER_USERNAME:-developer}
+      - Auth__DeveloperPassword=${DEVELOPER_PASSWORD:-}
     ports:
       - "5000:5000"
     depends_on:
@@ -122,14 +126,14 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5001
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
       - RabbitMQ__Host=rabbitmq
       - RabbitMQ__Username=lumina
-      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env (see deploy/.env.example)}
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
-      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
       - Docker__SocketPath=/var/run/docker.sock
       - Services__SecurityService=http://security-service:5002
     ports:
@@ -160,16 +164,16 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5002
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
       - RabbitMQ__Host=rabbitmq
       - RabbitMQ__Username=lumina
-      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env (see deploy/.env.example)}
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
-      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
       - Gpg__KeyStorePath=/app/keys
-      - Gpg__Passphrase=lumina_pgp_dev_2024
+      - Gpg__Passphrase=${GPG_PASSPHRASE:?GPG_PASSPHRASE must be set in .env (see deploy/.env.example)}
       - Services__BuildService=http://build-service:5001
     ports:
       - "5002:5002"
@@ -195,14 +199,14 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5003
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
       - RabbitMQ__Host=rabbitmq
       - RabbitMQ__Username=lumina
-      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env (see deploy/.env.example)}
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
-      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
       - Trivy__ServerUrl=http://trivy:8080
     ports:
       - "5003:5003"
@@ -237,14 +241,14 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5004
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
       - RabbitMQ__Host=rabbitmq
       - RabbitMQ__Username=lumina
-      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env (see deploy/.env.example)}
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
-      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
       - Repository__BasePath=/app/repos
     ports:
       - "5004:5004"
@@ -268,14 +272,14 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5006
-      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:-lumina_dev_2024}
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
       - RabbitMQ__Host=rabbitmq
       - RabbitMQ__Username=lumina
-      - RabbitMQ__Password=${RABBITMQ_PASSWORD:-lumina_rmq_2024}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env (see deploy/.env.example)}
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
-      - MinIO__SecretKey=${MINIO_PASSWORD:-lumina_minio_2024}
+      - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
       - Source__ConfigPath=/app/conf.ini
       - Source__MaxRetries=3
       - Source__FetchTimeoutMinutes=30

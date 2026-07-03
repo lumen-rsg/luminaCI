@@ -75,7 +75,8 @@ try
         var keys = await pgpService.ListKeysAsync();
         if (keys.Count == 0)
         {
-            var passphrase = builder.Configuration["Gpg:Passphrase"] ?? "lumina_pgp_dev_2024";
+            var passphrase = builder.Configuration["Gpg:Passphrase"]
+                ?? throw new InvalidOperationException("Gpg:Passphrase is not configured. Set GPG_PASSPHRASE in the environment.");
             await pgpService.GenerateKeyAsync("Lumina CI", "lumina@ci.local", passphrase, "system");
             Log.Information("Auto-generated default PGP key (Lumina CI / lumina@ci.local)");
         }

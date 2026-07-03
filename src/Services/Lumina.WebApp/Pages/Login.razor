@@ -16,11 +16,11 @@
             }
             <div class="mb-3">
                 <label class="form-label">Username</label>
-                <input type="text" class="form-control" @bind="_username" placeholder="admin" @onkeypress="OnKeyPress" />
+                <input type="text" class="form-control" @bind="_username" @onkeypress="OnKeyPress" />
             </div>
             <div class="mb-3">
                 <label class="form-label">Password</label>
-                <input type="password" class="form-control" @bind="_password" placeholder="admin" @onkeypress="OnKeyPress" />
+                <input type="password" class="form-control" @bind="_password" @onkeypress="OnKeyPress" />
             </div>
             <button class="btn btn-primary w-100" @onclick="DoLogin" disabled="@_loading">
                 @if (_loading)
@@ -34,8 +34,8 @@
 </div>
 
 @code {
-    private string _username = "admin";
-    private string _password = "admin";
+    private string _username = "";
+    private string _password = "";
     private string? _error;
     private bool _loading;
 
@@ -51,7 +51,7 @@
         }
         else
         {
-            _error = "Invalid credentials. Try admin/admin";
+            _error = "Invalid credentials.";
         }
 
         _loading = false;
