@@ -108,6 +108,15 @@ services:
       - Auth__AdminPassword=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env (see deploy/.env.example)}
       - Auth__DeveloperUsername=${DEVELOPER_USERNAME:-developer}
       - Auth__DeveloperPassword=${DEVELOPER_PASSWORD:-}
+      - Auth__MaxFailedLogins=${AUTH_MAX_FAILED_LOGINS:-5}
+      - Auth__LockoutMinutes=${AUTH_LOCKOUT_MINUTES:-15}
+      - Auth__MaxLockoutMinutes=${AUTH_MAX_LOCKOUT_MINUTES:-1440}
+      - RateLimit__Global__PermitLimit=${RATE_LIMIT_GLOBAL_PERMIT:-100}
+      - RateLimit__Global__TokensPerSecond=${RATE_LIMIT_GLOBAL_TPS:-100}
+      - RateLimit__Global__QueueLimit=${RATE_LIMIT_GLOBAL_QUEUE:-10}
+      - RateLimit__Login__PermitLimit=${RATE_LIMIT_LOGIN_PERMIT:-5}
+      - RateLimit__Login__TokensPerSecond=${RATE_LIMIT_LOGIN_TPS:-5}
+      - RateLimit__Login__QueueLimit=${RATE_LIMIT_LOGIN_QUEUE:-0}
     ports:
       - "5000:5000"
     depends_on:

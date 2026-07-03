@@ -19,6 +19,7 @@ public class AuthDbContext : DbContext
             entity.Property(e => e.PasswordHash).IsRequired();
             entity.Property(e => e.Role).IsRequired().HasMaxLength(50);
             entity.Property(e => e.FailedLoginAttempts).HasDefaultValue(0);
+            entity.Property(e => e.LockoutCount).HasDefaultValue(0);
             entity.HasIndex(e => e.Username).IsUnique();
         });
     }

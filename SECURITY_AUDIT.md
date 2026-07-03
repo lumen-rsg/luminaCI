@@ -102,6 +102,12 @@ All findings have been remediated.
 ### SEC-012: No Rate Limiting
 - **File:** `src/Services/Lumina.ApiGateway/Program.cs`
 - **Fix:** Added ASP.NET Core Rate Limiter — 100 requests/minute per IP, globally on API Gateway.
+- **Follow-up (brute-force hardening):** The global IP limiter alone was too soft to stop account brute-force on `/api/auth/login` and collapsed to a single bucket behind nginx (all traffic appeared to come from the proxy IP). Remediation:
+  - **ForwardedHeaders** now applied before rate limiting / auth so `RemoteIpAddress` reflects the real client behind nginx.
+  - **Per-IP + per-username token bucket** on `/api/auth/login` (5 req/min, configurable via `RateLimit:Login`). Keying on username bounds password-spraying from one IP AND pile-on from many IPs against one account.
+  - **Exponential lockout** in the login handler: each successive lockout cycle doubles the penalty (`LockoutMinutes * 2^LockoutCount`, capped at `MaxLockoutMinutes`), backed by a new `LockoutCount` column on `users`. The counter resets only on a successful login.
+  - Global limiter switched from a fixed window to a **token bucket** so legitimate bursty traffic (SSE log streams, list polling) is not throttled at the window doorstep while sustained rate stays bounded.
+  - All thresholds moved to configuration (`RateLimit:*`, `Auth:*`) and wired through compose env vars, so per-route limits (login vs. read vs. upload) can be tuned per deployment without a rebuild.
 
 ### SEC-013: Weak Hash Algorithms (SHA-1, MD5)
 - **File:** `src/Services/Lumina.SecurityService/Services/HashService.cs:33-34`

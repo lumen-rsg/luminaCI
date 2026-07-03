@@ -1,10 +1,12 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Lumina.ApiGateway.Data;
 using Lumina.ApiGateway.Services;
 using Lumina.Shared.Models;
 using Lumina.Web.Shared;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
@@ -66,40 +68,92 @@ try
     builder.Services.AddReverseProxy()
         .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
 
+    // ForwardedHeaders — the gateway always sits behind exactly one trusted
+    // proxy hop (nginx for browser traffic, optionally the host port-forward).
+    // Without this, Connection.RemoteIpAddress is the proxy's address and every
+    // IP-keyed rate-limit bucket collapses to a single "nginx" entry, making
+    // the per-IP limiters useless (SEC-012 follow-up). The default
+    // KnownNetworks/KnownProxies are loopback ranges only; in compose the proxy
+    // reaches us from the docker bridge, so clear both and let the deployment
+    // network boundary (only :5000 published) be the trust boundary. This is
+    // the documented pattern for a single-hop proxy: a direct external client
+    // cannot inject an X-Forwarded-For header that is honored.
+    builder.Services.Configure<ForwardedHeadersOptions>(o =>
+    {
+        o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        o.KnownNetworks.Clear();
+        o.KnownProxies.Clear();
+    });
+
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(c =>
     {
         c.SwaggerDoc("v1", new() { Title = "Lumina CI API Gateway", Version = "v1" });
     });
 
-    // Rate limiting — 100 requests/minute per IP (global), stricter policy for the login form
+    // Rate limiting (SEC-012 follow-up).
+    //
+    // Two layers:
+    //   • Global token bucket per client IP — caps overall request volume so a
+    //     single host cannot flood the gateway or the proxied services. A token
+    //     bucket (vs. the old fixed window) lets a legitimate client issue a
+    //     short burst of list/SSE calls without being throttled at the doorstep
+    //     of each window, yet still bounds sustained rate.
+    //   • "auth-login" policy — a strict per-IP AND per-username bucket on
+    //     /api/auth/login. Keying on username too means a distributed attacker
+    //     from many IPs still cannot pile onto one account, and one infected IP
+    //     password-spraying many accounts is bounded per-account. The username
+    //     is read from the request body because the policy runs before endpoint
+    //     model binding.
+    //
+    // All thresholds come from configuration so they can be tuned per
+    // deployment without a rebuild (RateLimit:* section in appsettings).
+    var rlConfig = builder.Configuration.GetSection("RateLimit");
+    var globalPermit = rlConfig.GetValue("Global:PermitLimit", 100);
+    var globalTokensPerSec = rlConfig.GetValue("Global:TokensPerSecond", 100);
+    var globalQueue = rlConfig.GetValue("Global:QueueLimit", 10);
+    var loginPermit = rlConfig.GetValue("Login:PermitLimit", 5);
+    var loginTokensPerSec = rlConfig.GetValue("Login:TokensPerSecond", 5);
+    var loginQueue = rlConfig.GetValue("Login:QueueLimit", 0);
+
     builder.Services.AddRateLimiter(options =>
     {
+        // Global token bucket per real client IP. RemoteIpAddress already
+        // reflects the end user once ForwardedHeaders is applied below.
         options.GlobalLimiter = System.Threading.RateLimiting.PartitionedRateLimiter.Create<HttpContext, string>(context =>
         {
             var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-            return System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(ip,
-                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            return System.Threading.RateLimiting.RateLimitPartition.GetTokenBucketLimiter(ip,
+                _ => new System.Threading.RateLimiting.TokenBucketRateLimiterOptions
                 {
-                    PermitLimit = 100,
-                    Window = TimeSpan.FromMinutes(1),
+                    TokenLimit = globalPermit,
+                    TokensPerPeriod = globalTokensPerSec,
+                    ReplenishmentPeriod = TimeSpan.FromSeconds(1),
                     QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
-                    QueueLimit = 10
+                    QueueLimit = globalQueue
                 });
         });
-        // Stricter limiter for the login endpoint: 10 attempts/minute per IP, no queue.
+
+        // Strict login policy — bucketed per (IP, username). The username is
+        // pulled from the JSON body; on parse failure / missing field the
+        // bucket keys on the raw IP alone, so a malformed request is still
+        // bounded. Buffering + rewind lets endpoint binding re-read the body.
         options.AddPolicy("auth-login", context =>
         {
             var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-            return System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(ip,
-                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            var username = TryReadUsername(context) ?? "";
+            var partitionKey = string.IsNullOrEmpty(username) ? $"ip:{ip}" : $"ip:{ip}|u:{username.ToLowerInvariant()}";
+            return System.Threading.RateLimiting.RateLimitPartition.GetTokenBucketLimiter(partitionKey,
+                _ => new System.Threading.RateLimiting.TokenBucketRateLimiterOptions
                 {
-                    PermitLimit = 10,
-                    Window = TimeSpan.FromMinutes(1),
+                    TokenLimit = loginPermit,
+                    TokensPerPeriod = loginTokensPerSec,
+                    ReplenishmentPeriod = TimeSpan.FromSeconds(1),
                     QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst,
-                    QueueLimit = 0
+                    QueueLimit = loginQueue
                 });
         });
+
         options.OnRejected = async (context, ct) =>
         {
             context.HttpContext.Response.StatusCode = 429;
@@ -124,6 +178,12 @@ try
         app.UseSwagger();
         app.UseSwaggerUI();
     }
+
+    // Apply ForwardedHeaders BEFORE rate limiting and auth so that every
+    // downstream component (limiter partitions, logging, YARP forwarding) sees
+    // the real client IP. Must run early — before anything that consumes
+    // Connection.RemoteIpAddress / scheme (SEC-012 follow-up).
+    app.UseForwardedHeaders();
 
     app.UseRateLimiter();
 
@@ -178,24 +238,36 @@ try
         }
 
         var maxFailedLogins = int.TryParse(config["Auth:MaxFailedLogins"], out var m) ? m : 5;
-        var lockoutMinutes = int.TryParse(config["Auth:LockoutMinutes"], out var lm) ? lm : 15;
+        var baseLockoutMinutes = int.TryParse(config["Auth:LockoutMinutes"], out var lm) ? lm : 15;
+        // Cap the exponential backoff so a misbehaving client can't permanently
+        // lock an account (denial of its own legitimate owner). 24h ceiling.
+        var maxLockoutMinutes = int.TryParse(config["Auth:MaxLockoutMinutes"], out var mlm) ? mlm : 1440;
 
         if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
         {
             user.FailedLoginAttempts++;
             if (user.FailedLoginAttempts >= maxFailedLogins)
             {
-                user.LockoutUntil = DateTimeOffset.UtcNow.AddMinutes(lockoutMinutes);
+                // Exponential backoff: each successive lockout cycle doubles the
+                // penalty (base * 2^count), capped at MaxLockoutMinutes. count is
+                // NOT reset on lockout, so the backoff compounds across attempts;
+                // it is cleared only on a successful login.
+                var penalty = (long)Math.Min(
+                    maxLockoutMinutes,
+                    baseLockoutMinutes * Math.Pow(2, user.LockoutCount));
+                user.LockoutUntil = DateTimeOffset.UtcNow.AddMinutes(penalty);
                 user.FailedLoginAttempts = 0;
+                user.LockoutCount++;
             }
             user.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync();
             return Results.Json(new { error = "Invalid credentials" }, statusCode: 401);
         }
 
-        // Success — reset the failure counter
+        // Success — reset the failure counter and clear the backoff state
         user.FailedLoginAttempts = 0;
         user.LockoutUntil = null;
+        user.LockoutCount = 0;
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
 
@@ -369,6 +441,45 @@ static async Task SeedUsersAsync(AuthDbContext db, IConfiguration config)
     }
 
     await db.SaveChangesAsync();
+}
+
+/// <summary>
+/// Reads the <c>username</c> field from the login JSON body for the rate-limiter
+/// partitioner, which runs before endpoint model binding. Buffers and rewinds the
+/// request stream so the downstream <c>LoginRequest</c> binding still sees the
+/// full body. Returns <c>null</c> on any parse problem — the limiter then keys
+/// on IP alone, so a malformed request stays bounded.
+/// </summary>
+static string? TryReadUsername(HttpContext context)
+{
+    try
+    {
+        if (!context.Request.ContentLength.HasValue || context.Request.ContentLength == 0)
+            return null;
+
+        // The body is forward-only by default; enable buffering so the endpoint
+        // can re-read it after the limiter has consumed it here.
+        context.Request.EnableBuffering();
+        context.Request.Body.Position = 0;
+        using var reader = new StreamReader(
+            context.Request.Body,
+            leaveOpen: true);
+        var body = reader.ReadToEnd();
+        context.Request.Body.Position = 0;
+
+        using var doc = JsonDocument.Parse(body);
+        return doc.RootElement.ValueKind == JsonValueKind.Object &&
+               doc.RootElement.TryGetProperty("username", out var u) &&
+               u.ValueKind == JsonValueKind.String
+            ? u.GetString()
+            : null;
+    }
+    catch
+    {
+        // Any failure → fall back to IP-only bucketing. Never let the limiter
+        // itself throw and turn a brute-force attempt into a 500.
+        return null;
+    }
 }
 
 public record LoginRequest(string Username, string Password);
