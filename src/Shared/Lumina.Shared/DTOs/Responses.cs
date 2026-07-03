@@ -1,3 +1,4 @@
+using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
 
 namespace Lumina.Shared.DTOs;
@@ -55,7 +56,18 @@ public record ScanPaginatedResponse(List<ScanSummaryResponse> Scans, int TotalCo
 // Repository Responses
 public record RepositoryResponse(Guid Id, string Name, string DisplayName, string BasePath, string Arch, string Distribution, bool IsActive, DateTime CreatedAt, int PackageCount);
 
-public record PackageResponse(Guid Id, Guid RepositoryId, string Name, string Version, string Release, string Arch, string FileName, long FileSize, string? HashSha256, ScanStatus CveScanStatus, DateTime PublishedAt, string PublishedBy, string? PgpSignature = null);
+public record PackageResponse(Guid Id, Guid RepositoryId, string Name, string Version, string Release, string Arch, string FileName, long FileSize, string? HashSha256, ScanStatus CveScanStatus, DateTime PublishedAt, string PublishedBy, string? PgpSignature = null)
+{
+    /// <summary>
+    /// Maps a <see cref="Package"/> entity to this response DTO. Centralizing the
+    /// projection keeps the three controller call sites (publish, upload, list)
+    /// in sync and ensures internal-only fields (<c>ArtifactId</c>,
+    /// <c>StoragePath</c>, the <c>Repository</c> navigation) are never serialized.
+    /// </summary>
+    public static PackageResponse From(Package p) => new(
+        p.Id, p.RepositoryId, p.Name, p.Version, p.Release, p.Arch, p.FileName,
+        p.FileSize, p.HashSha256, p.CveScanStatus, p.PublishedAt, p.PublishedBy, p.PgpSignature);
+}
 
 public record RepositoryListResponse(List<RepositoryResponse> Repositories, int TotalCount, int Page, int PageSize);
 

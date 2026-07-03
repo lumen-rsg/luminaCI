@@ -63,16 +63,16 @@ public class RepositoryController : ControllerBase
 
     [HttpPost("publish")]
     [Authorize(Policy = AuthPolicies.Admin)]
-    public async Task<ActionResult<ApiResponse<Package>>> PublishPackage([FromBody] PublishPackageRequest request)
+    public async Task<ActionResult<ApiResponse<PackageResponse>>> PublishPackage([FromBody] PublishPackageRequest request)
     {
         try
         {
             var package = await _storage.PublishPackageAsync(request.ArtifactId, request.RepositoryId, request.PublishedBy);
-            return Ok(new ApiResponse<Package>(true, package, null, "Package published"));
+            return Ok(new ApiResponse<PackageResponse>(true, PackageResponse.From(package), null, "Package published"));
         }
         catch (Exception ex)
         {
-            return BadRequest(new ApiResponse<Package>(false, null, ex.Message, null));
+            return BadRequest(new ApiResponse<PackageResponse>(false, null, ex.Message, null));
         }
     }
 
@@ -85,16 +85,16 @@ public class RepositoryController : ControllerBase
     [HttpPost("upload")]
     [Authorize(Policy = AuthPolicies.Admin)]
     [RequestSizeLimit(500 * 1024 * 1024)] // 500MB limit
-    public async Task<ActionResult<ApiResponse<Package>>> UploadPackage([FromForm] IFormFile file, [FromForm] IFormFile signature, [FromForm] Guid repositoryId, [FromForm] string? publishedBy)
+    public async Task<ActionResult<ApiResponse<PackageResponse>>> UploadPackage([FromForm] IFormFile file, [FromForm] IFormFile signature, [FromForm] Guid repositoryId, [FromForm] string? publishedBy)
     {
         if (file == null || file.Length == 0)
-            return BadRequest(new ApiResponse<Package>(false, null, "No file uploaded", null));
+            return BadRequest(new ApiResponse<PackageResponse>(false, null, "No file uploaded", null));
 
         if (!file.FileName.EndsWith(".rpm", StringComparison.OrdinalIgnoreCase))
-            return BadRequest(new ApiResponse<Package>(false, null, "Only .rpm files are allowed", null));
+            return BadRequest(new ApiResponse<PackageResponse>(false, null, "Only .rpm files are allowed", null));
 
         if (signature == null || signature.Length == 0)
-            return BadRequest(new ApiResponse<Package>(false, null, "A detached PGP signature (.asc) is required. Unsigned RPMs cannot be uploaded.", null));
+            return BadRequest(new ApiResponse<PackageResponse>(false, null, "A detached PGP signature (.asc) is required. Unsigned RPMs cannot be uploaded.", null));
 
         try
         {
@@ -113,12 +113,12 @@ public class RepositoryController : ControllerBase
                 publishedBy ?? "upload",
                 verifiedSignature);
 
-            return Ok(new ApiResponse<Package>(true, package, null, "Package uploaded, signature verified, and repository metadata updated"));
+            return Ok(new ApiResponse<PackageResponse>(true, PackageResponse.From(package), null, "Package uploaded, signature verified, and repository metadata updated"));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to upload package to repository {RepoId}", repositoryId);
-            return BadRequest(new ApiResponse<Package>(false, null, ex.Message, null));
+            return BadRequest(new ApiResponse<PackageResponse>(false, null, ex.Message, null));
         }
     }
 
@@ -138,9 +138,9 @@ public class RepositoryController : ControllerBase
     }
 
     [HttpGet("{repositoryId:guid}/packages")]
-    public async Task<ActionResult<ApiResponse<List<Package>>>> ListPackages(Guid repositoryId)
+    public async Task<ActionResult<ApiResponse<List<PackageResponse>>>> ListPackages(Guid repositoryId)
     {
         var packages = await _storage.ListPackagesAsync(repositoryId);
-        return Ok(new ApiResponse<List<Package>>(true, packages, null, null));
+        return Ok(new ApiResponse<List<PackageResponse>>(true, packages.Select(PackageResponse.From).ToList(), null, null));
     }
 }
