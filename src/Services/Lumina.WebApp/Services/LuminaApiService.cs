@@ -418,20 +418,6 @@ public class LuminaApiService
         return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
     }
 
-    public async Task<ApiResponse<List<UploadedSourceResponse>>?> UploadBuildSourceAsync(
-        Guid buildId, Stream fileStream, string fileName, string? subFolder = null)
-    {
-        using var content = new MultipartFormDataContent();
-        var fileContent = new StreamContent(fileStream);
-        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-        content.Add(fileContent, "files", fileName);
-        if (!string.IsNullOrEmpty(subFolder))
-            content.Add(new StringContent(subFolder), "subFolder");
-
-        var resp = await _http.PostAsync($"/api/extra-sources/build/{buildId}", content);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<List<UploadedSourceResponse>>>();
-    }
-
     // === Auth ===
     public async Task<string?> LoginAsync(string username, string password)
     {

@@ -170,7 +170,7 @@ public class DockerBuildService
         }
     }
 
-    public async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? sourceDir = null, string? extraSourcesPipelineDir = null, string? extraSourcesBuildDir = null)
+    public async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? sourceDir = null, string? extraSourcesPipelineDir = null)
     {
         var imageName = !string.IsNullOrWhiteSpace(buildImage) ? buildImage : "lumina-rpm-build:latest";
         _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName}) with image {Image}", job.Id, job.SpecName, imageName);
@@ -249,53 +249,29 @@ public class DockerBuildService
                 _logger.LogInformation("Mounting pre-fetched sources from {SourceDir}", sourceDir);
             }
 
-            // Mount extra uploaded sources (pipeline-level and/or build-level)
-            var hasExtraSources = false;
+            // Mount extra uploaded sources (pipeline-level only — uploaded via the
+            // Extra Sources UI into /opt/lumina/extra-sources/pipelines/{pipelineId}/).
             var hostExtraDir = $"/opt/lumina/extra-sources/_builds/{job.Id}";
-            if (!string.IsNullOrEmpty(extraSourcesPipelineDir) && Directory.Exists(extraSourcesPipelineDir)
-                || !string.IsNullOrEmpty(extraSourcesBuildDir) && Directory.Exists(extraSourcesBuildDir))
+            if (!string.IsNullOrEmpty(extraSourcesPipelineDir) && Directory.Exists(extraSourcesPipelineDir))
             {
-                // Create a merged directory with pipeline/ and build/ subdirs
-                Directory.CreateDirectory($"{hostExtraDir}/pipeline");
-                Directory.CreateDirectory($"{hostExtraDir}/build");
+                Directory.CreateDirectory(hostExtraDir);
 
-                if (!string.IsNullOrEmpty(extraSourcesPipelineDir) && Directory.Exists(extraSourcesPipelineDir))
+                // Copy all pipeline extra sources preserving subdirectory structure
+                foreach (var dir in Directory.GetDirectories(extraSourcesPipelineDir, "*", SearchOption.AllDirectories))
                 {
-                    // Copy all pipeline extra sources preserving subdirectory structure
-                    foreach (var dir in Directory.GetDirectories(extraSourcesPipelineDir, "*", SearchOption.AllDirectories))
-                    {
-                        var relPath = Path.GetRelativePath(extraSourcesPipelineDir, dir);
-                        Directory.CreateDirectory(Path.Combine(hostExtraDir, "pipeline", relPath));
-                    }
-                    foreach (var file in Directory.GetFiles(extraSourcesPipelineDir, "*", SearchOption.AllDirectories))
-                    {
-                        var relPath = Path.GetRelativePath(extraSourcesPipelineDir, file);
-                        var dest = Path.Combine(hostExtraDir, "pipeline", relPath);
-                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                        File.Copy(file, dest, true);
-                    }
-                    _logger.LogInformation("Copied pipeline extra sources from {Dir}", extraSourcesPipelineDir);
+                    var relPath = Path.GetRelativePath(extraSourcesPipelineDir, dir);
+                    Directory.CreateDirectory(Path.Combine(hostExtraDir, relPath));
                 }
-
-                if (!string.IsNullOrEmpty(extraSourcesBuildDir) && Directory.Exists(extraSourcesBuildDir))
+                foreach (var file in Directory.GetFiles(extraSourcesPipelineDir, "*", SearchOption.AllDirectories))
                 {
-                    foreach (var dir in Directory.GetDirectories(extraSourcesBuildDir, "*", SearchOption.AllDirectories))
-                    {
-                        var relPath = Path.GetRelativePath(extraSourcesBuildDir, dir);
-                        Directory.CreateDirectory(Path.Combine(hostExtraDir, "build", relPath));
-                    }
-                    foreach (var file in Directory.GetFiles(extraSourcesBuildDir, "*", SearchOption.AllDirectories))
-                    {
-                        var relPath = Path.GetRelativePath(extraSourcesBuildDir, file);
-                        var dest = Path.Combine(hostExtraDir, "build", relPath);
-                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                        File.Copy(file, dest, true);
-                    }
-                    _logger.LogInformation("Copied build extra sources from {Dir}", extraSourcesBuildDir);
+                    var relPath = Path.GetRelativePath(extraSourcesPipelineDir, file);
+                    var dest = Path.Combine(hostExtraDir, relPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    File.Copy(file, dest, true);
                 }
+                _logger.LogInformation("Copied pipeline extra sources from {Dir}", extraSourcesPipelineDir);
 
                 binds.Add($"{hostExtraDir}:/extra-sources:z");
-                hasExtraSources = true;
                 _logger.LogInformation("Mounted extra sources at /extra-sources for job {JobId}", job.Id);
             }
 

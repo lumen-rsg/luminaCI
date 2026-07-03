@@ -104,7 +104,7 @@ try
     }
 
     // Ensure required host directories exist for build artifacts and sources
-    foreach (var dir in new[] { "/app/builds", "/opt/lumina/builds", "/opt/lumina/sources", "/opt/lumina/extra-sources/pipelines", "/opt/lumina/extra-sources/builds" })
+    foreach (var dir in new[] { "/app/builds", "/opt/lumina/builds", "/opt/lumina/sources", "/opt/lumina/extra-sources/pipelines" })
     {
         try
         {
