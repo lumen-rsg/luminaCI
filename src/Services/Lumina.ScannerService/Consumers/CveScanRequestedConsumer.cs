@@ -28,16 +28,18 @@ public class CveScanRequestedConsumer : IConsumer<CveScanRequested>
 
             await context.Publish(new CveScanCompleted(
                 msg.ArtifactId, report.Status, report.CriticalCount,
-                report.HighCount, report.MediumCount, report.LowCount, DateTime.UtcNow));
+                report.HighCount, report.MediumCount, report.LowCount, report.UnknownCount, DateTime.UtcNow));
 
-            _logger.LogInformation("CVE scan completed for {FileName}: {Critical} critical, {High} high",
-                msg.FileName, report.CriticalCount, report.HighCount);
+            _logger.LogInformation("CVE scan completed for {FileName}: status={Status}, {Critical} critical, {High} high, {Unknown} unknown",
+                msg.FileName, report.Status, report.CriticalCount, report.HighCount, report.UnknownCount);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "CVE scan failed for artifact {ArtifactId}", msg.ArtifactId);
+            // Fail-closed: all counts zero is intentional here because we never
+            // parsed anything. Status=Failed drives the signing gate to block.
             await context.Publish(new CveScanCompleted(
-                msg.ArtifactId, ScanStatus.Failed, 0, 0, 0, 0, DateTime.UtcNow));
+                msg.ArtifactId, ScanStatus.Failed, 0, 0, 0, 0, 0, DateTime.UtcNow));
         }
     }
 }

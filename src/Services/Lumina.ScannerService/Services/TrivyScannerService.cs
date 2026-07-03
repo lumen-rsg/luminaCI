@@ -24,6 +24,25 @@ public class TrivyScannerService
     private readonly RedisCacheService _cache;
     private readonly string _artifactsRoot;
 
+    /// <summary>
+    /// Outcome of a single Trivy invocation (server or CLI). Carries the parsed
+    /// vulnerabilities, the raw scanner output (for diagnosis), and — critically
+    /// — a <see cref="Success"/> flag that distinguishes "scan ran and found
+    /// nothing" from "we could not understand the scanner's output". The previous
+    /// design returned a bare <c>List&lt;Vulnerability&gt;</c>, which made a parse
+    /// failure indistinguishable from a clean scan and let unsigned artifacts
+    /// through the signing gate.
+    /// </summary>
+    private sealed class TrivyScanResult
+    {
+        public List<Vulnerability> Vulnerabilities { get; init; } = new();
+        /// <summary>Raw JSON exactly as Trivy returned it. Persisted on both success and failure.</summary>
+        public string? RawOutput { get; init; }
+        /// <summary>Non-null when parsing or invocation failed.</summary>
+        public string? Error { get; init; }
+        public bool Success => Error == null;
+    }
+
     public TrivyScannerService(
         ScannerDbContext db,
         ILogger<TrivyScannerService> logger,
@@ -79,65 +98,117 @@ public class TrivyScannerService
 
     private async Task RunScanAsync(CveReport report, string artifactPath)
     {
+        TrivyScanResult scanResult;
+        string? scanError = null;
+
         try
         {
             var trivyServerUrl = _config["Trivy:ServerUrl"] ?? "http://trivy-server:8080";
 
-            List<Vulnerability>? vulnerabilities;
-
             // Try Trivy Server API first
+            TrivyScanResult serverResult;
             try
             {
-                vulnerabilities = await ScanViaServerApiAsync(trivyServerUrl, artifactPath);
+                serverResult = await ScanViaServerApiAsync(trivyServerUrl, artifactPath);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Trivy Server API failed, falling back to CLI for artifact {ArtifactId}", report.ArtifactId);
-                vulnerabilities = await ScanViaCliAsync(artifactPath);
+                serverResult = new TrivyScanResult { Error = ex.Message };
             }
 
-            // Update report with vulnerability counts
-            report.Status = ScanStatus.Completed;
-            report.CompletedAt = DateTime.UtcNow;
-            report.CriticalCount = vulnerabilities.Count(v => v.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase));
-            report.HighCount = vulnerabilities.Count(v => v.Severity.Equals("HIGH", StringComparison.OrdinalIgnoreCase));
-            report.MediumCount = vulnerabilities.Count(v => v.Severity.Equals("MEDIUM", StringComparison.OrdinalIgnoreCase));
-            report.LowCount = vulnerabilities.Count(v => v.Severity.Equals("LOW", StringComparison.OrdinalIgnoreCase));
-            report.Summary = $"Found {vulnerabilities.Count} vulnerabilities ({report.CriticalCount} critical, {report.HighCount} high)";
-            report.RawOutput = JsonSerializer.Serialize(vulnerabilities);
-
-            foreach (var vuln in vulnerabilities)
+            // Fall back to CLI only when the server call itself threw or reported
+            // failure. If the server succeeded (even with zero vulns) we trust it.
+            if (serverResult.Success)
             {
-                vuln.CveReportId = report.Id;
-                _db.Vulnerabilities.Add(vuln);
+                scanResult = serverResult;
             }
-
-            _db.CveReports.Update(report);
-            await _db.SaveChangesAsync();
-
-            // Invalidate cache
-            await _cache.RemoveAsync(CacheKeys.ScanReport(report.Id));
-            await _cache.RemoveAsync(CacheKeys.ScanArtifactReports(report.ArtifactId));
-
-            _logger.LogInformation("CVE scan completed for artifact {ArtifactId}: {Count} vulnerabilities found",
-                report.ArtifactId, vulnerabilities.Count);
+            else
+            {
+                scanResult = await ScanViaCliAsync(artifactPath);
+                // Preserve the server-side failure reason for the report summary.
+                if (!scanResult.Success && !string.IsNullOrEmpty(serverResult.Error))
+                    scanError = $"server: {serverResult.Error}; cli: {scanResult.Error}";
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "CVE scan failed for artifact {ArtifactId}", report.ArtifactId);
-            report.Status = ScanStatus.Failed;
-            report.CompletedAt = DateTime.UtcNow;
-            report.Summary = $"Scan failed: {ex.Message}";
-            _db.CveReports.Update(report);
+            FailReport(report, ex.Message, rawOutput: null);
             await _db.SaveChangesAsync();
+            return;
         }
+
+        // A parse failure (after server + CLI fallback) must NOT be reported as a
+        // clean scan. Previously a parse exception was swallowed and an empty
+        // vulnerability list surfaced as "0 critical, 0 high", which the signing
+        // gate treats as a pass. Fail the report instead.
+        if (!scanResult.Success)
+        {
+            var error = string.IsNullOrEmpty(scanError) ? scanResult.Error : scanError;
+            _logger.LogError("Trivy response could not be parsed for artifact {ArtifactId}: {Error}. RawOutput will be persisted for diagnosis.",
+                report.ArtifactId, error ?? "unknown error");
+            FailReport(report, $"Trivy output parse failed: {error}", rawOutput: scanResult.RawOutput);
+            await _db.SaveChangesAsync();
+            return;
+        }
+
+        var vulnerabilities = scanResult.Vulnerabilities;
+
+        // Update report with vulnerability counts. Severity is normalized to a
+        // canonical uppercase token in ParseVulnerability, so OrdinalIgnoreCase
+        // is belt-and-suspenders rather than load-bearing. Anything outside the
+        // known set lands in UnknownCount and blocks signing.
+        report.Status = ScanStatus.Completed;
+        report.CompletedAt = DateTime.UtcNow;
+        report.CriticalCount = vulnerabilities.Count(v => v.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase));
+        report.HighCount = vulnerabilities.Count(v => v.Severity.Equals("HIGH", StringComparison.OrdinalIgnoreCase));
+        report.MediumCount = vulnerabilities.Count(v => v.Severity.Equals("MEDIUM", StringComparison.OrdinalIgnoreCase));
+        report.LowCount = vulnerabilities.Count(v => v.Severity.Equals("LOW", StringComparison.OrdinalIgnoreCase));
+        report.UnknownCount = vulnerabilities.Count(v => v.Severity.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase));
+        report.Summary = $"Found {vulnerabilities.Count} vulnerabilities ({report.CriticalCount} critical, {report.HighCount} high, {report.UnknownCount} unknown)";
+        // Persist the actual scanner output for diagnosis — not a re-serialization
+        // of our parsed objects, which would hide exactly the malformed payloads
+        // we'd need to debug.
+        report.RawOutput = scanResult.RawOutput;
+
+        foreach (var vuln in vulnerabilities)
+        {
+            vuln.CveReportId = report.Id;
+            _db.Vulnerabilities.Add(vuln);
+        }
+
+        _db.CveReports.Update(report);
+        await _db.SaveChangesAsync();
+
+        // Invalidate cache
+        await _cache.RemoveAsync(CacheKeys.ScanReport(report.Id));
+        await _cache.RemoveAsync(CacheKeys.ScanArtifactReports(report.ArtifactId));
+
+        _logger.LogInformation("CVE scan completed for artifact {ArtifactId}: {Count} vulnerabilities found",
+            report.ArtifactId, vulnerabilities.Count);
+    }
+
+    /// <summary>Mark <paramref name="report"/> failed and record the reason + raw output.</summary>
+    private void FailReport(CveReport report, string error, string? rawOutput)
+    {
+        report.Status = ScanStatus.Failed;
+        report.CompletedAt = DateTime.UtcNow;
+        report.Summary = $"Scan failed: {error}";
+        report.CriticalCount = 0;
+        report.HighCount = 0;
+        report.MediumCount = 0;
+        report.LowCount = 0;
+        report.UnknownCount = 0;
+        report.RawOutput = rawOutput;
+        _db.CveReports.Update(report);
     }
 
     /// <summary>
     /// Scan using Trivy Server API (HTTP/Twirp protocol).
     /// POST to /twirp/trivy.v1.Scanner/Scan with JSON body.
     /// </summary>
-    private async Task<List<Vulnerability>> ScanViaServerApiAsync(string serverUrl, string artifactPath)
+    private async Task<TrivyScanResult> ScanViaServerApiAsync(string serverUrl, string artifactPath)
     {
         var client = _httpClientFactory.CreateClient("TrivyServer");
         client.BaseAddress = new Uri(serverUrl);
@@ -163,17 +234,16 @@ public class TrivyScannerService
     /// <summary>
     /// Fallback: scan using Trivy CLI with Process.Start.
     /// </summary>
-    private async Task<List<Vulnerability>> ScanViaCliAsync(string artifactPath)
+    private async Task<TrivyScanResult> ScanViaCliAsync(string artifactPath)
     {
-        var vulnerabilities = new List<Vulnerability>();
-
         if (!File.Exists(artifactPath))
         {
             _logger.LogWarning("Artifact file not found: {Path}", artifactPath);
-            return vulnerabilities;
+            return new TrivyScanResult { Error = $"artifact file not found: {artifactPath}" };
         }
 
         var tempReport = Path.Combine(Path.GetTempPath(), $"trivy-report-{Guid.NewGuid():N}.json");
+        string? stderr = null;
 
         try
         {
@@ -194,36 +264,43 @@ public class TrivyScannerService
 
             if (process.ExitCode != 0)
             {
-                var stderr = await process.StandardError.ReadToEndAsync();
+                stderr = await process.StandardError.ReadToEndAsync();
                 _logger.LogWarning("Trivy CLI exited with code {Code}: {Error}", process.ExitCode, stderr);
             }
 
-            if (File.Exists(tempReport))
+            if (!File.Exists(tempReport))
             {
-                var json = await File.ReadAllTextAsync(tempReport);
-                vulnerabilities = ParseTrivyCliResponse(json);
+                return new TrivyScanResult
+                {
+                    Error = $"trivy produced no report (exit code {process.ExitCode}). stderr: {stderr ?? "<none>"}"
+                };
             }
+
+            var json = await File.ReadAllTextAsync(tempReport);
+            var result = ParseTrivyCliResponse(json);
+            // Surface CLI stderr as a diagnostic breadcrumb but don't override a
+            // successful parse; trivy writes warnings to stderr even on success.
+            if (!string.IsNullOrWhiteSpace(stderr) && result.Success)
+                _logger.LogDebug("Trivy CLI succeeded with stderr for artifact: {Error}", stderr);
+            return result;
         }
         finally
         {
             if (File.Exists(tempReport))
                 try { File.Delete(tempReport); } catch { }
         }
-
-        return vulnerabilities;
     }
 
     /// <summary>
     /// Parse Trivy Server API JSON response into Vulnerability objects.
     /// </summary>
-    private List<Vulnerability> ParseTrivyServerResponse(string jsonResponse)
+    private TrivyScanResult ParseTrivyServerResponse(string jsonResponse)
     {
-        var vulnerabilities = new List<Vulnerability>();
-
         try
         {
             using var doc = JsonDocument.Parse(jsonResponse);
             var root = doc.RootElement;
+            var vulnerabilities = new List<Vulnerability>();
 
             // Trivy Server response has a "results" array
             if (root.TryGetProperty("results", out var results))
@@ -233,9 +310,7 @@ public class TrivyScannerService
                     if (result.TryGetProperty("vulnerabilities", out var vulns))
                     {
                         foreach (var vuln in vulns.EnumerateArray())
-                        {
                             vulnerabilities.Add(ParseVulnerability(vuln));
-                        }
                     }
                 }
             }
@@ -247,32 +322,35 @@ public class TrivyScannerService
                     if (result.TryGetProperty("vulnerabilities", out var vulns))
                     {
                         foreach (var vuln in vulns.EnumerateArray())
-                        {
                             vulnerabilities.Add(ParseVulnerability(vuln));
-                        }
                     }
                 }
             }
+            // A well-formed Trivy payload may legitimately contain zero results
+            // (e.g. an empty array or an object with no "results" key). That is a
+            // clean scan, NOT a parse failure — distinguishing the two is the
+            // whole point of carrying Success separately from the vuln count.
+            return new TrivyScanResult { Vulnerabilities = vulnerabilities, RawOutput = jsonResponse };
         }
         catch (Exception ex)
         {
+            // Do NOT swallow this as "0 vulnerabilities". Return failure so the
+            // report is marked Failed and the signing gate blocks.
             _logger.LogWarning(ex, "Failed to parse Trivy Server response");
+            return new TrivyScanResult { Error = ex.Message, RawOutput = jsonResponse };
         }
-
-        return vulnerabilities;
     }
 
     /// <summary>
     /// Parse Trivy CLI JSON output into Vulnerability objects.
     /// </summary>
-    private List<Vulnerability> ParseTrivyCliResponse(string jsonResponse)
+    private TrivyScanResult ParseTrivyCliResponse(string jsonResponse)
     {
-        var vulnerabilities = new List<Vulnerability>();
-
         try
         {
             using var doc = JsonDocument.Parse(jsonResponse);
             var root = doc.RootElement;
+            var vulnerabilities = new List<Vulnerability>();
 
             // CLI output has a "Results" array
             if (root.TryGetProperty("Results", out var results))
@@ -282,19 +360,18 @@ public class TrivyScannerService
                     if (result.TryGetProperty("Vulnerabilities", out var vulns))
                     {
                         foreach (var vuln in vulns.EnumerateArray())
-                        {
                             vulnerabilities.Add(ParseVulnerability(vuln));
-                        }
                     }
                 }
             }
+            // See ParseTrivyServerResponse: a "Results": [] with no vulns is clean.
+            return new TrivyScanResult { Vulnerabilities = vulnerabilities, RawOutput = jsonResponse };
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to parse Trivy CLI response");
+            return new TrivyScanResult { Error = ex.Message, RawOutput = jsonResponse };
         }
-
-        return vulnerabilities;
     }
 
     private string GetStringProperty(JsonElement vuln, params string[] names)
@@ -314,18 +391,53 @@ public class TrivyScannerService
     {
         var cveId = GetStringProperty(vuln, "VulnerabilityID", "vulnerability_id");
         var severity = GetStringProperty(vuln, "Severity", "severity");
+        var title = GetStringProperty(vuln, "Title", "title");
+        // Read the real Description field, falling back to Title (Trivy sometimes
+        // omits Description). The old code set Description = Title unconditionally
+        // and discarded the actual advisory text.
+        var description = GetStringProperty(vuln, "Description", "description");
+        if (string.IsNullOrWhiteSpace(description))
+            description = title;
+
+        var pkg = GetStringProperty(vuln, "PkgName", "pkg_name");
 
         return new Vulnerability
         {
             Id = Guid.NewGuid(),
             CveId = string.IsNullOrEmpty(cveId) ? "unknown" : cveId,
-            Package = GetStringProperty(vuln, "PkgName", "pkg_name"),
-            Severity = string.IsNullOrEmpty(severity) ? "UNKNOWN" : severity,
+            Package = pkg,
+            PackageName = pkg,
+            Title = title,
+            Severity = NormalizeSeverity(severity),
             InstalledVersion = GetStringProperty(vuln, "InstalledVersion", "installed_version"),
             FixedVersion = GetStringProperty(vuln, "FixedVersion", "fixed_version"),
-            Description = GetStringProperty(vuln, "Title", "title"),
+            Description = description,
             PublishedDate = DateTime.UtcNow,
             CreatedAt = DateTime.UtcNow
+        };
+    }
+
+    /// <summary>
+    /// Map a raw severity string to a canonical token. Unknown/empty values map
+    /// to <c>UNKNOWN</c> rather than being passed through verbatim, so an
+    /// unrecognized severity is counted in <c>UnknownCount</c> and conservatively
+    /// blocks signing — instead of silently bypassing the Critical/High gate.
+    /// </summary>
+    private static string NormalizeSeverity(string severity)
+    {
+        if (string.IsNullOrWhiteSpace(severity))
+            return "UNKNOWN";
+
+        return severity.Trim().ToUpperInvariant() switch
+        {
+            "CRITICAL" => "CRITICAL",
+            "HIGH" => "HIGH",
+            "MEDIUM" => "MEDIUM",
+            "LOW" => "LOW",
+            // Trivy occasionally emits "UNKNOWN" for un-scored advisories; keep it
+            // in its own bucket so it blocks signing instead of being ignored.
+            "UNKNOWN" => "UNKNOWN",
+            _ => "UNKNOWN"
         };
     }
 

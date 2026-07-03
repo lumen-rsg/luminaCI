@@ -15,6 +15,13 @@ public class CveReport
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
 
+    /// <summary>
+    /// Vulnerabilities whose severity could not be classified into
+    /// Critical/High/Medium/Low. Treated conservatively (blocks signing)
+    /// because an unrecognized severity must never silently pass the gate.
+    /// </summary>
+    public int UnknownCount { get; set; }
+
     /// <summary>When this report record was created (start of scan).</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

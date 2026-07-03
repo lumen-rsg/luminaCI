@@ -50,8 +50,34 @@ public class CveScanCompletedConsumer : IConsumer<CveScanCompleted>
 
             _logger.LogInformation("Updated CVE scan status for artifact {ArtifactId} to {Status}", msg.ArtifactId, msg.Status);
 
-            // Only request PGP signing if CVE scan passed with no critical/high vulnerabilities
-            if (msg.Status == ScanStatus.Completed && msg.CriticalCount == 0 && msg.HighCount == 0)
+            // Fail-closed for a non-Completed scan (Failed/Error/Running). A Failed
+            // scan used to fall through here with no signing request and no build
+            // status change, leaving the artifact "successfully built but never
+            // signed" — and because the publish gate only blocks *unsigned*
+            // artifacts, a transient scan/parse failure would leave it dangling
+            // forever. Mark the build Failed so it can never be published and an
+            // operator must re-run it. (This pairs with ScannerService now marking
+            // a parse failure Status=Failed instead of "0 vulnerabilities".)
+            if (msg.Status != ScanStatus.Completed)
+            {
+                _logger.LogError("CVE scan did not complete (Status={Status}) for artifact {ArtifactId} — failing build {JobId}: result is not trustworthy enough to sign",
+                    msg.Status, msg.ArtifactId, job.Id);
+
+                job.Status = BuildStatus.Failed;
+                job.CompletedAt = DateTime.UtcNow;
+                var failMsg = $"[{DateTime.UtcNow:O}] PUBLISH BLOCKED: CVE scan finished with Status={msg.Status} for artifact '{artifact.FileName}'. The artifact cannot be signed or published until the scan completes cleanly. Re-run the build.";
+                job.Logs = string.IsNullOrEmpty(job.Logs) ? failMsg : $"{job.Logs}\n{failMsg}";
+                _db.Update(job);
+                await _db.SaveChangesAsync();
+                return;
+            }
+
+            // Only request PGP signing if CVE scan passed with no critical/high
+            // vulnerabilities AND no unclassified-severity ones. UnknownCount is
+            // treated conservatively: a vuln we couldn't classify must never
+            // silently pass the gate (it may well be critical/high under a label
+            // we didn't recognize).
+            if (msg.CriticalCount == 0 && msg.HighCount == 0 && msg.UnknownCount == 0)
             {
                 var activeKeyId = await GetActivePgpKeyIdAsync();
                 if (activeKeyId.HasValue)
@@ -79,10 +105,10 @@ public class CveScanCompletedConsumer : IConsumer<CveScanCompleted>
                     await _db.SaveChangesAsync();
                 }
             }
-            else if (msg.Status == ScanStatus.Completed)
+            else
             {
-                _logger.LogWarning("CVE scan found {Critical} critical and {High} high vulnerabilities for artifact {ArtifactId} — skipping PGP signing",
-                    msg.CriticalCount, msg.HighCount, msg.ArtifactId);
+                _logger.LogWarning("CVE scan found {Critical} critical, {High} high, {Unknown} unknown-severity vulnerabilities for artifact {ArtifactId} — skipping PGP signing",
+                    msg.CriticalCount, msg.HighCount, msg.UnknownCount, msg.ArtifactId);
             }
         }
         catch (Exception ex)

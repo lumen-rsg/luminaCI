@@ -33,7 +33,13 @@ public record CveScanRequested(Guid ArtifactId, string ArtifactPath, string File
 /// Sent by ScannerService when CVE scan completes.
 /// Consumed by BuildService to update artifact scan status.
 /// </summary>
-public record CveScanCompleted(Guid ArtifactId, ScanStatus Status, int CriticalCount, int HighCount, int MediumCount, int LowCount, DateTime CompletedAt);
+/// <remarks>
+/// <see cref="UnknownCount"/> counts vulnerabilities whose severity could not
+/// be classified (Trivy returned an unrecognized or empty value). BuildService
+/// treats unknowns conservatively and blocks signing when it is non-zero, so a
+/// parser/labeling failure cannot masquerade as a clean scan.
+/// </remarks>
+public record CveScanCompleted(Guid ArtifactId, ScanStatus Status, int CriticalCount, int HighCount, int MediumCount, int LowCount, int UnknownCount, DateTime CompletedAt);
 
 /// <summary>
 /// Sent by BuildService to request hash storage for an artifact.

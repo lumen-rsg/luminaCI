@@ -116,6 +116,7 @@ static async Task RunMigrationsAsync(DbContext db)
     var migrations = new (string Sql, string Description)[]
     {
         ("ALTER TABLE \"CveReports\" ALTER COLUMN \"ScannerType\" TYPE varchar(50)", "Widen ScannerType varchar(20)->varchar(50)"),
+        ("ALTER TABLE \"CveReports\" ADD COLUMN \"UnknownCount\" integer NOT NULL DEFAULT 0", "Add UnknownCount column (uncategorized-severity vulns)"),
     };
 
     foreach (var (sql, desc) in migrations)
