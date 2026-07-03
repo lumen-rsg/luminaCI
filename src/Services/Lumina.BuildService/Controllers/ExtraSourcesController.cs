@@ -1,6 +1,7 @@
 using Lumina.BuildService.Data;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Extensions;
+using Lumina.Shared.Models.Enums;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -176,6 +177,12 @@ public class ExtraSourcesController : ControllerBase
         if (!await PipelineExistsAsync(pipelineId))
             return NotFound(new ApiResponse<object>(false, null, "Pipeline not found", null));
 
+        // Refuse to mutate sources while a build is consuming them — same guard
+        // PipelineEngine.DeletePipelineAsync applies, to avoid racing a build that
+        // is mid-copy of these files into its container.
+        if (await PipelineHasActiveBuildsAsync(pipelineId) is { } conflict)
+            return conflict;
+
         var pipelineDir = PipelineDir(pipelineId);
         string target;
         try
@@ -213,6 +220,9 @@ public class ExtraSourcesController : ControllerBase
         if (!await PipelineExistsAsync(pipelineId))
             return NotFound(new ApiResponse<object>(false, null, "Pipeline not found", null));
 
+        if (await PipelineHasActiveBuildsAsync(pipelineId) is { } conflict)
+            return conflict;
+
         var pipelineDir = PipelineDir(pipelineId);
         if (Directory.Exists(pipelineDir))
         {
@@ -237,6 +247,24 @@ public class ExtraSourcesController : ControllerBase
 
     private async Task<bool> PipelineExistsAsync(Guid pipelineId)
         => await _db.Pipelines.AnyAsync(p => p.Id == pipelineId);
+
+    /// <summary>
+    /// Returns a 409 conflict result when the pipeline has any queued or
+    /// building jobs, so sources can't be mutated while a build is mid-copy of
+    /// them into its container. Mirrors the guard in
+    /// PipelineEngine.DeletePipelineAsync.
+    /// </summary>
+    private async Task<ActionResult<ApiResponse<object>>?> PipelineHasActiveBuildsAsync(Guid pipelineId)
+    {
+        var activeCount = await _db.BuildJobs
+            .CountAsync(b => b.PipelineId == pipelineId
+                             && (b.Status == BuildStatus.Queued || b.Status == BuildStatus.Building));
+        if (activeCount == 0)
+            return null;
+
+        return Conflict(new ApiResponse<object>(false, null,
+            $"Cannot modify extra sources while {activeCount} build(s) are running or queued for this pipeline", null));
+    }
 
     /// <summary>
     /// Validates the optional subFolder and returns the absolute subdirectory
