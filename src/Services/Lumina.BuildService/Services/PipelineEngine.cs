@@ -1,7 +1,9 @@
 using Lumina.BuildService.Data;
+using Lumina.Shared.Events;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.BuildService.Services;
@@ -12,13 +14,47 @@ public class PipelineEngine
     private readonly DockerBuildService _dockerBuild;
     private readonly ILogger<PipelineEngine> _logger;
     private readonly RedisCacheService _cache;
+    private readonly IBus _bus;
 
-    public PipelineEngine(BuildDbContext db, DockerBuildService dockerBuild, ILogger<PipelineEngine> logger, RedisCacheService cache)
+    public PipelineEngine(BuildDbContext db, DockerBuildService dockerBuild, ILogger<PipelineEngine> logger, RedisCacheService cache, IBus bus)
     {
         _db = db;
         _dockerBuild = dockerBuild;
         _logger = logger;
         _cache = cache;
+        _bus = bus;
+    }
+
+    /// <summary>
+    /// Verifies an active PGP signing key exists before allowing a build of a
+    /// pipeline that declares a <see cref="StepType.Sign"/> step. Without an
+    /// active key the build would silently degrade to an unsigned artifact that
+    /// then cannot be published — failing the trigger early gives the operator a
+    /// clear, recoverable error instead of a wasted build.
+    /// </summary>
+    private async Task RequireActiveSigningKeyAsync()
+    {
+        try
+        {
+            var response = await _bus.Request<GetActiveSigningKey, ActiveSigningKey>(
+                new GetActiveSigningKey(), timeout: TimeSpan.FromSeconds(10));
+
+            if (!response.Message.KeyId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "No active PGP key. Generate a key in Security settings before triggering a pipeline that includes a Sign step — unsigned artifacts cannot be published.");
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            throw; // our own gate message — propagate verbatim
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to confirm an active PGP key exists via the SecurityService bus; rejecting build trigger (fail-closed)");
+            throw new InvalidOperationException(
+                "Could not confirm an active PGP signing key (SecurityService unreachable). Cannot start a Sign-enabled build without assurance that the artifact can be signed.");
+        }
     }
 
     public async Task<Pipeline> CreatePipelineAsync(Shared.DTOs.CreatePipelineRequest request, string createdBy)
@@ -70,6 +106,16 @@ public class PipelineEngine
 
         if (pipeline == null)
             throw new InvalidOperationException($"Pipeline {pipelineId} not found");
+
+        // Fail-closed: a pipeline that declares a Sign step must have an active
+        // PGP key before any build starts, otherwise the artifact would be built
+        // and scanned only to fail publication later. TriggerAuto funnels
+        // through here too, so this single gate covers both manual and webhook
+        // entry points.
+        if (pipeline.Steps.Any(s => s.Type == StepType.Sign))
+        {
+            await RequireActiveSigningKeyAsync();
+        }
 
         // Auto-populate SourceUrl from pipeline git config if not provided
         var sourceUrl = request.SourceUrl;
@@ -179,6 +225,14 @@ public class PipelineEngine
     /// This is used when sources are downloaded by the SourceService (git, http, ftp, rsync, svn, hg).
     /// The SourceService downloads sources to MinIO, then we download them locally and mount into the build container.
     /// </summary>
+    /// <remarks>
+    /// This path is NOT subject to the Sign-step key gate because the pipelines
+    /// it auto-creates (see below) declare only a Build step — there is no Sign
+    /// step to satisfy. Unsigned artifacts produced here are still caught
+    /// downstream: the CveScanCompletedConsumer fails the build when no active
+    /// key exists, and the RepositoryService publish gate rejects any artifact
+    /// lacking a stored PGP signature.
+    /// </remarks>
     public async Task<BuildJob> TriggerBuildFromConfigAsync(
         string packageName, string sourceDir, string specContent, string specName,
         string? buildImage = null, string triggeredBy = "source-service")

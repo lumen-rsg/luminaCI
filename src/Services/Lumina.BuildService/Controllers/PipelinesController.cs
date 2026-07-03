@@ -74,9 +74,18 @@ public class PipelinesController : ControllerBase
     [HttpPost("{id:guid}/trigger")]
     public async Task<ActionResult<ApiResponse<BuildJobResponse>>> Trigger(Guid id, [FromBody] TriggerBuildRequest request)
     {
-        var job = await _engine.TriggerBuildAsync(id, request);
-        var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
-        return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Build triggered"));
+        try
+        {
+            var job = await _engine.TriggerBuildAsync(id, request);
+            var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
+            return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Build triggered"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Includes the Sign-step key gate (no active PGP key) and
+            // "pipeline not found"; surface as 400 rather than a raw 500.
+            return BadRequest(new ApiResponse<BuildJobResponse>(false, null, ex.Message, null));
+        }
     }
 
     [HttpPut("{id:guid}")]

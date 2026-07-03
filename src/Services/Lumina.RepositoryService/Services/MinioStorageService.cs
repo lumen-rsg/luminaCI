@@ -1,5 +1,7 @@
 using Lumina.RepositoryService.Data;
+using Lumina.Shared.Events;
 using Lumina.Shared.Models;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Minio;
 using Minio.DataModel.Args;
@@ -12,13 +14,15 @@ public class MinioStorageService
     private readonly IMinioClient _minio;
     private readonly RepositoryManagerService _repoManager;
     private readonly ILogger<MinioStorageService> _logger;
+    private readonly IBus _bus;
 
-    public MinioStorageService(RepositoryDbContext db, IMinioClient minio, RepositoryManagerService repoManager, ILogger<MinioStorageService> logger)
+    public MinioStorageService(RepositoryDbContext db, IMinioClient minio, RepositoryManagerService repoManager, ILogger<MinioStorageService> logger, IBus bus)
     {
         _db = db;
         _minio = minio;
         _repoManager = repoManager;
         _logger = logger;
+        _bus = bus;
     }
 
     public async Task<PackageRepository> CreateRepositoryAsync(string name, string displayName, string basePath, string arch, string distribution, string createdBy)
@@ -52,6 +56,40 @@ public class MinioStorageService
         _db.Repositories.Add(repo);
         await _db.SaveChangesAsync();
         return repo;
+    }
+
+    /// <summary>
+    /// Fetches the stored PGP signature for an artifact from BuildService over
+    /// the message bus and rejects publication if none exists. RepositoryService
+    /// has no view of BuildDbContext, so it cannot read the signature directly.
+    /// A null/empty signature means the artifact was never signed (no active key,
+    /// signing failed, or the CVE scan skipped signing) and must not be
+    /// published — this is the authoritative fail-closed gate for the
+    /// artifact-to-repo path.
+    /// </summary>
+    private async Task<string> GetRequiredArtifactSignatureAsync(Guid artifactId)
+    {
+        string? signature = null;
+        try
+        {
+            var response = await _bus.Request<GetArtifactSignature, ArtifactSignature>(
+                new GetArtifactSignature(artifactId), timeout: TimeSpan.FromSeconds(10));
+            signature = response.Message.PgpSignature;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch PGP signature for artifact {ArtifactId} from BuildService via bus", artifactId);
+            throw new InvalidOperationException(
+                $"Could not confirm a PGP signature for artifact {artifactId} (BuildService unreachable). Unsigned packages cannot be published.");
+        }
+
+        if (string.IsNullOrWhiteSpace(signature))
+        {
+            throw new InvalidOperationException(
+                $"Artifact {artifactId} is not PGP-signed. Unsigned packages cannot be published — generate an active PGP key and ensure the Sign stage completed before publishing.");
+        }
+
+        return signature;
     }
 
     /// <summary>
@@ -133,6 +171,7 @@ public class MinioStorageService
             StoragePath = $"{repo.BasePath}/{repo.Arch}/{fileName}",
             FileSize = pkgSize,
             HashSha256 = pkgHash,
+            PgpSignature = await GetRequiredArtifactSignatureAsync(artifactId),
             PublishedAt = DateTime.UtcNow,
             PublishedBy = publishedBy
         };
@@ -167,9 +206,20 @@ public class MinioStorageService
 
     /// <summary>
     /// Uploads an RPM file directly to the repository and creates a database record.
+    /// The caller MUST have already verified <paramref name="pgpSignature"/> against
+    /// the uploaded RPM (see <see cref="SignatureVerificationService"/>); an empty
+    /// signature is rejected here as a defense-in-depth check.
     /// </summary>
-    public async Task<Package> UploadAndPublishPackageAsync(Guid repositoryId, string fileName, Stream fileStream, long fileSize, string publishedBy)
+    public async Task<Package> UploadAndPublishPackageAsync(Guid repositoryId, string fileName, Stream fileStream, long fileSize, string publishedBy, string? pgpSignature)
     {
+        // Defense-in-depth: the controller must verify the signature before
+        // calling this, but reject here too in case a future caller forgets.
+        if (string.IsNullOrWhiteSpace(pgpSignature))
+        {
+            throw new InvalidOperationException(
+                "Uploaded RPM has no verified PGP signature. Provide a detached .asc signature that verifies against the active public key.");
+        }
+
         var repo = await _db.Repositories.FindAsync(repositoryId)
             ?? throw new InvalidOperationException($"Repository {repositoryId} not found");
 
@@ -208,6 +258,7 @@ public class MinioStorageService
             StoragePath = $"{repo.BasePath}/{repo.Arch}/{fileName}",
             FileSize = actualSize,
             HashSha256 = hash,
+            PgpSignature = pgpSignature,
             PublishedAt = DateTime.UtcNow,
             PublishedBy = publishedBy
         };

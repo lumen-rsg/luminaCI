@@ -33,6 +33,7 @@ try
 
     builder.Services.AddScoped<RepositoryManagerService>();
     builder.Services.AddScoped<MinioStorageService>();
+    builder.Services.AddScoped<SignatureVerificationService>();
 
     // Redis distributed cache
     builder.Services.AddStackExchangeRedisCache(options =>

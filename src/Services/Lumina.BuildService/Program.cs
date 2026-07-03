@@ -51,6 +51,7 @@ try
         x.AddConsumer<CveScanCompletedConsumer>();
         x.AddConsumer<PackageSignedConsumer>();
         x.AddConsumer<BuildTriggerFromConfigConsumer>();
+        x.AddConsumer<GetArtifactSignatureConsumer>();
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -65,6 +66,7 @@ try
                 e.ConfigureConsumer<CveScanCompletedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSignedConsumer>(ctx);
                 e.ConfigureConsumer<BuildTriggerFromConfigConsumer>(ctx);
+                e.ConfigureConsumer<GetArtifactSignatureConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));

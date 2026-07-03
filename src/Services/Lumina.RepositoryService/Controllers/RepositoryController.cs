@@ -15,12 +15,14 @@ public class RepositoryController : ControllerBase
 {
     private readonly Services.MinioStorageService _storage;
     private readonly Services.RepositoryManagerService _repoManager;
+    private readonly Services.SignatureVerificationService _verification;
     private readonly ILogger<RepositoryController> _logger;
 
-    public RepositoryController(Services.MinioStorageService storage, Services.RepositoryManagerService repoManager, ILogger<RepositoryController> logger)
+    public RepositoryController(Services.MinioStorageService storage, Services.RepositoryManagerService repoManager, Services.SignatureVerificationService verification, ILogger<RepositoryController> logger)
     {
         _storage = storage;
         _repoManager = repoManager;
+        _verification = verification;
         _logger = logger;
     }
 
@@ -76,12 +78,14 @@ public class RepositoryController : ControllerBase
 
     /// <summary>
     /// Upload an RPM file directly to a repository.
-    /// Accepts multipart/form-data with file and repositoryId.
+    /// Accepts multipart/form-data with file, a detached PGP signature (.asc),
+    /// and repositoryId. The signature is verified against the active public key
+    /// before the package is published — unsigned/unverified RPMs are rejected.
     /// </summary>
     [HttpPost("upload")]
     [Authorize(Policy = AuthPolicies.Admin)]
     [RequestSizeLimit(500 * 1024 * 1024)] // 500MB limit
-    public async Task<ActionResult<ApiResponse<Package>>> UploadPackage([FromForm] IFormFile file, [FromForm] Guid repositoryId, [FromForm] string? publishedBy)
+    public async Task<ActionResult<ApiResponse<Package>>> UploadPackage([FromForm] IFormFile file, [FromForm] IFormFile signature, [FromForm] Guid repositoryId, [FromForm] string? publishedBy)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<Package>(false, null, "No file uploaded", null));
@@ -89,16 +93,27 @@ public class RepositoryController : ControllerBase
         if (!file.FileName.EndsWith(".rpm", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new ApiResponse<Package>(false, null, "Only .rpm files are allowed", null));
 
+        if (signature == null || signature.Length == 0)
+            return BadRequest(new ApiResponse<Package>(false, null, "A detached PGP signature (.asc) is required. Unsigned RPMs cannot be uploaded.", null));
+
         try
         {
+            // Verify the detached signature against the active public key before
+            // anything is written to the repository. Throws on failure.
+            var verifiedSignature = await _verification.VerifyAsync(
+                file.OpenReadStream(),
+                signature.OpenReadStream(),
+                file.FileName);
+
             var package = await _storage.UploadAndPublishPackageAsync(
                 repositoryId,
                 file.FileName,
                 file.OpenReadStream(),
                 file.Length,
-                publishedBy ?? "upload");
+                publishedBy ?? "upload",
+                verifiedSignature);
 
-            return Ok(new ApiResponse<Package>(true, package, null, "Package uploaded and repository metadata updated"));
+            return Ok(new ApiResponse<Package>(true, package, null, "Package uploaded, signature verified, and repository metadata updated"));
         }
         catch (Exception ex)
         {

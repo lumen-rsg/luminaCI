@@ -62,7 +62,21 @@ public class CveScanCompletedConsumer : IConsumer<CveScanCompleted>
                 }
                 else
                 {
-                    _logger.LogWarning("No active PGP key found — skipping signing for artifact {ArtifactId}. Create a PGP key in Security settings.", msg.ArtifactId);
+                    // Fail-closed: an artifact that passed its CVE scan but cannot be
+                    // signed must NOT silently degrade to an unsigned "success" — that
+                    // would let an unsigned RPM reach publication. Mark the build
+                    // Failed so the publish gate (and the UI) treat it correctly.
+                    // Operators generate a PGP key in Security settings to recover.
+                    _logger.LogError("No active PGP key found — failing build {JobId} for artifact {ArtifactId}: unsigned artifacts cannot be published",
+                        job.Id, msg.ArtifactId);
+
+                    job.Status = BuildStatus.Failed;
+                    job.CompletedAt = DateTime.UtcNow;
+                    var failMsg = $"[{DateTime.UtcNow:O}] PUBLISH BLOCKED: no active PGP key — artifact '{artifact.FileName}' cannot be signed. Generate a PGP key in Security settings and re-run the build.";
+                    job.Logs = string.IsNullOrEmpty(job.Logs) ? failMsg : $"{job.Logs}\n{failMsg}";
+                    artifact.CveScanStatus = msg.Status;
+                    _db.Update(job);
+                    await _db.SaveChangesAsync();
                 }
             }
             else if (msg.Status == ScanStatus.Completed)

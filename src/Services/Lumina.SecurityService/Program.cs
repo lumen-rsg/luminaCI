@@ -41,6 +41,7 @@ try
         x.AddConsumer<HashStoreRequestedConsumer>();
         x.AddConsumer<PackageSigningRequestedConsumer>();
         x.AddConsumer<GetActiveSigningKeyConsumer>();
+        x.AddConsumer<GetActivePublicKeyConsumer>();
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -55,6 +56,7 @@ try
                 e.ConfigureConsumer<HashStoreRequestedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSigningRequestedConsumer>(ctx);
                 e.ConfigureConsumer<GetActiveSigningKeyConsumer>(ctx);
+                e.ConfigureConsumer<GetActivePublicKeyConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));

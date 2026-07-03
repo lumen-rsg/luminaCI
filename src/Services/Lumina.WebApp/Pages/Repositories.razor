@@ -141,6 +141,11 @@ else
                     <label class="form-label">Select RPM file</label>
                     <InputFile OnChange="HandleFileSelected" accept=".rpm" />
                 </div>
+                <div class="mb-3">
+                    <label class="form-label">Detached PGP signature (.asc) — required</label>
+                    <InputFile OnChange="HandleSignatureSelected" accept=".asc" />
+                    <small class="text-muted">Unsigned RPMs cannot be uploaded. The signature is verified against the active public key before publishing.</small>
+                </div>
                 @if (_selectedFileName != null)
                 {
                     <div class="mb-3 text-sm">
@@ -156,13 +161,13 @@ else
                 {
                     <div class="mb-3">
                         <div class="progress">
-                            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%">Uploading...</div>
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%">Uploading & verifying...</div>
                         </div>
                     </div>
                 }
                 <div class="d-flex gap-2">
-                    <button class="btn btn-success" @onclick="DoUpload" disabled="@(_selectedFile == null || _uploading)">
-                        @(_uploading ? "Uploading..." : "Upload & Update Repo")
+                    <button class="btn btn-success" @onclick="DoUpload" disabled="@(_selectedFile == null || _selectedSignature == null || _uploading)">
+                        @(_uploading ? "Uploading..." : "Upload & Verify")
                     </button>
                     <button class="btn btn-outline-secondary" @onclick="() => _showUpload = false" disabled="@_uploading">Cancel</button>
                 </div>
@@ -187,6 +192,7 @@ else
     private bool _showUpload = false;
     private Guid? _uploadRepoId;
     private IBrowserFile? _selectedFile;
+    private IBrowserFile? _selectedSignature;
     private string? _selectedFileName;
     private long _selectedFileSize;
     private bool _uploading;
@@ -235,6 +241,7 @@ else
     {
         _uploadRepoId = repoId;
         _selectedFile = null;
+        _selectedSignature = null;
         _selectedFileName = null;
         _selectedFileSize = 0;
         _uploading = false;
@@ -248,15 +255,21 @@ else
         _selectedFileSize = e.File.Size;
     }
 
+    private void HandleSignatureSelected(InputFileChangeEventArgs e)
+    {
+        _selectedSignature = e.File;
+    }
+
     private async Task DoUpload()
     {
-        if (_selectedFile == null || !_uploadRepoId.HasValue) return;
+        if (_selectedFile == null || _selectedSignature == null || !_uploadRepoId.HasValue) return;
 
         _uploading = true;
         try
         {
             using var stream = _selectedFile.OpenReadStream(maxAllowedSize: 500 * 1024 * 1024);
-            var result = await Api.UploadPackageAsync(_uploadRepoId.Value, stream, _selectedFile.Name, "web-upload");
+            using var sigStream = _selectedSignature.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            var result = await Api.UploadPackageAsync(_uploadRepoId.Value, stream, _selectedFile.Name, sigStream, _selectedSignature.Name, "web-upload");
 
             if (result?.Success == true)
             {

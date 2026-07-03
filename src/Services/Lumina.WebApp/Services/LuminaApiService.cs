@@ -230,12 +230,15 @@ public class LuminaApiService
         return await resp.Content.ReadFromJsonAsync<ApiResponse<RepositoryResponse>>();
     }
 
-    public async Task<ApiResponse<PackageResponse>?> UploadPackageAsync(Guid repositoryId, Stream fileStream, string fileName, string publishedBy = "upload")
+    public async Task<ApiResponse<PackageResponse>?> UploadPackageAsync(Guid repositoryId, Stream fileStream, string fileName, Stream signatureStream, string signatureFileName, string publishedBy = "upload")
     {
         using var content = new MultipartFormDataContent();
         var fileContent = new StreamContent(fileStream);
         fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-rpm");
         content.Add(fileContent, "file", fileName);
+        var sigContent = new StreamContent(signatureStream);
+        sigContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pgp-signature");
+        content.Add(sigContent, "signature", signatureFileName);
         content.Add(new StringContent(repositoryId.ToString()), "repositoryId");
         content.Add(new StringContent(publishedBy), "publishedBy");
 

@@ -68,3 +68,31 @@ public record GetActiveSigningKey();
 /// active PGP key exists.
 /// </summary>
 public record ActiveSigningKey(Guid? KeyId);
+
+/// <summary>
+/// Request the stored PGP signature for a build artifact. RepositoryService
+/// uses this at publish time to enforce the "no unsigned publication" gate —
+/// it has no view of BuildDbContext, so it asks BuildService over the bus.
+/// </summary>
+public record GetArtifactSignature(Guid ArtifactId);
+
+/// <summary>
+/// Response to <see cref="GetArtifactSignature"/>. <c>PgpSignature</c> is null
+/// when the artifact has not been signed (no active key, signing failed, or the
+/// CVE scan skipped signing due to vulnerabilities).
+/// </summary>
+public record ArtifactSignature(string? PgpSignature);
+
+/// <summary>
+/// Request the armored public key of the active PGP key. RepositoryService uses
+/// this to verify externally-uploaded RPM signatures with <c>gpg --verify</c>.
+/// It runs in its own container with its own (transient) keyring and has no
+/// shared filesystem with SecurityService, so it fetches the key over the bus.
+/// </summary>
+public record GetActivePublicKey();
+
+/// <summary>
+/// Response to <see cref="GetActivePublicKey"/>. <c>PublicKeyArmored</c> is null
+/// when no active PGP key exists.
+/// </summary>
+public record ActivePublicKey(string? PublicKeyArmored);

@@ -19,8 +19,9 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 EXPOSE 5004
 
-# Install createrepo_c and rpm tools for RPM repository management
-RUN apt-get update && apt-get install -y createrepo-c rpm && rm -rf /var/lib/apt/lists/*
+# Install createrepo_c and rpm tools for RPM repository management, and gnupg2
+# for verifying detached PGP signatures on uploaded RPMs (SignatureVerificationService).
+RUN apt-get update && apt-get install -y createrepo-c rpm gnupg2 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=publish /app/publish .
 RUN mkdir -p /app/repos && chmod 777 /app/repos

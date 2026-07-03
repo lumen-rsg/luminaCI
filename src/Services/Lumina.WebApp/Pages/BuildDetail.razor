@@ -252,11 +252,11 @@ else
                                 <td>
                                     @if (!string.IsNullOrEmpty(artifact.PgpSignature))
                                     {
-                                        <span class="badge bg-success">Signed</span>
+                                        <span class="badge bg-success">SIGNED</span>
                                     }
                                     else
                                     {
-                                        <span class="badge bg-secondary">Not signed</span>
+                                        <span class="badge bg-danger">NOT SIGNED</span>
                                     }
                                 </td>
                                 <td>
@@ -315,7 +315,7 @@ else
                             </select>
                         </div>
                         <div class="col-md-2 mb-2">
-                            <button class="btn btn-sm btn-success w-100" @onclick="PublishArtifact" disabled="@(!_selectedRepoId.HasValue || _publishing)">
+                            <button class="btn btn-sm btn-success w-100" @onclick="PublishArtifact" disabled="@(!_selectedRepoId.HasValue || _publishing || SelectedArtifactUnsigned)">
                                 @if (_publishing)
                                 {
                                     <span class="spinner-border spinner-border-sm me-1"></span>
@@ -328,6 +328,12 @@ else
                             </button>
                         </div>
                     </div>
+                    @if (SelectedArtifactUnsigned)
+                    {
+                        <div class="alert alert-danger py-2 px-3 mt-2 mb-0">
+                            <strong>Artifact is not signed</strong> — publish is blocked. Generate an active PGP key and ensure the Sign stage completed, then re-run the build.
+                        </div>
+                    }
                 }
             </div>
         </div>
@@ -399,6 +405,15 @@ else
     private bool _publishing = false;
     private string? _publishMessage;
     private bool _publishSuccess;
+
+    // True when the currently-selected artifact has no PGP signature. The
+    // server-side publish gate is authoritative; this just gives early UX
+    // feedback (disables Publish, shows a warning) before the round-trip.
+    private bool SelectedArtifactUnsigned =>
+        _selectedArtifactId.HasValue
+        && _build?.Data?.Artifacts != null
+        && _build.Data.Artifacts.FirstOrDefault(a => a.Id == _selectedArtifactId.Value) is { } sel
+        && string.IsNullOrEmpty(sel.PgpSignature);
 
     protected override async Task OnInitializedAsync()
     {
