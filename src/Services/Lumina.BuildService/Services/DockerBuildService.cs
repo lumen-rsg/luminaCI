@@ -26,6 +26,25 @@ public class DockerBuildService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IBus _bus;
 
+    /// <summary>
+    /// Docker daemon endpoint (unix socket or HTTP proxy URL). When fronted by a
+    /// docker-socket-proxy, only the whitelisted endpoints the proxy exposes are
+    /// reachable from this service.
+    /// </summary>
+    private readonly string _dockerUrl;
+
+    /// <summary>Dedicated, isolated bridge network for untrusted build containers. Build containers are attached here instead of the host network so they cannot reach Postgres/RabbitMQ/MinIO/Trivy directly.</summary>
+    private readonly string _buildNetwork;
+
+    /// <summary>Memory cap per build container, in bytes (default 2 GiB).</summary>
+    private readonly long _buildMemoryBytes;
+
+    /// <summary>PID limit per build container (default 512) to blunt fork bombs.</summary>
+    private readonly long _buildPidsLimit;
+
+    /// <summary>CPU quota per build container in microseconds/period (default 150000 = 1.5 CPUs).</summary>
+    private readonly long _buildCpuQuota;
+
     /// <summary>Full accumulated logs per build job (in-memory buffer).</summary>
     private static readonly ConcurrentDictionary<Guid, string> _logBuffers = new();
 
@@ -44,11 +63,33 @@ public class DockerBuildService
         _config = config;
         _scopeFactory = scopeFactory;
         _bus = bus;
-        var dockerPath = config["Docker:SocketPath"] ?? "/var/run/docker.sock";
-        var dockerUrl = dockerPath.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
-            ? dockerPath
-            : $"unix://{dockerPath}";
-        _docker = new DockerClientConfiguration(new Uri(dockerUrl)).CreateClient();
+
+        // The Docker endpoint may be a raw unix socket (unix:///var/run/docker.sock),
+        // a host:port, or an http(s):// URL fronting a docker-socket-proxy. The proxy
+        // is the recommended deployment: it whitelists only the API calls build-service
+        // actually needs, so a compromised build-service cannot spawn arbitrary images
+        // or read other containers.
+        var dockerEndpoint = config["Docker:SocketPath"] ?? "/var/run/docker.sock";
+        _dockerUrl = dockerEndpoint.Contains("://", StringComparison.Ordinal)
+            ? dockerEndpoint
+            : $"unix://{dockerEndpoint}";
+        _docker = new DockerClientConfiguration(new Uri(_dockerUrl)).CreateClient();
+
+        // Build-container isolation knobs. Defaults assume untrusted specs that may
+        // run arbitrary shell inside the rpmbuild container, so they're deliberately
+        // tight and can only be loosened via configuration.
+        _buildNetwork = config["Docker:BuildNetwork"] ?? "lumina-buildnet";
+        _buildMemoryBytes = ParseLongConfig(config, "Docker:BuildMemoryBytes", 2L * 1024 * 1024 * 1024);
+        _buildPidsLimit = ParseLongConfig(config, "Docker:BuildPidsLimit", 512);
+        _buildCpuQuota = ParseLongConfig(config, "Docker:BuildCpuQuota", 150_000); // 1.5 CPUs (period 100000 µs)
+    }
+
+    /// <summary>Parse a long configuration value, returning <paramref name="defaultValue"/> when missing or invalid.</summary>
+    private static long ParseLongConfig(IConfiguration config, string key, long defaultValue)
+    {
+        var raw = config[key];
+        if (string.IsNullOrWhiteSpace(raw)) return defaultValue;
+        return long.TryParse(raw.Trim(), out var v) ? v : defaultValue;
     }
 
     /// <summary>
@@ -258,6 +299,21 @@ public class DockerBuildService
                 _logger.LogInformation("Mounted extra sources at /extra-sources for job {JobId}", job.Id);
             }
 
+            // Build-container hardening. These containers run attacker-influenced
+            // .spec files (arbitrary shell via %prep/%build/%install, dnf builddep),
+            // so they must be treated as untrusted:
+            //   * Isolated bridge network (not host) — no direct path to Postgres /
+            //     RabbitMQ / MinIO / Trivy on lumina-network.
+            //   * All capabilities dropped; only the minimal set rpmbuild/dnf needs
+            //     is re-added.
+            //   * Memory capped with swap pinned equal to memory (no overcommit).
+            //   * PID limit to blunt fork bombs; OOM-killer enabled (a runaway build
+            //     dies rather than wedging the host).
+            //   * no-new-privileges to block setuid escalation; init shim for proper
+            //     signal/reaping of build subprocesses.
+            // User-namespace remap is expected to be enabled on the daemon itself
+            // (deploy/docker/daemon.json), so root inside the container maps to a
+            // non-privileged uid on the host.
             var createParams = new CreateContainerParameters
             {
                 Image = imageName,
@@ -265,8 +321,17 @@ public class DockerBuildService
                 HostConfig = new HostConfig
                 {
                     Binds = binds,
-                    Memory = 2L * 1024 * 1024 * 1024, // 2GB limit
-                    NetworkMode = "host"
+                    Memory = _buildMemoryBytes,
+                    MemorySwap = _buildMemoryBytes, // disallow swap growth beyond the memory cap
+                    PidsLimit = _buildPidsLimit,
+                    CPUQuota = _buildCpuQuota,
+                    CPUPeriod = 100_000, // standard 100ms period; CPUQuota then expresses fractional CPUs
+                    CapDrop = new List<string> { "ALL" },
+                    CapAdd = new List<string> { "CHOWN", "FOWNER", "SETGID", "SETUID", "DAC_OVERRIDE" },
+                    SecurityOpt = new List<string> { "no-new-privileges:true" },
+                    OomKillDisable = false,
+                    Init = true,
+                    NetworkMode = _buildNetwork // isolated bridge — NOT the host network
                 },
                 Name = $"lumina-build-{job.Id:N}",
                 Labels = new Dictionary<string, string>

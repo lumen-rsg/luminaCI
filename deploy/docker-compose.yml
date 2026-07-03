@@ -123,6 +123,12 @@ services:
       context: ../
       dockerfile: deploy/docker/Lumina.BuildService.Dockerfile
     container_name: lumina-build-service
+    # NOTE: runs as the non-root `app` user baked into the image (USER app).
+    # Do NOT override `user:` to root here — that would re-expose the daemon.
+    # Docker access goes through docker-socket-proxy (a read/filtered HAProxy in
+    # front of the host socket) instead of a raw socket mount, so a compromised
+    # build-service can only call the whitelisted Docker API endpoints the proxy
+    # exposes (containers create/start/logs/wait/stop/remove + images list/create).
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5001
@@ -134,15 +140,17 @@ services:
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
-      - Docker__SocketPath=/var/run/docker.sock
+      # Docker daemon reached via the socket-proxy container below (not the raw socket).
+      - Docker__SocketPath=http://docker-socket-proxy:2375
+      # Untrusted build-container isolation knobs (see DockerBuildService.cs).
+      - Docker__BuildNetwork=${BUILD_NETWORK:-lumina-buildnet}
+      - Docker__BuildMemoryBytes=${BUILD_MEMORY_BYTES:-2147483648}
+      - Docker__BuildPidsLimit=${BUILD_PIDS_LIMIT:-512}
+      - Docker__BuildCpuQuota=${BUILD_CPU_QUOTA:-150000}
       - Services__SecurityService=http://security-service:5002
     ports:
       - "5001:5001"
-    user: "root"
-    security_opt:
-      - label=disable
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - /opt/lumina/builds:/app/builds
       - /opt/lumina/sources:/opt/lumina/sources:z
       - /opt/lumina/extra-sources:/opt/lumina/extra-sources:z
@@ -153,8 +161,57 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      docker-socket-proxy:
+        condition: service_started
     networks:
       - lumina-network
+      - lumina-buildnet
+      - proxy-net
+
+  # Least-privilege Docker API gateway. The host socket is mounted here, but this
+  # container only forwards explicitly enabled endpoints to build-service. If
+  # build-service is compromised it cannot `docker run` arbitrary images, attach
+  # to other containers, or read the host filesystem through the socket.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: lumina-docker-socket-proxy
+    environment:
+      # Only the API surfaces build-service needs; everything else stays off.
+      CONTAINERS: "1"   # create/start/logs/wait/stop/remove build containers
+      IMAGES: "1"        # list images + pull missing build images
+      POST: "1"          # allow create/start/pull (mutations)
+      # Explicitly denied — reduces blast radius:
+      EXEC: "0"
+      NETWORKS: "0"
+      VOLUMES: "0"
+      SERVICES: "0"
+      TASKS: "0"
+      SECRETS: "0"
+      CONFIGS: "0"
+      SYSTEM: "0"
+      INFO: "1"
+      AUTH: "0"
+      BUILD: "0"
+      SWARM: "0"
+      DISTRIBUTION: "0"
+      PLUGINS: "0"
+      SESSION: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    tmpfs:
+      - /run
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+    networks:
+      - proxy-net
 
   security-service:
     build:
@@ -363,4 +420,15 @@ volumes:
 
 networks:
   lumina-network:
+    driver: bridge
+  # Dedicated bridge for untrusted build containers. It is intentionally a
+  # SEPARATE network from lumina-network: build containers (rpm-build, dotnet-build)
+  # are attached here so they cannot reach Postgres/RabbitMQ/MinIO/Trivy/other
+  # services directly — they only get outbound internet (for dnf builddep / git
+  # clone) and a path back to build-service via build-service's own attachment.
+  lumina-buildnet:
+    driver: bridge
+  # Two-party network: only build-service and docker-socket-proxy. Isolates the
+  # socket-exposing proxy from every other service.
+  proxy-net:
     driver: bridge

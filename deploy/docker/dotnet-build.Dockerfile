@@ -1,12 +1,12 @@
 FROM fedora:latest
 
-# Install RPM build tools + .NET SDK + NativeAOT dependencies
+# Install RPM build tools + .NET SDK + NativeAOT dependencies.
+# No `sudo` (see rpm-build.Dockerfile for rationale).
 RUN dnf install -y \
     rpm-build \
     rpmdevtools \
     curl \
     git-core \
-    sudo \
     clang \
     gcc \
     make \
@@ -22,15 +22,22 @@ RUN curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 1
 # Verify installations
 RUN dotnet --version && clang --version | head -1
 
-# Create rpmbuild tree
+# Dedicated unprivileged user (uid/gid 1000), matching rpm-build.Dockerfile.
+RUN groupadd -g 1000 rpmbuilder \
+    && useradd -u 1000 -g 1000 -m -d /home/rpmbuilder -s /bin/bash rpmbuilder
+
+USER rpmbuilder
+
+# Create the rpmbuild tree as the non-root user.
 RUN rpmdev-setuptree
 
-WORKDIR /root/rpmbuild
+WORKDIR /home/rpmbuilder/rpmbuild
 
-COPY scripts/build-rpm.sh /usr/local/bin/build-rpm.sh
+COPY --chown=rpmbuilder:rpmbuilder scripts/build-rpm.sh /usr/local/bin/build-rpm.sh
 RUN chmod +x /usr/local/bin/build-rpm.sh
 
-# Ensure artifacts dir is writable
-RUN mkdir -p /artifacts && chmod 777 /artifacts
+USER root
+RUN mkdir -p /artifacts && chown -R rpmbuilder:rpmbuilder /artifacts
+USER rpmbuilder
 
 ENTRYPOINT ["/usr/local/bin/build-rpm.sh"]

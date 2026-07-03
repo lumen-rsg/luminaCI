@@ -65,6 +65,64 @@ curl -s http://localhost/api/pipelines?page=1 | jq '.success'
 
 ---
 
+## Безопасность сборок
+
+Контейнер сборки (`rpm-build`/`dotnet-build`) выполняет `dnf builddep` и `rpmbuild`
+над **недоверенными `.spec` файлами**, т.е. по сути произвольный shell от имени
+root внутри контейнера. Чтобы превратить это из примитива побега/компрометации
+хоста в ограниченный sandbox, применены несколько слоёв изоляции:
+
+- **Нет монтирования Docker-сокета в build-service.** Раньше
+  `/var/run/docker.sock:/var/run/docker.sock` + `user: root` давали тривиальный
+  root на хосте (`docker run -v /:/host ...`). Теперь build-service работает от
+  непривилегированного пользователя `app` и обращается к демону через контейнер
+  `docker-socket-proxy` (tecnativa/docker-socket-proxy), который пропускает только
+  нужные endpoints (`containers` create/start/logs/wait/stop/remove, `images`
+  list/pull) и режет всё остальное (`exec`, `networks`, `volumes`, `build` и т.д.).
+- **Изолированная сеть сборок.** Контейнеры сборки запускаются в сети
+  `lumina-buildnet`, отдельной от `lumina-network`. У них есть выход в интернет
+  (для `dnf builddep`, `spectool`, `git clone`), но **нет** пути к PostgreSQL,
+  RabbitMQ, MinIO, Trivy и внутренним сервисам — доступ к ним возможен только
+  через auth-шлюз (api-gateway). Раньше использовался `NetworkMode: host`.
+- **Ограничения контейнера:** `--cap-drop=ALL` (+ минимальный набор для rpmbuild),
+  `--pids-limit`, `--memory` с `--memory-swap` равным памяти (без overcommit),
+  CPU-квота, `--security-opt=no-new-privileges`, `--init`. См. переменные
+  `BUILD_*` в `.env`.
+- **Непривилегированный образ сборки.** `rpm-build.Dockerfile` /
+  `dotnet-build.Dockerfile` создают пользователя `rpmbuilder` (uid/gid 1000) и
+  запускают `rpmbuild` от него. `sudo` из образов убран.
+
+### Дополнительно: user-namespace remap (рекомендуется для production)
+
+Чтобы root внутри контейнера сборки маппился на **непривилегированный uid на
+хосте**, включите userns-remap на уровне Docker-демона:
+
+```bash
+# 1. Создайте системного пользователя для ремапа (Docker использует диапазоны
+#    subuid/subgid этого пользователя для сдвига uid-ов внутри контейнеров)
+sudo groupadd -r dockremap
+sudo useradd -r -g dockremap -d /nonexistent -s /usr/sbin/nologin dockremap
+sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 dockremap
+
+# 2. Установите эталонный daemon.json (merg'ите со своим существующим, не
+#    перезаписывайте вслепую)
+sudo install -m 644 deploy/docker/daemon.json /etc/docker/daemon.json
+
+# 3. Перезапустите демон
+sudo systemctl restart docker
+```
+
+После этого **все** контейнеры на этом хосте (включая сборочные) получат ремап,
+и побег из контейнера с root приземлится на uid `100000+`, а не на хостовый root.
+Приложение в `docker-compose.yml` работает без изменений — compose-сервисы
+продолжают общаться через `lumina-network` как обычно.
+
+> ⚠️ Если у вас на этом же хосте есть сервисы, которым **нужен** реальный host-root
+> (напр. другой CI, монтирующий сокет), userns-remap их сломает. Выносите Lumina CI
+> на отдельный хост/демон или используйте `--userns-host` точечно.
+
+---
+
 ## Конфигурация
 
 ### Переменные `.env`
@@ -79,6 +137,10 @@ curl -s http://localhost/api/pipelines?page=1 | jq '.success'
 | `LDAP_HOST` | `localhost` | Адрес LDAP сервера (опционально) |
 | `LDAP_PORT` | `389` | Порт LDAP |
 | `LDAP_BASE_DN` | `dc=lumina,dc=1t,dc=ru` | Base DN для LDAP |
+| `BUILD_NETWORK` | `lumina-buildnet` | Изолированная сеть для контейнеров сборки (отдельная от `lumina-network`) |
+| `BUILD_MEMORY_BYTES` | `2147483648` | Лимит памяти на контейнер сборки (байт). swap приравнен к этому значению |
+| `BUILD_PIDS_LIMIT` | `512` | Максимум процессов в контейнере сборки |
+| `BUILD_CPU_QUOTA` | `150000` | CPU-квота (мкс/период 100000; `150000` = 1.5 CPU) |
 
 ### DNS (для production)
 

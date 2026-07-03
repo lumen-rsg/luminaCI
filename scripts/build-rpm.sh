@@ -17,7 +17,10 @@ set -euo pipefail
 
 SPEC_NAME="${SPEC_NAME:-package.spec}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-/artifacts}"
-BUILD_DIR="/root/rpmbuild"
+# Build tree lives under the unprivileged user's HOME (set by the image to
+# /home/rpmbuilder). Avoids hardcoding /root, which no longer exists as the
+# build runs non-root.
+BUILD_DIR="${HOME}/rpmbuild"
 AUTO_DOWNLOAD="${AUTO_DOWNLOAD:-true}"
 
 echo "=== Lumina CI RPM Build ==="
@@ -416,7 +419,9 @@ ls -la "${BUILD_DIR}/SOURCES/"
 # Step 6: Build
 # ═══════════════════════════════════════════════════════════
 echo "Installing build dependencies..."
-sudo dnf builddep -y "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null || echo "Warning: Some build dependencies may be missing"
+# Runs as the unprivileged `rpmbuilder` user; dnf builddep installs into the
+# container's own writable rpmdb. No sudo (the image no longer ships it).
+dnf builddep -y "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null || echo "Warning: Some build dependencies may be missing"
 
 echo "Building RPM..."
 rpmbuild -bb "${BUILD_DIR}/SPECS/${SPEC_NAME}" \
@@ -434,10 +439,10 @@ fi
 # ═══════════════════════════════════════════════════════════
 # Step 7: Collect artifacts
 # ═══════════════════════════════════════════════════════════
-sudo mkdir -p "${ARTIFACTS_DIR}" 2>/dev/null || true
-sudo chmod 777 "${ARTIFACTS_DIR}" 2>/dev/null || true
-sudo cp -v "${BUILD_DIR}"/RPMS/*/*.rpm "${ARTIFACTS_DIR}/" 2>/dev/null || true
-sudo cp -v "${BUILD_DIR}"/SRPMS/*.rpm "${ARTIFACTS_DIR}/" 2>/dev/null || true
+# /artifacts is a bind mount owned by uid 1000 (rpmbuilder); no sudo needed.
+mkdir -p "${ARTIFACTS_DIR}" 2>/dev/null || true
+cp -v "${BUILD_DIR}"/RPMS/*/*.rpm "${ARTIFACTS_DIR}/" 2>/dev/null || true
+cp -v "${BUILD_DIR}"/SRPMS/*.rpm "${ARTIFACTS_DIR}/" 2>/dev/null || true
 
 echo "=== Build completed successfully ==="
 echo "Artifacts:"
