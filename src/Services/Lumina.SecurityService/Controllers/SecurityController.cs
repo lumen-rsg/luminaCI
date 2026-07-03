@@ -1,11 +1,16 @@
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models;
+using Lumina.Web.Shared.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Lumina.SecurityService.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize] // Defense-in-depth: re-validate the JWT at the service even though
+            // the gateway already authorized the request. If this internal port
+            // is ever exposed directly, anonymous callers are still rejected.
 public class SecurityController : ControllerBase
 {
     private readonly Services.PgpSigningService _pgp;
@@ -29,6 +34,7 @@ public class SecurityController : ControllerBase
     }
 
     [HttpPost("keys/generate")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<SecurityKey>>> GenerateKey([FromBody] GenerateKeyRequest request)
     {
         var key = await _pgp.GenerateKeyAsync(request.KeyName, request.Email, request.Passphrase, "system");
@@ -38,6 +44,7 @@ public class SecurityController : ControllerBase
     // === Signing ===
 
     [HttpPost("sign")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<SigningRequest>>> SignArtifact([FromBody] SignArtifactRequest request)
     {
         try

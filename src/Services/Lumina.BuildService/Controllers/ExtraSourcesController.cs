@@ -2,6 +2,7 @@ using Lumina.BuildService.Data;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Models.Enums;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -21,6 +22,8 @@ namespace Lumina.BuildService.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/extra-sources")]
+[Authorize] // Defense-in-depth (see SecurityController): re-validate the JWT here
+            // too, so a directly-reached internal port is not anonymous.
 public class ExtraSourcesController : ControllerBase
 {
     // Host-side root for pipeline-scoped extra sources. Matches the volume

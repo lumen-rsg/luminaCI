@@ -1,11 +1,15 @@
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models;
+using Lumina.Web.Shared.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Lumina.ScannerService.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize] // Defense-in-depth (see SecurityController): re-validate the JWT here
+            // too, so a directly-reached internal port is not anonymous.
 public class ScannerController : ControllerBase
 {
     private readonly Services.TrivyScannerService _scanner;

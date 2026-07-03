@@ -5,7 +5,9 @@ using Lumina.Shared.Events;
 using Lumina.Shared.Models.Enums;
 using Lumina.SourceService.Data;
 using Lumina.SourceService.Services;
+using Lumina.Web.Shared.Authorization;
 using MassTransit;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -14,6 +16,8 @@ namespace Lumina.SourceService.Controllers;
 
 [ApiController]
 [Route("api/sources")]
+[Authorize] // Defense-in-depth (see SecurityController): re-validate the JWT here
+            // too, so a directly-reached internal port is not anonymous.
 public class SourceController : ControllerBase
 {
     private readonly ConfigParserService _configParser;
@@ -313,6 +317,7 @@ public class SourceController : ControllerBase
     /// Save the full conf.ini content
     /// </summary>
     [HttpPut("config")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public ActionResult SaveConfig([FromBody] UpdateConfigRequest request)
     {
         try
@@ -332,6 +337,7 @@ public class SourceController : ControllerBase
     /// Add a new package to conf.ini
     /// </summary>
     [HttpPost("config/package")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult> AddPackageToConfig([FromBody] AddPackageToConfigRequest request)
     {
         try
@@ -384,6 +390,7 @@ public class SourceController : ControllerBase
     /// Remove a package from conf.ini
     /// </summary>
     [HttpDelete("config/{name}")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public ActionResult RemovePackageFromConfig(string name)
     {
         try

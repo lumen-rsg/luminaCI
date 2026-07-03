@@ -3,7 +3,7 @@ using System.Security.Claims;
 using System.Text;
 using Lumina.ApiGateway.Data;
 using Lumina.Shared.Models;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Lumina.Web.Shared;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
@@ -22,43 +22,16 @@ try
         .ReadFrom.Configuration(ctx.Configuration)
         .WriteTo.Console());
 
-    // JWT Authentication
+    // JWT Authentication — shared with every downstream service so they can
+    // independently re-validate the bearer token as defense-in-depth (SEC-04).
+    // The secret is required here because the gateway both issues (login) and
+    // validates tokens; downstream services only validate.
     var jwtSecret = builder.Configuration["Jwt:Secret"]
         ?? throw new InvalidOperationException("Jwt:Secret is not configured. Set it via environment variable or configuration.");
     var jwtKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
 
-    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-        .AddJwtBearer(options =>
-        {
-            options.TokenValidationParameters = new TokenValidationParameters
-            {
-                ValidateIssuer = true,
-                ValidateAudience = true,
-                ValidateLifetime = true,
-                ValidateIssuerSigningKey = true,
-                ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "LuminaCI",
-                ValidAudience = builder.Configuration["Jwt:Audience"] ?? "LuminaCI",
-                IssuerSigningKey = jwtKey,
-                ClockSkew = TimeSpan.Zero
-            };
-
-            // Support JWT token via query string for SSE/EventSource connections
-            // (EventSource API doesn't support custom headers)
-            options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
-            {
-                OnMessageReceived = context =>
-                {
-                    var accessToken = context.Request.Query["access_token"];
-                    if (!string.IsNullOrEmpty(accessToken))
-                    {
-                        context.Token = accessToken;
-                    }
-                    return Task.CompletedTask;
-                }
-            };
-        });
-
-    builder.Services.AddAuthorization();
+    builder.Services.AddLuminaJwtAuthentication(builder.Configuration);
+    builder.Services.AddLuminaAuthorization();
 
     // User credential store (Postgres)
     builder.Services.AddDbContext<AuthDbContext>(options =>

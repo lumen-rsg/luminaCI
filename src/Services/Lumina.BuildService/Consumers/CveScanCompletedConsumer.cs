@@ -4,7 +4,6 @@ using Lumina.Shared.Events;
 using Lumina.Shared.Models.Enums;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace Lumina.BuildService.Consumers;
 
@@ -13,21 +12,18 @@ public class CveScanCompletedConsumer : IConsumer<CveScanCompleted>
     private readonly BuildDbContext _db;
     private readonly PipelineEngine _pipelineEngine;
     private readonly ILogger<CveScanCompletedConsumer> _logger;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IConfiguration _config;
+    private readonly IBus _bus;
 
     public CveScanCompletedConsumer(
         BuildDbContext db,
         PipelineEngine pipelineEngine,
         ILogger<CveScanCompletedConsumer> logger,
-        IHttpClientFactory httpClientFactory,
-        IConfiguration config)
+        IBus bus)
     {
         _db = db;
         _pipelineEngine = pipelineEngine;
         _logger = logger;
-        _httpClientFactory = httpClientFactory;
-        _config = config;
+        _bus = bus;
     }
 
     public async Task Consume(ConsumeContext<CveScanCompleted> context)
@@ -83,46 +79,24 @@ public class CveScanCompletedConsumer : IConsumer<CveScanCompleted>
     }
 
     /// <summary>
-    /// Get the active PGP key ID from SecurityService.
+    /// Look up the active PGP key via the message bus (request/response) instead
+    /// of a direct HTTP call. The previous <c>GET /api/security/keys</c> request
+    /// carried no JWT and would be rejected now that SecurityController is gated
+    /// by <c>[Authorize]</c>; the bus keeps internal service-to-service traffic
+    /// off the HTTP surface entirely.
     /// </summary>
     private async Task<Guid?> GetActivePgpKeyIdAsync()
     {
         try
         {
-            var securityServiceUrl = _config["Services:SecurityService"] ?? "http://security-service:5002";
-            var client = _httpClientFactory.CreateClient();
-            client.BaseAddress = new Uri(securityServiceUrl);
-            client.Timeout = TimeSpan.FromSeconds(10);
+            var response = await _bus.Request<GetActiveSigningKey, ActiveSigningKey>(
+                new GetActiveSigningKey(), timeout: TimeSpan.FromSeconds(10));
 
-            var response = await client.GetAsync("/api/security/keys");
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("SecurityService keys endpoint returned {StatusCode}", response.StatusCode);
-                return null;
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(content);
-
-            if (!doc.RootElement.TryGetProperty("data", out var data)) return null;
-
-            // Handle both array and single object responses
-            if (data.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var key in data.EnumerateArray())
-                {
-                    if (key.TryGetProperty("isActive", out var isActive) && isActive.GetBoolean())
-                    {
-                        return key.GetProperty("id").GetGuid();
-                    }
-                }
-            }
-
-            return null;
+            return response.Message.KeyId;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get PGP keys from SecurityService");
+            _logger.LogWarning(ex, "Failed to get active PGP key from SecurityService via bus");
             return null;
         }
     }

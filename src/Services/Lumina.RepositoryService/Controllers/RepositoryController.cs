@@ -1,11 +1,15 @@
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models;
+using Lumina.Web.Shared.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Lumina.RepositoryService.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize] // Defense-in-depth (see SecurityController): re-validate the JWT here
+            // too, so a directly-reached internal port is not anonymous.
 public class RepositoryController : ControllerBase
 {
     private readonly Services.MinioStorageService _storage;
@@ -27,6 +31,7 @@ public class RepositoryController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<PackageRepository>>> CreateRepository([FromBody] CreateRepositoryRequest request)
     {
         try
@@ -44,6 +49,7 @@ public class RepositoryController : ControllerBase
     }
 
     [HttpPost("publish")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<Package>>> PublishPackage([FromBody] PublishPackageRequest request)
     {
         try
@@ -62,6 +68,7 @@ public class RepositoryController : ControllerBase
     /// Accepts multipart/form-data with file and repositoryId.
     /// </summary>
     [HttpPost("upload")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     [RequestSizeLimit(500 * 1024 * 1024)] // 500MB limit
     public async Task<ActionResult<ApiResponse<Package>>> UploadPackage([FromForm] IFormFile file, [FromForm] Guid repositoryId, [FromForm] string? publishedBy)
     {
@@ -90,6 +97,7 @@ public class RepositoryController : ControllerBase
     }
 
     [HttpPost("sync")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<object>>> SyncRepository([FromBody] SyncRepositoryRequest request)
     {
         try

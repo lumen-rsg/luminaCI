@@ -1,11 +1,15 @@
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
+using Lumina.Web.Shared.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Lumina.BuildService.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize] // Defense-in-depth (see SecurityController): re-validate the JWT here
+            // too, so a directly-reached internal port is not anonymous.
 public class BuildsController : ControllerBase
 {
     private readonly Services.PipelineEngine _engine;
@@ -58,6 +62,7 @@ public class BuildsController : ControllerBase
     }
 
     [HttpDelete("queue/clear")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<object>>> ClearQueue()
     {
         var count = await _engine.ClearQueuedBuildsAsync();

@@ -22,6 +22,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lumina.WebApp", "src\Servic
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lumina.SourceService", "src\Services\Lumina.SourceService\Lumina.SourceService.csproj", "{E8F3A721-9B4D-4E8A-A5C3-6F2D1E7B8A90}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lumina.Web.Shared", "src\Shared\Lumina.Web.Shared\Lumina.Web.Shared.csproj", "{79004CDC-A580-49A1-ACB0-979A550E8ABF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -128,6 +130,18 @@ Global
 		{E8F3A721-9B4D-4E8A-A5C3-6F2D1E7B8A90}.Release|x64.Build.0 = Release|Any CPU
 		{E8F3A721-9B4D-4E8A-A5C3-6F2D1E7B8A90}.Release|x86.ActiveCfg = Release|Any CPU
 		{E8F3A721-9B4D-4E8A-A5C3-6F2D1E7B8A90}.Release|x86.Build.0 = Release|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Debug|x64.Build.0 = Debug|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Debug|x86.Build.0 = Debug|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Release|x64.ActiveCfg = Release|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Release|x64.Build.0 = Release|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Release|x86.ActiveCfg = Release|Any CPU
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -143,5 +157,6 @@ Global
 		{58A44159-A7B6-4D33-B704-02F78FC998CF} = {984BB9B3-3FA3-BE33-9484-CAC21695A33C}
 		{2BBAEFD2-28D3-41D5-95BE-2462C5129B7B} = {984BB9B3-3FA3-BE33-9484-CAC21695A33C}
 		{E8F3A721-9B4D-4E8A-A5C3-6F2D1E7B8A90} = {984BB9B3-3FA3-BE33-9484-CAC21695A33C}
+		{79004CDC-A580-49A1-ACB0-979A550E8ABF} = {C8E42992-5E42-0C2B-DBFE-AA848D06431C}
 	EndGlobalSection
 EndGlobal

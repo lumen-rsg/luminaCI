@@ -1,6 +1,7 @@
 using Lumina.RepositoryService.Data;
 using Lumina.RepositoryService.Services;
 using Lumina.Shared.Extensions;
+using Lumina.Web.Shared;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Minio;
@@ -63,6 +64,8 @@ try
         });
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
+    builder.Services.AddLuminaJwtAuthentication(builder.Configuration);
+    builder.Services.AddLuminaAuthorization();
     builder.Services.AddHealthChecks();
 
     // Allow large file uploads (up to 500MB)
@@ -88,6 +91,9 @@ try
         app.UseSwagger();
         app.UseSwaggerUI();
     }
+
+    app.UseAuthentication();
+    app.UseAuthorization();
 
     app.MapControllers();
     app.MapHealthChecks("/health");

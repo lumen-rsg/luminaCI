@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Shared\Lumina.Shared\Lumina.Shared.csproj" />
+    <ProjectReference Include="..\..\Shared\Lumina.Web.Shared\Lumina.Web.Shared.csproj" />
   </ItemGroup>
 
 </Project>

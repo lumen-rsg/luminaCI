@@ -2,6 +2,7 @@ using Lumina.ScannerService.Consumers;
 using Lumina.ScannerService.Data;
 using Lumina.ScannerService.Services;
 using Lumina.Shared.Extensions;
+using Lumina.Web.Shared;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -59,6 +60,8 @@ try
     });
 
     builder.Services.AddControllers();
+    builder.Services.AddLuminaJwtAuthentication(builder.Configuration);
+    builder.Services.AddLuminaAuthorization();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
     builder.Services.AddHealthChecks();
@@ -77,6 +80,9 @@ try
         app.UseSwagger();
         app.UseSwaggerUI();
     }
+
+    app.UseAuthentication();
+    app.UseAuthorization();
 
     app.MapControllers();
     app.MapHealthChecks("/health");

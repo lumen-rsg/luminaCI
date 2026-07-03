@@ -3,6 +3,7 @@ using Lumina.BuildService.Data;
 using Lumina.BuildService.Services;
 using Lumina.Shared.Events;
 using Lumina.Shared.Extensions;
+using Lumina.Web.Shared;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -63,8 +64,9 @@ try
         });
     });
 
-    builder.Services.AddHttpClient(); // IHttpClientFactory for inter-service calls
     builder.Services.AddControllers();
+    builder.Services.AddLuminaJwtAuthentication(builder.Configuration);
+    builder.Services.AddLuminaAuthorization();
     builder.Services.AddEndpointsApiExplorer();
 
     // Allow unlimited file uploads for extra sources
@@ -123,6 +125,9 @@ try
         app.UseSwaggerUI();
         app.UseDeveloperExceptionPage();
     }
+
+    app.UseAuthentication();
+    app.UseAuthorization();
 
     app.MapControllers();
     app.MapHealthChecks("/health");

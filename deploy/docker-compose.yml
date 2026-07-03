@@ -148,8 +148,13 @@ services:
       - Docker__BuildPidsLimit=${BUILD_PIDS_LIMIT:-512}
       - Docker__BuildCpuQuota=${BUILD_CPU_QUOTA:-150000}
       - Services__SecurityService=http://security-service:5002
-    ports:
-      - "5001:5001"
+      # Shared JWT secret + issuer/audience so build-service can independently
+      # re-validate bearer tokens (defense-in-depth) — see SEC-04. The internal
+      # port (5001) is intentionally NOT published to the host: the service must
+      # only be reachable from inside lumina-network, via the api-gateway.
+      - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
+      - Jwt__Issuer=LuminaCI
+      - Jwt__Audience=LuminaCI
     volumes:
       - /opt/lumina/builds:/app/builds
       - /opt/lumina/sources:/opt/lumina/sources:z
@@ -232,8 +237,11 @@ services:
       - Gpg__KeyStorePath=/app/keys
       - Gpg__Passphrase=${GPG_PASSPHRASE:?GPG_PASSPHRASE must be set in .env (see deploy/.env.example)}
       - Services__BuildService=http://build-service:5001
-    ports:
-      - "5002:5002"
+      # Shared JWT config so security-service can re-validate bearer tokens
+      # (defense-in-depth) — see SEC-04. Internal port 5002 is NOT published.
+      - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
+      - Jwt__Issuer=LuminaCI
+      - Jwt__Audience=LuminaCI
     volumes:
       - gpg_keys:/app/keys
       - gpg_gnupghome:/app/.gnupg
@@ -265,8 +273,11 @@ services:
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
       - Trivy__ServerUrl=http://trivy:8080
-    ports:
-      - "5003:5003"
+      # Shared JWT config so scanner-service can re-validate bearer tokens
+      # (defense-in-depth) — see SEC-04. Internal port 5003 is NOT published.
+      - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
+      - Jwt__Issuer=LuminaCI
+      - Jwt__Audience=LuminaCI
     user: "root"
     volumes:
       - /opt/lumina/builds:/app/builds:z
@@ -307,8 +318,11 @@ services:
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
       - Repository__BasePath=/app/repos
-    ports:
-      - "5004:5004"
+      # Shared JWT config so repository-service can re-validate bearer tokens
+      # (defense-in-depth) — see SEC-04. Internal port 5004 is NOT published.
+      - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
+      - Jwt__Issuer=LuminaCI
+      - Jwt__Audience=LuminaCI
     volumes:
       - repo_data:/app/repos
     depends_on:
@@ -343,8 +357,11 @@ services:
       - Source__TempDir=/tmp/source-fetch
       - Source__SourcesDir=/opt/lumina/sources
       - Services__BuildService=http://build-service:5001
-    ports:
-      - "5006:5006"
+      # Shared JWT config so source-service can re-validate bearer tokens
+      # (defense-in-depth) — see SEC-04. Internal port 5006 is NOT published.
+      - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
+      - Jwt__Issuer=LuminaCI
+      - Jwt__Audience=LuminaCI
     volumes:
       - ../conf.ini:/app/conf.ini:ro,z
       - ../Test:/app/Test:ro,z

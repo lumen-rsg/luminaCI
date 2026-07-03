@@ -52,3 +52,19 @@ public record PackageSigningRequested(Guid ArtifactId, string ArtifactPath, stri
 /// Consumed by BuildService to update artifact signature.
 /// </summary>
 public record PackageSigned(Guid ArtifactId, string PgpSignature, DateTime SignedAt);
+
+/// <summary>
+/// Request the currently-active PGP key from SecurityService over the message
+/// bus. This replaces the previous direct HTTP call
+/// (<c>GET /api/security/keys</c>) that BuildService made to SecurityService,
+/// which carried no JWT and would now be rejected once SecurityController is
+/// gated by <c>[Authorize]</c>. MassTransit request/response keeps the lookup on
+/// the trusted bus — no token, no exposed HTTP surface.
+/// </summary>
+public record GetActiveSigningKey();
+
+/// <summary>
+/// Response to <see cref="GetActiveSigningKey"/>. <c>KeyId</c> is null when no
+/// active PGP key exists.
+/// </summary>
+public record ActiveSigningKey(Guid? KeyId);

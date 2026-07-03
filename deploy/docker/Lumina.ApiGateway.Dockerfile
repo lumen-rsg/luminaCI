@@ -4,6 +4,7 @@ WORKDIR /src
 # Copy solution and project files
 COPY ["Lumina CI.sln", "./"]
 COPY ["src/Shared/Lumina.Shared/Lumina.Shared.csproj", "src/Shared/Lumina.Shared/"]
+COPY ["src/Shared/Lumina.Web.Shared/Lumina.Web.Shared.csproj", "src/Shared/Lumina.Web.Shared/"]
 COPY ["src/Services/Lumina.ApiGateway/Lumina.ApiGateway.csproj", "src/Services/Lumina.ApiGateway/"]
 
 # Restore dependencies

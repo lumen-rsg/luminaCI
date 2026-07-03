@@ -3,6 +3,7 @@ WORKDIR /src
 
 COPY ["Lumina CI.sln", "./"]
 COPY ["src/Shared/Lumina.Shared/Lumina.Shared.csproj", "src/Shared/Lumina.Shared/"]
+COPY ["src/Shared/Lumina.Web.Shared/Lumina.Web.Shared.csproj", "src/Shared/Lumina.Web.Shared/"]
 COPY ["src/Services/Lumina.BuildService/Lumina.BuildService.csproj", "src/Services/Lumina.BuildService/"]
 
 RUN dotnet restore "src/Services/Lumina.BuildService/Lumina.BuildService.csproj"

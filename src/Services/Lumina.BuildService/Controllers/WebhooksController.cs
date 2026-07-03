@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 
@@ -10,6 +11,11 @@ namespace Lumina.BuildService.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+// Git providers push here without a JWT; the per-pipeline webhook-secret HMAC
+// check in HandleWebhook is the real gate. YARP also marks this route
+// AuthorizationPolicy: "anonymous". AllowAnonymous also exempts it from the
+// FallbackPolicy so the global "require auth" default doesn't reject webhooks.
+[AllowAnonymous]
 public class WebhooksController : ControllerBase
 {
     private readonly Services.PipelineEngine _engine;

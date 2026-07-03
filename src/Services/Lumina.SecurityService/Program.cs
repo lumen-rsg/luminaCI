@@ -2,6 +2,7 @@ using Lumina.SecurityService.Consumers;
 using Lumina.SecurityService.Data;
 using Lumina.SecurityService.Services;
 using Lumina.Shared.Extensions;
+using Lumina.Web.Shared;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -39,6 +40,7 @@ try
     {
         x.AddConsumer<HashStoreRequestedConsumer>();
         x.AddConsumer<PackageSigningRequestedConsumer>();
+        x.AddConsumer<GetActiveSigningKeyConsumer>();
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -52,6 +54,7 @@ try
             {
                 e.ConfigureConsumer<HashStoreRequestedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSigningRequestedConsumer>(ctx);
+                e.ConfigureConsumer<GetActiveSigningKeyConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
@@ -59,6 +62,8 @@ try
     });
 
     builder.Services.AddControllers();
+    builder.Services.AddLuminaJwtAuthentication(builder.Configuration);
+    builder.Services.AddLuminaAuthorization();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
     builder.Services.AddHealthChecks();
@@ -91,6 +96,9 @@ try
         app.UseSwagger();
         app.UseSwaggerUI();
     }
+
+    app.UseAuthentication();
+    app.UseAuthorization();
 
     app.MapControllers();
     app.MapHealthChecks("/health");

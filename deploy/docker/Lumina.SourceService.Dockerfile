@@ -4,6 +4,7 @@ WORKDIR /src
 # Copy solution and project files
 COPY ["Lumina CI.sln", "./"]
 COPY src/Shared/Lumina.Shared/Lumina.Shared.csproj src/Shared/Lumina.Shared/
+COPY src/Shared/Lumina.Web.Shared/Lumina.Web.Shared.csproj src/Shared/Lumina.Web.Shared/
 COPY src/Services/Lumina.SourceService/Lumina.SourceService.csproj src/Services/Lumina.SourceService/
 
 # Restore dependencies
@@ -11,6 +12,7 @@ RUN dotnet restore src/Services/Lumina.SourceService/Lumina.SourceService.csproj
 
 # Copy source code
 COPY src/Shared/Lumina.Shared/ src/Shared/Lumina.Shared/
+COPY src/Shared/Lumina.Web.Shared/ src/Shared/Lumina.Web.Shared/
 COPY src/Services/Lumina.SourceService/ src/Services/Lumina.SourceService/
 
 # Build and publish
