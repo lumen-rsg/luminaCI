@@ -19,12 +19,26 @@ public class RepositoryManagerService
     }
 
     /// <summary>
+    /// Validates basePath/arch against an allow-list before any filesystem or
+    /// process use. This is the front-line defense (clear, early rejection);
+    /// <see cref="ProcessArgumentSanitizer.ResolveConfinedPath"/> remains the
+    /// back-stop confinement check at the FS boundary.
+    /// </summary>
+    private static void EnsureSafeRepoSegments(string basePath, string? arch)
+    {
+        ProcessArgumentSanitizer.ValidateRepositoryBasePath(basePath);
+        if (arch is not null)
+            ProcessArgumentSanitizer.ValidateRepositoryArch(arch);
+    }
+
+    /// <summary>
     /// Ensures the repository directory structure exists: {basePath}/{arch}/.
     /// The combined path is confined to <see cref="_reposBasePath"/> so a crafted
     /// basePath/arch cannot create or resolve a directory outside the repo root.
     /// </summary>
     public string EnsureRepoDir(string basePath, string arch)
     {
+        EnsureSafeRepoSegments(basePath, arch);
         var archDir = ProcessArgumentSanitizer.ResolveConfinedPath(
             Path.Combine(basePath.Trim('/'), arch), _reposBasePath);
         if (!Directory.Exists(archDir))
@@ -149,6 +163,7 @@ public class RepositoryManagerService
     /// </summary>
     public async Task<CreaterepoResult> RunCreaterepoAsync(string basePath, string arch)
     {
+        EnsureSafeRepoSegments(basePath, arch);
         // SECURITY: Confine the resolved directory to the repository root.
         // basePath/arch are request-derived; confining the combined path stops a
         // crafted basePath from pointing createrepo_c (and rpm metadata reads) at
@@ -217,6 +232,7 @@ public class RepositoryManagerService
     /// </summary>
     public async Task<List<CreaterepoResult>> SyncAllArchAsync(string basePath)
     {
+        EnsureSafeRepoSegments(basePath, arch: null);
         var repoDir = ProcessArgumentSanitizer.ResolveConfinedPath(basePath.Trim('/'), _reposBasePath);
         var results = new List<CreaterepoResult>();
 
@@ -267,6 +283,7 @@ public class RepositoryManagerService
     /// </summary>
     public bool HasRepodata(string basePath, string arch)
     {
+        EnsureSafeRepoSegments(basePath, arch);
         var archDir = ProcessArgumentSanitizer.ResolveConfinedPath(
             Path.Combine(basePath.Trim('/'), arch), _reposBasePath);
         var repomdPath = Path.Combine(archDir, "repodata", "repomd.xml");
@@ -278,6 +295,7 @@ public class RepositoryManagerService
     /// </summary>
     public List<string> ListRpmFiles(string basePath, string arch)
     {
+        EnsureSafeRepoSegments(basePath, arch);
         var archDir = ProcessArgumentSanitizer.ResolveConfinedPath(
             Path.Combine(basePath.Trim('/'), arch), _reposBasePath);
         if (!Directory.Exists(archDir))

@@ -1,4 +1,5 @@
 using Lumina.Shared.DTOs;
+using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
 using Lumina.Web.Shared.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -36,10 +37,20 @@ public class RepositoryController : ControllerBase
     {
         try
         {
+            // SECURITY: allow-list basePath/arch (SEC-016) before they reach the
+            // filesystem or any external process. Reject traversal / option-like
+            // / out-of-charset values at the request boundary.
+            ProcessArgumentSanitizer.ValidateRepositoryBasePath(request.BasePath);
+            ProcessArgumentSanitizer.ValidateRepositoryArch(request.Arch);
+
             var repo = await _storage.CreateRepositoryAsync(
                 request.Name, request.DisplayName, request.BasePath,
                 request.Arch, request.Distribution, request.CreatedBy);
             return CreatedAtAction(nameof(ListRepositories), new ApiResponse<PackageRepository>(true, repo, null, "Repository created"));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ApiResponse<PackageRepository>(false, null, ex.Message, null));
         }
         catch (Exception ex) when (ex.InnerException?.Message?.Contains("duplicate key") == true ||
                                     ex.Message?.Contains("duplicate key") == true)

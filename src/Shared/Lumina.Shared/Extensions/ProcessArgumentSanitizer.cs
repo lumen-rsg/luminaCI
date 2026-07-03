@@ -195,6 +195,94 @@ public static class ProcessArgumentSanitizer
         return reference;
     }
 
+    /// <summary>
+    /// Validates a repository <c>BasePath</c> segment coming from a request
+    /// (or read back from the database). Real values are multi-segment relative
+    /// paths such as <c>el/9/baseos</c> or <c>/el/9/baseos</c>, so <c>/</c> is
+    /// allowed as an internal/edge separator. Traversal is blocked both here
+    /// (explicit <c>..</c> segment rejection) and again by
+    /// <see cref="ResolveConfinedPath"/> at the filesystem boundary.
+    ///
+    /// <para>Allow-list is the literal ASCII <c>[A-Za-z0-9._-/]</c>. A leading
+    /// <c>-</c> or <c>.</c> is rejected so the value can never be reinterpreted
+    /// as an option by a downstream tool.</para>
+    /// </summary>
+    /// <exception cref="ArgumentException">Thrown if the value is empty, contains
+    /// control characters, a <c>..</c> segment, a leading <c>-</c>/<c>.</c>, or
+    /// any character outside the allow-list.</exception>
+    public static string ValidateRepositoryBasePath(string basePath, string paramName = "basePath")
+    {
+        if (string.IsNullOrWhiteSpace(basePath))
+            throw new ArgumentException("Base path cannot be null or empty", paramName);
+
+        AssertNoControlCharacters(basePath, paramName);
+
+        // Normalise separators so the ".." / leading-segment checks are robust
+        // regardless of which separator the client used.
+        var normalized = basePath.Replace('\\', '/');
+
+        if (normalized.Contains(".."))
+            throw new ArgumentException($"Base path contains a traversal segment: {basePath}", paramName);
+
+        var trimmed = normalized.Trim('/');
+
+        // After stripping edge separators there must still be a usable path,
+        // and its first segment must not start with an option-like character.
+        if (trimmed.Length == 0)
+            throw new ArgumentException($"Base path must contain at least one path segment: {basePath}", paramName);
+        if (trimmed[0] is '-' or '.')
+            throw new ArgumentException($"Base path segment must not start with '-' or '.': {basePath}", paramName);
+
+        const string Allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-/";
+        foreach (var c in basePath)
+        {
+            if (Allowed.IndexOf(c) >= 0) continue;
+            throw new ArgumentException(
+                $"Base path contains forbidden character '{c}' (allowed: [A-Za-z0-9._-/]): {basePath}", paramName);
+        }
+
+        if (basePath.Length > 500)
+            throw new ArgumentException("Base path exceeds maximum length of 500", paramName);
+
+        return basePath;
+    }
+
+    /// <summary>
+    /// Validates a repository <c>Arch</c> token coming from a request (or read
+    /// back from the database). Real values are single tokens such as
+    /// <c>x86_64</c>, <c>aarch64</c>, <c>noarch</c> — no separators allowed.
+    ///
+    /// <para>Allow-list is the literal ASCII <c>[A-Za-z0-9._-]</c>. A leading
+    /// <c>-</c> is rejected so the value can never be reinterpreted as an
+    /// option by a downstream tool.</para>
+    /// </summary>
+    /// <exception cref="ArgumentException">Thrown if the value is empty, contains
+    /// control characters, a leading <c>-</c>, or any character outside the
+    /// allow-list.</exception>
+    public static string ValidateRepositoryArch(string arch, string paramName = "arch")
+    {
+        if (string.IsNullOrWhiteSpace(arch))
+            throw new ArgumentException("Arch cannot be null or empty", paramName);
+
+        AssertNoControlCharacters(arch, paramName);
+
+        if (arch[0] is '-')
+            throw new ArgumentException($"Arch must not start with '-': {arch}", paramName);
+
+        const string Allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-";
+        foreach (var c in arch)
+        {
+            if (Allowed.IndexOf(c) >= 0) continue;
+            throw new ArgumentException(
+                $"Arch contains forbidden character '{c}' (allowed: [A-Za-z0-9._-]): {arch}", paramName);
+        }
+
+        if (arch.Length > 20)
+            throw new ArgumentException("Arch exceeds maximum length of 20", paramName);
+
+        return arch;
+    }
+
     // ─── Shared validation plumbing ───────────────────────────────────────
 
     private static string ValidateIdentifier(
