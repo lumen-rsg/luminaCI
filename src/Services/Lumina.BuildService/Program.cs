@@ -139,6 +139,10 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Build Service terminated unexpectedly");
+    // Propagate so the host exits with a non-zero code. Swallowing here would
+    // make a crash look like a clean exit (code 0), so Docker's restart policy
+    // could not tell them apart (SEC-024). The finally below still flushes logs.
+    throw;
 }
 finally
 {
