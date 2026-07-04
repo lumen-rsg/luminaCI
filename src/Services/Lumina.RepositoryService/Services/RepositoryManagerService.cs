@@ -81,6 +81,36 @@ public class RepositoryManagerService
     }
 
     /// <summary>
+    /// Moves an RPM from one arch directory to another within the same
+    /// repository (both paths confined to <see cref="_reposBasePath"/>). Used by
+    /// the publish path to relocate a package after its real arch is read from
+    /// the RPM header — a noarch subpackage is initially saved into the
+    /// repository's default arch dir and then moved to <c>noarch/</c> (FUNC-003).
+    /// Returns the new full path. Both arches are validated via the allow-list
+    /// sanitizer, and the destination directory is ensured.
+    /// </summary>
+    public string MoveRpm(string basePath, string fromArch, string toArch, string fileName)
+    {
+        EnsureSafeRepoSegments(basePath, fromArch);
+        EnsureSafeRepoSegments(basePath, toArch);
+        var fromDir = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(basePath.Trim('/'), fromArch), _reposBasePath);
+        var toDir = EnsureRepoDir(basePath, toArch);
+        var fromPath = Path.Combine(fromDir, fileName);
+        var toPath = Path.Combine(toDir, fileName);
+
+        if (!File.Exists(fromPath))
+            throw new FileNotFoundException($"RPM to move not found: {fromPath}", fromPath);
+
+        // File.Move across same-volume dirs is atomic; if a same-named file
+        // already exists at the destination (re-publish), overwrite it.
+        File.Move(fromPath, toPath, overwrite: true);
+
+        _logger.LogInformation("Moved RPM {Name} from {From} to {To}", fileName, fromArch, toArch);
+        return toPath;
+    }
+
+    /// <summary>
     /// Computes SHA-256 hash of a file.
     /// </summary>
     public string ComputeSha256(string filePath)

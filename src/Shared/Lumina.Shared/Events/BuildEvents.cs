@@ -90,6 +90,27 @@ public record GetArtifactSignature(Guid ArtifactId);
 public record ArtifactSignature(string? PgpSignature);
 
 /// <summary>
+/// Request the content + real NEVRA metadata of a build artifact over the
+/// message bus. RepositoryService uses this at publish time to obtain the RPM
+/// bytes and the real filename/arch — it has no view of BuildDbContext and no
+/// shared filesystem with BuildService, so the artifact must travel over the
+/// bus. <see cref="GetArtifactSignature"/> is the tiny sibling of this request.
+/// </summary>
+public record GetArtifactContent(Guid ArtifactId);
+
+/// <summary>
+/// Response to <see cref="GetArtifactContent"/>.
+/// <para><c>FileName</c> is the real RPM filename (NEVRA, e.g.
+/// <c>foo-1.0-1.x86_64.rpm</c>) recorded by <c>ScanArtifactsAsync</c>; the
+/// caller should treat it as untrusted and basename it before any filesystem
+/// use.</para>
+/// <para><c>Content</c> carries the full RPM bytes; <c>HashSha256</c> and
+/// <c>FileSize</c> are the values BuildService already computed at scan time,
+/// so the publisher can record them without re-hashing.</para>
+/// </summary>
+public record ArtifactContent(string FileName, long FileSize, string? HashSha256, byte[] Content);
+
+/// <summary>
 /// Request the armored public key of the active PGP key. RepositoryService uses
 /// this to verify externally-uploaded RPM signatures with <c>gpg --verify</c>.
 /// It runs in its own container with its own (transient) keyring and has no

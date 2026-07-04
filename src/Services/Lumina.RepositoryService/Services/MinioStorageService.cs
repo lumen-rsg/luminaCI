@@ -104,69 +104,72 @@ public class MinioStorageService
     }
 
     /// <summary>
-    /// Publishes a package by copying the RPM file to the repository directory
-    /// and updating the database with real metadata.
+    /// Publishes a package by fetching the built RPM from BuildService over the
+    /// message bus (RepositoryService has no shared filesystem with BuildService
+    /// and no view of BuildDbContext), saving it to the repository directory
+    /// routed by the package's own architecture, and recording real metadata.
     /// </summary>
     public async Task<Package> PublishPackageAsync(Guid artifactId, Guid repositoryId, string publishedBy)
     {
         var repo = await _db.Repositories.FindAsync(repositoryId)
             ?? throw new NotFoundException($"Repository {repositoryId} not found");
 
-        // Try to download artifact from MinIO
-        var bucketName = $"repo-{repo.Name.ToLowerInvariant()}";
-        var objectName = $"{artifactId:N}.rpm";
-
-        byte[] rpmData;
+        // Fetch the artifact bytes + real NEVRA filename from BuildService.
+        // The previous implementation read a MinIO object (repo-<name>/<id>.rpm)
+        // that was never written anywhere in the pipeline, so it always fell
+        // into the catch branch and published a zero-byte placeholder under a
+        // fabricated name. The bus request is the established pattern — it
+        // mirrors GetArtifactSignature, the tiny sibling of this lookup.
+        ArtifactContent artifact;
         try
         {
-            using var memoryStream = new MemoryStream();
-            await _minio.GetObjectAsync(new GetObjectArgs()
-                .WithBucket(bucketName)
-                .WithObject(objectName)
-                .WithCallbackStream(stream => stream.CopyTo(memoryStream)));
-            rpmData = memoryStream.ToArray();
+            var response = await _bus.Request<GetArtifactContent, ArtifactContent>(
+                new GetArtifactContent(artifactId), timeout: TimeSpan.FromSeconds(60));
+            artifact = response.Message;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not download artifact {ArtifactId} from MinIO, creating placeholder", artifactId);
-            rpmData = [];
+            _logger.LogError(ex, "Failed to fetch artifact {ArtifactId} content from BuildService via bus", artifactId);
+            throw new ValidationException(
+                $"Could not fetch artifact {artifactId} content from BuildService. The build may not have completed or BuildService is unreachable.");
         }
 
-        // Save RPM file to the repository filesystem
-        var fileName = $"package-{artifactId:N}.rpm";
-        string? savedPath = null;
-
-        if (rpmData.Length > 0)
+        if (artifact.Content is null || artifact.Content.Length == 0)
         {
-            savedPath = _repoManager.SaveRpm(repo.BasePath, repo.Arch, fileName, rpmData);
+            throw new ValidationException(
+                $"Artifact {artifactId} has no content to publish (empty payload from BuildService).");
         }
 
-        // Extract metadata from RPM file if available
-        string pkgName = $"package-{artifactId:N}";
-        string pkgVersion = "1.0.0";
-        string pkgRelease = "1";
-        string pkgArch = repo.Arch;
-        long pkgSize = rpmData.Length;
-        string? pkgHash = null;
+        // FUNC-007: preserve the real NEVRA filename instead of fabricating
+        // package-<guid>.rpm. Basename defensively — the FileName comes from
+        // BuildArtifact.FileName and should already be a bare name, but treat
+        // any caller-supplied value as untrusted before filesystem use.
+        var fileName = Path.GetFileName(artifact.FileName);
+        if (string.IsNullOrWhiteSpace(fileName))
+            throw new ValidationException($"Artifact {artifactId} has no usable filename.");
 
-        if (savedPath != null && rpmData.Length > 0)
+        // Save into the repo's default arch dir first (confined); the real arch
+        // is only knowable after ExtractRpmMetadata, which requires the file to
+        // already live inside the repo tree (it confines its path to the repo
+        // root). If the header arch differs, MoveRpm relocates it below.
+        var savedPath = _repoManager.SaveRpm(repo.BasePath, repo.Arch, fileName, artifact.Content);
+
+        var metadata = _repoManager.ExtractRpmMetadata(savedPath)
+            ?? throw new ValidationException(
+                $"Could not read RPM metadata for artifact {artifactId}; the file may be corrupt or not a valid RPM.");
+
+        string pkgName = metadata.Name;
+        string pkgVersion = metadata.Version;
+        string pkgRelease = metadata.Release;
+        string pkgArch = metadata.Arch;
+        long pkgSize = metadata.Size > 0 ? metadata.Size : new FileInfo(savedPath).Length;
+
+        // FUNC-003: route by the package's own arch, not the repository's
+        // configured arch. A noarch/-devel subpackage must land in its own arch
+        // dir so dnf on any client can resolve the full subpackage set.
+        if (!string.Equals(pkgArch, repo.Arch, StringComparison.OrdinalIgnoreCase))
         {
-            pkgHash = _repoManager.ComputeSha256(savedPath);
-            pkgSize = new FileInfo(savedPath).Length;
-
-            var metadata = _repoManager.ExtractRpmMetadata(savedPath);
-            if (metadata != null)
-            {
-                pkgName = metadata.Name;
-                pkgVersion = metadata.Version;
-                pkgRelease = metadata.Release;
-                pkgArch = metadata.Arch;
-                if (metadata.Size > 0)
-                    pkgSize = metadata.Size;
-
-                // Use real filename if metadata extracted successfully
-                fileName = Path.GetFileName(savedPath);
-            }
+            savedPath = _repoManager.MoveRpm(repo.BasePath, repo.Arch, pkgArch, fileName);
         }
 
         var package = new Package
@@ -179,9 +182,13 @@ public class MinioStorageService
             Release = pkgRelease,
             Arch = pkgArch,
             FileName = fileName,
-            StoragePath = $"{repo.BasePath}/{repo.Arch}/{fileName}",
+            StoragePath = $"{repo.BasePath}/{pkgArch}/{fileName}",
             FileSize = pkgSize,
-            HashSha256 = pkgHash,
+            // Prefer the hash BuildService already computed; fall back to a
+            // local recompute as defense-in-depth.
+            HashSha256 = !string.IsNullOrWhiteSpace(artifact.HashSha256)
+                ? artifact.HashSha256
+                : _repoManager.ComputeSha256(savedPath),
             PgpSignature = await GetRequiredArtifactSignatureAsync(artifactId),
             PublishedAt = DateTime.UtcNow,
             PublishedBy = publishedBy
@@ -190,29 +197,37 @@ public class MinioStorageService
         _db.Packages.Add(package);
         await _db.SaveChangesAsync();
 
-        // Run createrepo_c --update to update repository metadata
-        if (savedPath != null)
+        // FUNC-006: regenerate metadata for the arch dir that actually received
+        // the file (the package's own arch), not just the repository's default.
+        await RunCreaterepoForArchAsync(repo.BasePath, pkgArch, package.Id);
+
+        _logger.LogInformation("Package {PackageId} published to repository {RepoId} (arch {Arch})", package.Id, repositoryId, pkgArch);
+        return package;
+    }
+
+    /// <summary>
+    /// Runs createrepo_c on a single arch directory after a publish/upload,
+    /// logging failures without swallowing them silently. Extracted so both
+    /// publish paths route metadata regeneration through the package's own arch.
+    /// </summary>
+    private async Task RunCreaterepoForArchAsync(string basePath, string arch, Guid packageId)
+    {
+        try
         {
-            try
+            var result = await _repoManager.RunCreaterepoAsync(basePath, arch);
+            if (result.Success)
             {
-                var result = await _repoManager.RunCreaterepoAsync(repo.BasePath, repo.Arch);
-                if (result.Success)
-                {
-                    _logger.LogInformation("Repository metadata updated after publishing package {PackageId}", package.Id);
-                }
-                else
-                {
-                    _logger.LogWarning("createrepo_c failed after publishing: {Error}", result.Output);
-                }
+                _logger.LogInformation("Repository metadata updated for {Arch} after publishing package {PackageId}", arch, packageId);
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogWarning(ex, "createrepo_c failed after publishing package {PackageId}", package.Id);
+                _logger.LogWarning("createrepo_c failed after publishing package {PackageId}: {Error}", packageId, result.Output);
             }
         }
-
-        _logger.LogInformation("Package {PackageId} published to repository {RepoId}", package.Id, repositoryId);
-        return package;
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "createrepo_c threw after publishing package {PackageId}", packageId);
+        }
     }
 
     /// <summary>
@@ -234,7 +249,8 @@ public class MinioStorageService
         var repo = await _db.Repositories.FindAsync(repositoryId)
             ?? throw new NotFoundException($"Repository {repositoryId} not found");
 
-        // Save RPM to filesystem
+        // Save RPM to filesystem (default arch dir first; relocated below if the
+        // RPM header declares a different arch — same routing logic as publish).
         var savedPath = await _repoManager.SaveRpmAsync(repo.BasePath, repo.Arch, fileName, fileStream);
 
         // Compute hash
@@ -256,6 +272,12 @@ public class MinioStorageService
             pkgArch = metadata.Arch;
         }
 
+        // FUNC-003: route by the package's own arch, not the repository's.
+        if (!string.Equals(pkgArch, repo.Arch, StringComparison.OrdinalIgnoreCase))
+        {
+            savedPath = _repoManager.MoveRpm(repo.BasePath, repo.Arch, pkgArch, fileName);
+        }
+
         var package = new Package
         {
             Id = Guid.NewGuid(),
@@ -266,7 +288,7 @@ public class MinioStorageService
             Release = pkgRelease,
             Arch = pkgArch,
             FileName = fileName,
-            StoragePath = $"{repo.BasePath}/{repo.Arch}/{fileName}",
+            StoragePath = $"{repo.BasePath}/{pkgArch}/{fileName}",
             FileSize = actualSize,
             HashSha256 = hash,
             PgpSignature = pgpSignature,
@@ -277,25 +299,10 @@ public class MinioStorageService
         _db.Packages.Add(package);
         await _db.SaveChangesAsync();
 
-        // Run createrepo_c --update
-        try
-        {
-            var result = await _repoManager.RunCreaterepoAsync(repo.BasePath, repo.Arch);
-            if (result.Success)
-            {
-                _logger.LogInformation("Repository metadata updated after uploading {FileName}", fileName);
-            }
-            else
-            {
-                _logger.LogWarning("createrepo_c warning after upload: {Output}", result.Output);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "createrepo_c failed after uploading {FileName}", fileName);
-        }
+        // FUNC-006: regenerate metadata for the arch dir that received the file.
+        await RunCreaterepoForArchAsync(repo.BasePath, pkgArch, package.Id);
 
-        _logger.LogInformation("Package {FileName} uploaded to repository {RepoId} (id: {PackageId})", fileName, repositoryId, package.Id);
+        _logger.LogInformation("Package {FileName} uploaded to repository {RepoId} (arch {Arch}, id: {PackageId})", fileName, repositoryId, pkgArch, package.Id);
         return package;
     }
 

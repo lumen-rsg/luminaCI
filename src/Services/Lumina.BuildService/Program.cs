@@ -58,6 +58,7 @@ try
         x.AddConsumer<PackageSignedConsumer>();
         x.AddConsumer<BuildTriggerFromConfigConsumer>();
         x.AddConsumer<GetArtifactSignatureConsumer>();
+        x.AddConsumer<GetArtifactContentConsumer>();
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -73,6 +74,7 @@ try
                 e.ConfigureConsumer<PackageSignedConsumer>(ctx);
                 e.ConfigureConsumer<BuildTriggerFromConfigConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactSignatureConsumer>(ctx);
+                e.ConfigureConsumer<GetArtifactContentConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
