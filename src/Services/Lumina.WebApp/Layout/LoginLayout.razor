@@ -2,8 +2,8 @@
 @inject Lumina.WebApp.Services.ThemeService Theme
 
 <div class="login-layout">
-    <button class="theme-toggle login-theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Switch to light theme" : "Switch to dark theme")">
-        @(Theme.IsDark ? "Light" : "Dark")
+    <button class="theme-toggle login-theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Switch to light theme" : "Switch to dark theme")" aria-label="Toggle theme">
+        <Icon Name="@(Theme.IsDark ? "sun" : "moon")" />
     </button>
     <div class="login-container">
         <div class="login-logo">
@@ -26,47 +26,3 @@
         await Theme.ToggleThemeAsync();
     }
 }
-
-<style>
-    .login-layout {
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--bg-dark);
-        position: relative;
-    }
-    .login-theme-toggle {
-        position: absolute;
-        top: 16px;
-        right: 16px;
-    }
-    .login-container {
-        width: 100%;
-        max-width: 420px;
-        padding: 2rem;
-    }
-    .login-logo {
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .login-logo h1 {
-        color: var(--text-white);
-        margin-top: 0.5rem;
-        font-size: 1.8rem;
-    }
-    .login-logo-icon {
-        width: 56px;
-        height: 56px;
-        margin: 0 auto;
-        background: var(--accent);
-        border-radius: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #fff;
-        font-weight: 700;
-        font-size: 1.4rem;
-        box-shadow: var(--neu-shadow);
-    }
-</style>

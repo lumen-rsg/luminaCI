@@ -28,17 +28,17 @@
                     }
                     else
                     {
-                        <span>Cancel</span>
+                        <Icon Name="cancel" /> <span>Cancel</span>
                     }
                 </button>
             }
             @if (_build.Data.Artifacts.Any())
             {
-                <button class="btn btn-outline-success btn-sm" @onclick="DownloadAllArtifacts">Download RPM</button>
+                <button class="btn btn-outline-success btn-sm" @onclick="DownloadAllArtifacts"><Icon Name="download" /> Download RPM</button>
             }
-            <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadSpec">Spec</button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadSpec"><Icon Name="file-code" /> Spec</button>
         }
-        <button class="btn btn-outline-secondary btn-sm" @onclick="GoBack">&larr; Back</button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="GoBack"><Icon Name="chevron-left" /> Back</button>
     </div>
 </div>
 
@@ -209,7 +209,7 @@ else
             </div>
             @if (stage != GetStages(build).Last())
             {
-                <div class="stage-connector">&rarr;</div>
+                <div class="stage-connector"><Icon Name="chevron-right" /></div>
             }
         }
     </div>
@@ -263,7 +263,7 @@ else
                                     <span class="@GetScanBadge(artifact.CveScanStatus)">@artifact.CveScanStatus</span>
                                 </td>
                                 <td>
-                                    <button class="btn btn-sm btn-outline-success" @onclick="() => DownloadArtifact(artifact.FileName)" title="Download @artifact.FileName">Download</button>
+                                    <button class="btn btn-sm btn-outline-success" @onclick="() => DownloadArtifact(artifact.FileName)" title="Download @artifact.FileName"><Icon Name="download" /> Download</button>
                                 </td>
                             </tr>
                         }
@@ -343,7 +343,7 @@ else
     <div class="section-title mt-4">Console Output</div>
     <div class="console-output animate-slide-in">
         <div class="console-header">
-            <span>Build Logs</span>
+            <span><Icon Name="terminal" /> Build Logs</span>
             <div class="d-flex gap-2">
                 @if (isRunning)
                 {
@@ -354,7 +354,7 @@ else
                 }
                 @if (_logLines.Count > 0)
                 {
-                    <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;padding:2px 8px;" @onclick="CopyLogs">Copy</button>
+                    <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;padding:2px 8px;" @onclick="CopyLogs"><Icon Name="copy" /> Copy</button>
                 }
             </div>
         </div>

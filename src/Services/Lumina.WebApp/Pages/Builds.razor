@@ -9,9 +9,9 @@
 <div class="page-header">
     <h1>Builds</h1>
     <div class="page-header-actions">
-        <a href="/pipelines" class="btn btn-outline-success">Trigger Build</a>
-        <button class="btn btn-outline-danger" @onclick="ClearQueue" title="Clear all queued builds">Clear Queue</button>
-        <button class="btn btn-outline-secondary" @onclick="LoadBuilds">Refresh</button>
+        <a href="/pipelines" class="btn btn-outline-success"><Icon Name="play" /> Trigger Build</a>
+        <button class="btn btn-outline-danger" @onclick="ClearQueue" title="Clear all queued builds"><Icon Name="trash" /> Clear Queue</button>
+        <button class="btn btn-outline-secondary" @onclick="LoadBuilds"><Icon Name="refresh" /> Refresh</button>
     </div>
 </div>
 
@@ -43,10 +43,10 @@
     {
         <div class="card animate-slide-in">
             <div class="card-body text-center p-5">
-                <div><span class="status-dot failed"></span></div>
+                <div class="empty-state-icon"><Icon Name="alert-circle" /></div>
                 <h4 class="mt-3">Server Unavailable</h4>
                 <p class="text-muted">Could not load builds. Check your connection and try again.</p>
-                <button class="btn btn-primary mt-2" @onclick="LoadBuilds">Retry</button>
+                <button class="btn btn-primary mt-2" @onclick="LoadBuilds"><Icon Name="refresh" /> Retry</button>
             </div>
         </div>
     }
@@ -159,11 +159,11 @@ else if (FilteredBuilds.Any())
                                 @if (build.Status == BuildStatus.Queued || build.Status == BuildStatus.Building)
                                 {
                                     <button class="btn btn-sm btn-outline-danger" @onclick="() => CancelBuild(build.Id)" @onclick:stopPropagation title="Cancel build">
-                                        Cancel
+                                        <Icon Name="cancel" /> Cancel
                                     </button>
                                 }
                                 <a href="/builds/@build.Id" class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();">
-                                    Details
+                                    <Icon Name="chevron-right" /> Details
                                 </a>
                             </td>
                         </tr>
@@ -178,15 +178,15 @@ else if (FilteredBuilds.Any())
             Showing @FilteredBuilds.Count() of @(_builds?.Data?.TotalCount ?? 0) builds
         </span>
         <div class="btn-group">
-            <button class="btn btn-outline-secondary btn-sm" disabled="@(_page <= 1)" @onclick="() => ChangePage(-1)">&larr; Prev</button>
-            <button class="btn btn-outline-secondary btn-sm" disabled="@(_page * 20 >= (_builds?.Data?.TotalCount ?? 0))" @onclick="() => ChangePage(1)">Next &rarr;</button>
+            <button class="btn btn-outline-secondary btn-sm" disabled="@(_page <= 1)" @onclick="() => ChangePage(-1)"><Icon Name="chevron-left" /> Prev</button>
+            <button class="btn btn-outline-secondary btn-sm" disabled="@(_page * 20 >= (_builds?.Data?.TotalCount ?? 0))" @onclick="() => ChangePage(1)">Next <Icon Name="chevron-right" /></button>
         </div>
     </div>
 }
 else
 {
     <div class="empty-state animate-slide-in">
-        <div class="empty-state-icon"><span class="icon-inner"></span></div>
+        <div class="empty-state-icon"><Icon Name="inbox" /></div>
         <h3>No builds found</h3>
         <p>@(_filter != "all" ? "No builds match the selected filter. Try changing the filter." : "Trigger a pipeline to start your first build.")</p>
     </div>

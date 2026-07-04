@@ -6,17 +6,17 @@
 
 <PageTitle>Sources — Lumina CI</PageTitle>
 
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0"><i class="bi bi-box-seam me-2"></i>Sources</h4>
-    <div>
-        <button class="btn btn-outline-secondary btn-sm me-2" @onclick="ReloadConfig">
-            <i class="bi bi-arrow-clockwise me-1"></i>Reload Config
+<div class="page-header">
+    <h1><Icon Name="package" /> Sources</h1>
+    <div class="page-header-actions">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ReloadConfig">
+            <Icon Name="refresh" /> Reload Config
         </button>
-        <button class="btn btn-outline-primary btn-sm me-2" @onclick="ToggleConfigEditor">
-            <i class="bi bi-pencil-square me-1"></i>Edit conf.ini
+        <button class="btn btn-outline-primary btn-sm" @onclick="ToggleConfigEditor">
+            <Icon Name="edit" /> Edit conf.ini
         </button>
         <button class="btn btn-primary btn-sm" @onclick="ShowAddPackage">
-            <i class="bi bi-plus-lg me-1"></i>Add Package
+            <Icon Name="plus" /> Add Package
         </button>
     </div>
 </div>
@@ -25,15 +25,15 @@
 @if (_showConfigEditor)
 {
     <div class="card mb-4 border-primary">
-        <div class="card-header bg-primary text-white d-flex justify-content-between">
-            <span><i class="bi bi-file-earmark-code me-1"></i>conf.ini</span>
-            <div>
-                <button class="btn btn-sm btn-light me-2" @onclick="SaveConfig">Save</button>
-                <button class="btn btn-sm btn-outline-light" @onclick="ToggleConfigEditor">Cancel</button>
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><Icon Name="file-code" /> conf.ini</span>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-success" @onclick="SaveConfig"><Icon Name="save" /> Save</button>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="ToggleConfigEditor"><Icon Name="x" /> Cancel</button>
             </div>
         </div>
         <div class="card-body p-0">
-            <textarea class="form-control font-monospace border-0 rounded-0" rows="14" @bind="_configContent" style="font-size:0.82rem;resize:vertical;"></textarea>
+            <textarea class="form-control font-monospace border-0 rounded-0" rows="14" @bind="_configContent" style="font-size:0.82rem;resize:vertical;border:0;border-radius:0;"></textarea>
         </div>
     </div>
 }
@@ -42,8 +42,8 @@
 @if (_showAddPackage)
 {
     <div class="card mb-4 border-success">
-        <div class="card-header bg-success text-white">
-            <i class="bi bi-plus-circle me-1"></i>Add Package
+        <div class="card-header">
+            <Icon Name="plus" /> Add Package
         </div>
         <div class="card-body">
             <div class="row">
@@ -140,13 +140,13 @@ else if (_packages.Any())
                         <td>
                             <div class="btn-group btn-group-sm">
                                 <button class="btn btn-outline-primary" @onclick="() => FetchPackage(pkg.PackageName)" title="Fetch sources">
-                                    <i class="bi bi-download"></i>
+                                    <Icon Name="download" />
                                 </button>
                                 <button class="btn btn-outline-success" @onclick="() => BuildPackage(pkg.PackageName)" title="Build RPM">
-                                    <i class="bi bi-hammer"></i>
+                                    <Icon Name="hammer" />
                                 </button>
                                 <button class="btn btn-outline-danger" @onclick="() => RemovePackage(pkg.PackageName)" title="Remove from config">
-                                    <i class="bi bi-trash"></i>
+                                    <Icon Name="trash" />
                                 </button>
                             </div>
                         </td>
@@ -158,9 +158,10 @@ else if (_packages.Any())
 }
 else
 {
-    <div class="text-center text-muted py-5">
-        <i class="bi bi-box-seam" style="font-size:3rem;"></i>
-        <p class="mt-3">No packages configured. Edit conf.ini or add a package.</p>
+    <div class="empty-state">
+        <div class="empty-state-icon" style="font-size:2rem;"><Icon Name="package" /></div>
+        <h3>No packages configured</h3>
+        <p>Edit conf.ini or add a package to get started.</p>
     </div>
 }
 

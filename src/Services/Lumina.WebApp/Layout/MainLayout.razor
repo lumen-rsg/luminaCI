@@ -11,7 +11,7 @@
                 <a href="/">console.lumina.1t.ru</a>
                 @foreach (var seg in GetBreadcrumbs())
                 {
-                    <span class="separator">/</span>
+                    <span class="separator"><Icon Name="chevron-right" /></span>
                     if (seg.Link != null)
                     {
                         <a href="@seg.Link">@seg.Label</a>
@@ -23,10 +23,12 @@
                 }
             </div>
             <div class="top-bar-actions">
-                <button class="theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Switch to light theme" : "Switch to dark theme")">
-                    @(Theme.IsDark ? "Light" : "Dark")
+                <span class="text-xs text-muted d-flex align-items-center gap-2">
+                    <Icon Name="calendar" /> @DateTime.Now.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                </span>
+                <button class="theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Switch to light theme" : "Switch to dark theme")" aria-label="Toggle theme">
+                    <Icon Name="@(Theme.IsDark ? "sun" : "moon")" />
                 </button>
-                <span class="text-xs text-muted">@DateTime.Now.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
             </div>
         </header>
         <div class="content-wrapper">

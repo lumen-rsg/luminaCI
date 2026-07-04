@@ -9,43 +9,43 @@
 <div class="page-header">
     <h1>Dashboard</h1>
     <div class="page-header-actions">
-        <a href="/pipelines" class="btn btn-outline-success">New Build</a>
-        <button class="btn btn-outline-secondary" @onclick="RefreshAll">Refresh</button>
+        <a href="/pipelines" class="btn btn-outline-success"><Icon Name="plus" /> New Build</a>
+        <button class="btn btn-outline-secondary" @onclick="RefreshAll"><Icon Name="refresh" /> Refresh</button>
     </div>
 </div>
 
 <!-- Stats -->
 <div class="stats-grid animate-slide-in">
     <div class="stat-card">
-        <div class="stat-icon blue"><span class="stat-icon-inner"></span></div>
+        <div class="stat-icon blue"><Icon Name="clock" /></div>
         <div class="stat-info">
             <div class="stat-value">@(_buildQueue?.Data?.QueuedCount ?? 0)</div>
             <div class="stat-label">In Queue</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon yellow"><span class="stat-icon-inner"></span></div>
+        <div class="stat-icon yellow"><Icon Name="loader" /></div>
         <div class="stat-info">
             <div class="stat-value">@(_buildQueue?.Data?.RunningCount ?? 0)</div>
             <div class="stat-label">Building</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon green"><span class="stat-icon-inner"></span></div>
+        <div class="stat-icon green"><Icon Name="check-circle" /></div>
         <div class="stat-info">
             <div class="stat-value">@(_successCount)</div>
             <div class="stat-label">Completed</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon red"><span class="stat-icon-inner"></span></div>
+        <div class="stat-icon red"><Icon Name="x-circle" /></div>
         <div class="stat-info">
             <div class="stat-value">@(_failedCount)</div>
             <div class="stat-label">Failed</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon purple"><span class="stat-icon-inner"></span></div>
+        <div class="stat-icon purple"><Icon Name="gauge" /></div>
         <div class="stat-info">
             <div class="stat-value">@(_successRate)%</div>
             <div class="stat-label">Success Rate</div>
@@ -115,8 +115,8 @@
                 else
                 {
                     <div class="text-center p-4 text-muted">
-                        <div style="opacity:0.3;margin-bottom:8px;">
-                            <span class="status-dot pending"></span>
+                        <div class="empty-state-icon" style="width:48px;height:48px;font-size:1.3rem;margin-bottom:8px;">
+                            <Icon Name="check-circle" />
                         </div>
                         <div>No builds running</div>
                     </div>
@@ -128,7 +128,7 @@
         <div class="card animate-slide-in">
             <div class="card-header">
                 <h3>Build History</h3>
-                <a href="/builds" class="text-xs">View all &rarr;</a>
+                <a href="/builds" class="text-xs">View all <Icon Name="chevron-right" /></a>
             </div>
             <div class="card-body p-0">
                 @if (_builds?.Data?.Builds != null && _builds.Data.Builds.Any())

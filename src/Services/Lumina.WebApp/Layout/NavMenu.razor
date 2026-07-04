@@ -17,7 +17,8 @@
             <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
                 <li class="nav-item">
                     <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                        <span class="nav-icon"><span class="nav-icon-dot blue"></span></span> Dashboard
+                        <span class="nav-icon"><Icon Name="gauge" /></span>
+                        <span>Dashboard</span>
                     </NavLink>
                 </li>
             </ul>
@@ -26,19 +27,24 @@
             <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
                 <li class="nav-item">
                     <NavLink class="nav-link" href="pipelines">
-                        <span class="nav-icon"><span class="nav-icon-dot orange"></span></span> Pipelines
+                        <span class="nav-icon"><Icon Name="flow" /></span>
+                        <span>Pipelines</span>
                     </NavLink>
                 </li>
                 <li class="nav-item">
                     <NavLink class="nav-link" href="builds">
-                        <span class="nav-icon"><span class="nav-icon-dot green"></span></span> Builds
+                        <span class="nav-icon"><Icon Name="hammer" /></span>
+                        <span>Builds</span>
                         @if (_queueBadge > 0)
                         {
                             <span class="nav-badge">@_queueBadge</span>
                         }
                     </NavLink>
+                </li>
+                <li class="nav-item">
                     <NavLink class="nav-link" href="sources">
-                        <span class="nav-icon"><span class="nav-icon-dot purple"></span></span> Sources
+                        <span class="nav-icon"><Icon Name="package" /></span>
+                        <span>Sources</span>
                     </NavLink>
                 </li>
             </ul>
@@ -47,12 +53,14 @@
             <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
                 <li class="nav-item">
                     <NavLink class="nav-link" href="security">
-                        <span class="nav-icon"><span class="nav-icon-dot red"></span></span> Security
+                        <span class="nav-icon"><Icon Name="shield" /></span>
+                        <span>Security</span>
                     </NavLink>
                 </li>
                 <li class="nav-item">
                     <NavLink class="nav-link" href="repositories">
-                        <span class="nav-icon"><span class="nav-icon-dot yellow"></span></span> Repositories
+                        <span class="nav-icon"><Icon Name="database" /></span>
+                        <span>Repositories</span>
                     </NavLink>
                 </li>
             </ul>
@@ -63,12 +71,14 @@
         @if (Auth.IsAuthenticated)
         {
             <button class="btn btn-sm btn-outline-secondary w-100" @onclick="DoLogout">
-                Logout
+                <Icon Name="logout" /> Logout
             </button>
         }
         else
         {
-            <a href="/login" class="btn btn-sm btn-primary w-100">Sign In</a>
+            <a href="/login" class="btn btn-sm btn-primary w-100">
+                <Icon Name="login" /> Sign In
+            </a>
         }
         <small class="mt-2 d-block text-muted">Lumina CI v1.0</small>
     </div>

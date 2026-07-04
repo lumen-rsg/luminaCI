@@ -12,7 +12,7 @@
 <div class="page-header">
     <h1>Pipelines</h1>
     <div class="page-header-actions">
-        <button class="btn btn-primary" @onclick="ShowCreateDialog">+ New Pipeline</button>
+        <button class="btn btn-primary" @onclick="ShowCreateDialog"><Icon Name="plus" /> New Pipeline</button>
     </div>
 </div>
 
@@ -21,7 +21,7 @@
 {
     <div class="card mb-4 animate-slide-in">
         <div class="card-header">
-            <h4 class="mb-0">+ Create Pipeline</h4>
+            <h4 class="mb-0"><Icon Name="plus" /> Create Pipeline</h4>
         </div>
         <div class="card-body">
             <div class="row">
@@ -90,7 +90,7 @@
                     @if (!string.IsNullOrEmpty(_newSpecFileName))
                     {
                         <span class="text-sm text-muted">@_newSpecFileName</span>
-                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _newSpecContent = ""; _newSpecFileName = ""; })" title="Clear">x</button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _newSpecContent = ""; _newSpecFileName = ""; })" title="Clear"><Icon Name="x" /></button>
                     }
                 </div>
                 <textarea class="form-control font-monospace" rows="8" @bind="_newSpecContent" style="font-size:0.82rem;" placeholder="Name: my-package
@@ -152,7 +152,7 @@ Version: 1.0
                     @if (!string.IsNullOrEmpty(_triggerSpecFileName))
                     {
                         <span class="text-sm text-muted">@_triggerSpecFileName</span>
-                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _triggerSpecContent = ""; _triggerSpecFileName = ""; })" title="Clear">x</button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _triggerSpecContent = ""; _triggerSpecFileName = ""; })" title="Clear"><Icon Name="x" /></button>
                     }
                 </div>
                 <textarea class="form-control font-monospace" rows="10" @bind="_triggerSpecContent" style="font-size:0.82rem;"></textarea>
@@ -233,7 +233,7 @@ Version: 1.0
                     @if (!string.IsNullOrEmpty(_editSpecFileName))
                     {
                         <span class="text-sm text-muted">@_editSpecFileName</span>
-                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _editSpecContent = ""; _editSpecFileName = ""; })" title="Clear">x</button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _editSpecContent = ""; _editSpecFileName = ""; })" title="Clear"><Icon Name="x" /></button>
                     }
                 </div>
                 <textarea class="form-control font-monospace" rows="6" @bind="_editSpecContent" style="font-size:0.82rem;"></textarea>
@@ -330,26 +330,26 @@ Version: 1.0
                         @if (!string.IsNullOrEmpty(pipeline.GitRepoUrl))
                             {
                                 <button class="btn btn-sm btn-success" @onclick="() => AutoBuild(pipeline.Id, pipeline.Name)" title="Auto Build — fetch from git">
-                                    Auto
+                                    <Icon Name="sync" /> Auto
                                 </button>
                                 <button class="btn btn-sm btn-outline-info" @onclick="() => CopyWebhookUrl(pipeline.Id)" title="Copy webhook URL">
-                                    Webhook
+                                    <Icon Name="link" /> Webhook
                                 </button>
                             }
                         <button class="btn btn-sm btn-outline-success" @onclick="() => ShowTriggerDialog(pipeline)" title="Manual Build">
-                            Run
+                            <Icon Name="play" /> Run
                         </button>
                         <button class="btn btn-sm btn-outline-warning" @onclick="() => ShowEditDialog(pipeline)" title="Edit Pipeline">
-                            Edit
+                            <Icon Name="edit" /> Edit
                         </button>
                         <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(pipeline)" title="Delete Pipeline">
-                            Delete
+                            <Icon Name="trash" /> Delete
                         </button>
                         <button class="btn btn-sm @(IsSourcesExpanded(pipeline.Id) ? "btn-info" : "btn-outline-info")" @onclick="() => TogglePipelineSources(pipeline.Id)" title="Extra Sources">
-                            Sources
+                            <Icon Name="package" /> Sources
                         </button>
                         <a href="/builds" class="btn btn-sm btn-outline-primary" title="View Builds">
-                            Builds
+                            <Icon Name="hammer" /> Builds
                         </a>
                     </div>
                 </div>
@@ -385,7 +385,7 @@ Version: 1.0
 
                         @if (_uploading)
                         {
-                            <div class="mb-3 p-3" style="background:rgba(108,140,255,0.05); border-radius:var(--radius-sm); box-shadow: var(--neu-shadow-inset);">
+                            <div class="mb-3 p-3" style="background:var(--tint-blue); border:1px solid var(--border-color); border-radius:var(--radius-sm);">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
                                     <span class="text-sm">
                                         @(_uploadFileCount > 1 ? $"File {_uploadFileIndex}/{_uploadFileCount}: " : "")<strong>@_uploadFileName</strong>
@@ -424,7 +424,7 @@ Version: 1.0
                                                 <td>@(src.SubFolder ?? "/")</td>
                                                 <td>@FormatFileSize(src.FileSize)</td>
                                                 <td>@src.UploadedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
-                                                <td><button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size:0.75rem" @onclick="() => DeleteSource(pipeline.Id, src.Path)">x</button></td>
+                                                <td><button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size:0.75rem" @onclick="() => DeleteSource(pipeline.Id, src.Path)"><Icon Name="x" /></button></td>
                                             </tr>
                                         }
                                     </tbody>
@@ -448,7 +448,7 @@ Version: 1.0
 else
 {
     <div class="empty-state animate-slide-in">
-        <div class="empty-state-icon"><span class="icon-inner"></span></div>
+        <div class="empty-state-icon"><Icon Name="flow" /></div>
         <h3>No pipelines yet</h3>
         <p>Click "New Pipeline" to create your first build pipeline.</p>
     </div>

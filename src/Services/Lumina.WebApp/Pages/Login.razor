@@ -12,14 +12,14 @@
         <div class="card-body">
             @if (_error != null)
             {
-                <div class="alert alert-danger">@_error</div>
+                <div class="alert alert-danger"><Icon Name="alert-circle" /> @_error</div>
             }
             <div class="mb-3">
-                <label class="form-label">Username</label>
+                <label class="form-label"><Icon Name="user" /> Username</label>
                 <input type="text" class="form-control" @bind="_username" @onkeypress="OnKeyPress" />
             </div>
             <div class="mb-3">
-                <label class="form-label">Password</label>
+                <label class="form-label"><Icon Name="lock" /> Password</label>
                 <input type="password" class="form-control" @bind="_password" @onkeypress="OnKeyPress" />
             </div>
             <button class="btn btn-primary w-100" @onclick="DoLogin" disabled="@_loading">
@@ -27,7 +27,7 @@
                 {
                     <span class="spinner-border spinner-border-sm me-2"></span>
                 }
-                Sign In
+                <Icon Name="login" /> Sign In
             </button>
         </div>
     </div>
