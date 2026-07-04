@@ -1,4 +1,6 @@
-FROM fedora:latest
+# Pinned to a specific Fedora major (not :latest) for reproducible builds.
+# See rpm-build.Dockerfile for rationale. Keep in sync with it.
+FROM fedora:44
 
 # Install RPM build tools + .NET SDK + NativeAOT dependencies.
 # No `sudo` (see rpm-build.Dockerfile for rationale).
@@ -15,7 +17,8 @@ RUN dnf install -y \
     libicu-devel \
     && dnf clean all
 
-# Install .NET SDK 10.0 (or latest available)
+# Install .NET SDK 10.0. --channel 10.0 already pins the major; the install
+# script resolves it to the latest 10.0.x SDK at build time.
 RUN curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0 --install-dir /usr/share/dotnet \
     && ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
 

@@ -60,7 +60,10 @@ services:
       - lumina-network
 
   minio:
-    image: minio/minio:latest
+    # Pinned to a specific RELEASE tag (not :latest) so a spec building today
+    # does not break tomorrow when MinIO ships a new release. Update
+    # deliberately; verify the new tag is multi-arch (amd64+arm64) before bump.
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: lumina-minio
     environment:
       MINIO_ROOT_USER: ${MINIO_USER:-luminaadmin}
@@ -200,7 +203,9 @@ services:
   # build-service is compromised it cannot `docker run` arbitrary images, attach
   # to other containers, or read the host filesystem through the socket.
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    # Pinned: docker-socket-proxy has no 0.4 rolling tag, and 0.3 points at the
+    # stale 0.3.0. Fix to a specific patch release; verify multi-arch before bump.
+    image: tecnativa/docker-socket-proxy:0.4.2
     container_name: lumina-docker-socket-proxy
     environment:
       # Only the API surfaces build-service needs; everything else stays off.
@@ -312,7 +317,11 @@ services:
       - lumina-network
 
   trivy:
-    image: aquasec/trivy:latest
+    # Pinned: Trivy publishes only X.Y.Z tags (no 0.72 rolling tag exists).
+    # Bumping can change the scan-result JSON schema and break
+    # ParseTrivyServerResponse — update deliberately and re-test the parser.
+    # Keep in sync with deploy/docker/Lumina.ScannerService.Dockerfile (trivy-bin).
+    image: aquasec/trivy:0.72.0
     container_name: lumina-trivy
     command: server --listen :8080
     # SEC-01: NOT published to the host. scanner-service connects over

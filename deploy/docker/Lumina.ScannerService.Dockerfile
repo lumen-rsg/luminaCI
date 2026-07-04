@@ -15,7 +15,9 @@ RUN dotnet build "src/Services/Lumina.ScannerService/Lumina.ScannerService.cspro
 FROM build AS publish
 RUN dotnet publish "src/Services/Lumina.ScannerService/Lumina.ScannerService.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
-FROM aquasec/trivy:latest AS trivy-bin
+# Pinned to match deploy/docker-compose.yml `trivy` service (0.72.0). Keep both
+# in sync so the embedded trivy binary and the server speak the same protocol.
+FROM aquasec/trivy:0.72.0 AS trivy-bin
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app

@@ -1,4 +1,7 @@
-FROM fedora:latest
+# Pinned to a specific Fedora major (not :latest) for reproducible RPM builds:
+# :latest drifts, so a spec that builds today can break tomorrow with no code
+# change. Bump deliberately after re-validating the build specs.
+FROM fedora:44
 
 # Install RPM build tools + multi-protocol source fetching tools.
 # NOTE: no `sudo` — the build runs as the unprivileged `rpmbuilder` user, so
