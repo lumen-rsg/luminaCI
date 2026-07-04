@@ -81,10 +81,13 @@ try
 
     var app = builder.Build();
 
+    // Apply EF Core migrations (fail-closed). Errors propagate to the top-level
+    // handler rather than being swallowed as "tables may already exist".
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<RepositoryDbContext>();
-        await CreateTablesWithScriptAsync(db);
+        await DatabaseInitializer.MigrateAsync(db);
+        Log.Information("Repository database schema applied (EF Core migrations)");
     }
 
     if (app.Environment.IsDevelopment())
@@ -107,18 +110,4 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
-}
-
-static async Task CreateTablesWithScriptAsync(DbContext db)
-{
-    var script = db.Database.GenerateCreateScript();
-    try
-    {
-        await db.Database.ExecuteSqlRawAsync(script);
-        Log.Information("Database tables created/verified successfully");
-    }
-    catch (Exception ex)
-    {
-        Log.Warning(ex, "Table creation skipped (tables may already exist)");
-    }
 }

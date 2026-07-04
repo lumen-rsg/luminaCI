@@ -95,23 +95,17 @@ try
 
     var app = builder.Build();
 
-    // Create tables if not exist
+    // Apply EF Core migrations (fail-closed). Replaces the legacy
+    // GenerateCreateScript() + hand-written ALTER TABLE approach, which wrapped
+    // every DDL statement in a catch-all that hid real failures (connection
+    // refused, permission denied) as "tables may already exist". See
+    // DatabaseInitializer for the legacy cut-over stamp and why errors now
+    // propagate instead of being swallowed.
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
-
-        // Ensure PostgreSQL extensions required by the schema (e.g., hstore for PipelineStep.Configuration)
-        try
-        {
-            await db.Database.ExecuteSqlRawAsync("CREATE EXTENSION IF NOT EXISTS hstore");
-            Log.Information("Ensured hstore extension is available");
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Could not create hstore extension — some features may not work");
-        }
-
-        await CreateTablesWithScriptAsync(db);
+        await DatabaseInitializer.MigrateAsync(db);
+        Log.Information("Build database schema applied (EF Core migrations)");
     }
 
     // Ensure required host directories exist for build artifacts and sources
@@ -149,63 +143,4 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
-}
-
-static async Task CreateTablesWithScriptAsync(DbContext db)
-{
-    var script = db.Database.GenerateCreateScript();
-    try
-    {
-        await db.Database.ExecuteSqlRawAsync(script);
-        Log.Information("Database tables created/verified successfully");
-    }
-    catch (Exception ex)
-    {
-        Log.Warning(ex, "Table creation skipped (tables may already exist)");
-    }
-
-    // Add columns that may be missing from earlier schema versions
-    var migrations = new (string Table, string Column, string Def)[]
-    {
-        ("\"build\".\"pipelines\"", "\"SpecContent\"", "text NULL"),
-        ("\"build\".\"build_jobs\"", "\"SpecContent\"", "text NOT NULL DEFAULT ''"),
-        ("\"build\".\"build_jobs\"", "\"SourceUrl\"", "text NULL"),
-        ("\"build\".\"build_jobs\"", "\"CommitSha\"", "text NULL"),
-        ("\"build\".\"build_jobs\"", "\"Branch\"", "text NULL"),
-        ("\"build\".\"build_jobs\"", "\"CommitMessage\"", "text NULL"),
-        ("\"build\".\"build_jobs\"", "\"CommitAuthor\"", "text NULL"),
-        ("\"build\".\"pipeline_steps\"", "\"Configuration\"", "hstore DEFAULT ''"),
-    };
-
-    foreach (var (table, column, def) in migrations)
-    {
-        try
-        {
-            await db.Database.ExecuteSqlRawAsync(
-                $"ALTER TABLE {table} ADD COLUMN {column} {def}");
-            Log.Information("Added column {Table}.{Column}", table, column);
-        }
-        catch (Exception ex)
-        {
-            Log.Verbose(ex, "Column {Table}.{Column} already exists, skipped", table, column);
-        }
-    }
-
-    // SEC-013: secret columns are now encrypted at rest, so their stored values
-    // are longer than the original plaintext. Widen GitToken from varchar(512)
-    // to text (WebhookSecret is already unbounded text). Idempotent: re-running
-    // a no-op ALTER TYPE is safe and cheap.
-    foreach (var column in new[] { "\"GitToken\"", "\"WebhookSecret\"" })
-    {
-        try
-        {
-            await db.Database.ExecuteSqlRawAsync(
-                $"ALTER TABLE \"build\".\"pipelines\" ALTER COLUMN {column} TYPE text");
-            Log.Information("Widened column build.pipelines.{Column} to text", column);
-        }
-        catch (Exception ex)
-        {
-            Log.Verbose(ex, "Column type change for build.pipelines.{Column} skipped", column);
-        }
-    }
 }

@@ -174,11 +174,14 @@ try
 
     var app = builder.Build();
 
-    // Create the auth schema/tables and seed the initial admin (idempotent, like the other services)
+    // Apply EF Core migrations (fail-closed), then seed the initial admin.
+    // Migration errors propagate to the top-level handler rather than being
+    // swallowed as "tables may already exist".
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<AuthDbContext>();
-        await CreateTablesWithScriptAsync(db);
+        await DatabaseInitializer.MigrateAsync(db);
+        Log.Information("Auth database schema applied (EF Core migrations)");
         await SeedUsersAsync(db, builder.Configuration);
     }
 
@@ -419,20 +422,6 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
-}
-
-static async Task CreateTablesWithScriptAsync(DbContext db)
-{
-    var script = db.Database.GenerateCreateScript();
-    try
-    {
-        await db.Database.ExecuteSqlRawAsync(script);
-        Log.Information("Database tables created/verified successfully");
-    }
-    catch (Exception ex)
-    {
-        Log.Warning(ex, "Table creation skipped (tables may already exist)");
-    }
 }
 
 // Seeds the initial admin (and optional developer) account when the users table is empty.

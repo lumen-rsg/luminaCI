@@ -68,11 +68,13 @@ try
 
     var app = builder.Build();
 
+    // Apply EF Core migrations (fail-closed). Errors propagate to the top-level
+    // handler rather than being swallowed as "tables may already exist".
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<ScannerDbContext>();
-        await CreateTablesWithScriptAsync(db);
-        await RunMigrationsAsync(db);
+        await DatabaseInitializer.MigrateAsync(db);
+        Log.Information("Scanner database schema applied (EF Core migrations)");
     }
 
     if (app.Environment.IsDevelopment())
@@ -95,40 +97,4 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
-}
-
-static async Task CreateTablesWithScriptAsync(DbContext db)
-{
-    var script = db.Database.GenerateCreateScript();
-    try
-    {
-        await db.Database.ExecuteSqlRawAsync(script);
-        Log.Information("Database tables created/verified successfully");
-    }
-    catch (Exception ex)
-    {
-        Log.Warning(ex, "Table creation skipped (tables may already exist)");
-    }
-}
-
-static async Task RunMigrationsAsync(DbContext db)
-{
-    var migrations = new (string Sql, string Description)[]
-    {
-        ("ALTER TABLE \"CveReports\" ALTER COLUMN \"ScannerType\" TYPE varchar(50)", "Widen ScannerType varchar(20)->varchar(50)"),
-        ("ALTER TABLE \"CveReports\" ADD COLUMN \"UnknownCount\" integer NOT NULL DEFAULT 0", "Add UnknownCount column (uncategorized-severity vulns)"),
-    };
-
-    foreach (var (sql, desc) in migrations)
-    {
-        try
-        {
-            await db.Database.ExecuteSqlRawAsync(sql);
-            Log.Information("Applied migration: {Description}", desc);
-        }
-        catch (Exception ex)
-        {
-            Log.Verbose(ex, "Migration skipped (may already be applied): {Description}", desc);
-        }
-    }
 }
