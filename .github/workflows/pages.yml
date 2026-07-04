@@ -1,0 +1,53 @@
+name: pages
+
+# Publish the Lumina CI landing page (docs/index.html) to GitHub Pages.
+#
+# The site is a single self-contained HTML file — no build step, no framework,
+# no dependencies. This workflow just uploads docs/ and lets Pages serve it.
+# Runs on every push to staging/main that touches the page, plus manual dispatch.
+#
+# ONE-TIME SETUP (repo owner): Settings → Pages → "Build and deployment"
+# → Source = "GitHub Actions". Until that is set, this workflow runs but
+# nothing is published.
+
+on:
+  push:
+    branches: [ staging, main ]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write   # required to mint the OIDC token for deploying to Pages
+
+# Serialise deployments: a new run supersedes an in-flight one rather than
+# racing it for the Pages environment.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload docs/ as the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
