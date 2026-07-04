@@ -1,389 +1,725 @@
 # Lumina CI
 
-Микросервисная система непрерывной сборки RPM-пакетов. Автоматически собирает, подписывает (PGP), сканирует на уязвимости (CVE) и публикует пакеты в репозиторий.
+[![CI](https://github.com/lumen-rsg/luminaCI/actions/workflows/ci.yml/badge.svg?branch=staging)](https://github.com/lumen-rsg/luminaCI/actions/workflows/ci.yml)
+[![.NET](https://img.shields.io/badge/.NET-10.0-512bd4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![Platform](https://img.shields.io/badge/platform-Linux-1793d1?logo=linux&logoColor=white)](#system-requirements)
 
-## Системные требования
+A microservice continuous-integration system for **RPM packages**. Lumina CI
+fetches sources, builds RPMs in isolated containers, **PGP-signs** them,
+**CVE-scans** them with Trivy, and **publishes** them to a managed repository —
+triggered manually from the web console or automatically on a Git push.
 
-- **ОС**: Linux (RHEL/CentOS/ALTLinux/Ubuntu)
+It is built on .NET 10 (services + Blazor WASM UI) and orchestrated with Docker
+Compose, with a security model designed around running **untrusted `.spec`
+files** safely.
+
+---
+
+## Table of contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Features](#features)
+- [System requirements](#system-requirements)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Build security model](#build-security-model)
+- [API reference](#api-reference)
+- [Development](#development)
+- [Service management](#service-management)
+- [Troubleshooting](#troubleshooting)
+- [Credentials & secrets](#credentials--secrets)
+
+---
+
+## Overview
+
+Lumina CI automates the RPM release pipeline end to end:
+
+1. **Source** — pull from a Git repo, a tarball URL, or `rsync`.
+2. **Build** — run `dnf builddep` + `rpmbuild` (or `dotnet build`) inside an
+   ephemeral, isolated container.
+3. **Sign** — attach a PGP signature (security-service, GPG).
+4. **Scan** — run Trivy against the artifacts and record CVE findings.
+5. **Publish** — add the signed package to a managed RPM repository served by
+   nginx.
+
+Everything is fronted by a YARP **API gateway** that owns authentication and
+fans requests out to the individual services. A Blazor **WASM** web app is the
+primary UI; a REST API is available for automation and integrations.
+
+---
+
+## Architecture
+
+```
+                        ┌──────────────┐
+                        │   Browser    │
+                        │ (Blazor WASM)│
+                        └──────┬───────┘
+                               │ :443 / :80 (TLS terminated here)
+                        ┌──────▼───────┐
+                        │    nginx     │──── packages.lumina… (repo)
+                        └──────┬───────┘           :80 → /srv/packages (read-only repo_data)
+                               │ :5000
+                   ┌───────────▼────────────┐
+                   │     api-gateway        │   YARP reverse proxy,
+                   │  (auth, rate-limit,    │   JWT issued here,
+                   │   cookie ↔ bearer)     │   HttpOnly session cookies
+                   └─┬─────┬─────┬─────┬─────┘
+            ┌─────────┘     │     │     └─────────────┐
+            │               │     │                   │
+   ┌────────▼──────┐ ┌──────▼─────┐ ┌────────▼──────┐ ┌▼───────────────┐
+   │ build-service │ │ security-  │ │ scanner-      │ │ repository-    │
+   │  (rpmbuild    │ │ service    │ │ service       │ │ service        │
+   │   orchestr.)  │ │ (PGP sign) │ │ (Trivy CVE)   │ │ (RPM repo mgmt)│
+   └──────┬────────┘ └────────────┘ └───────┬───────┘ └────────────────┘
+          │ docker-socket-proxy              │ trivy server
+          │ (whitelisted API)                │
+   ┌──────▼──────────────▼───┐         ┌─────▼─────┐
+   │  lumina-buildnet        │         │   trivy   │
+   │  (isolated build net)   │         └───────────┘
+   │  ┌───────────────────┐  │
+   │  │ rpm-build /       │  │  untrusted .spec → rpmbuild
+   │  │ dotnet-build      │  │  (cap-drop, mem/cpu/pids limits,
+   │  │ containers        │  │   no-new-privileges, non-root)
+   │  └───────────────────┘  │
+   └─────────────────────────┘
+
+   Shared infrastructure (lumina-network): postgres · redis · rabbitmq · minio
+   source-service pulls sources from git/tar/rsync into /opt/lumina/sources
+```
+
+**Services**
+
+| Service | Port | Role |
+|---|---|---|
+| `nginx` | 80, 443 | TLS termination, static UI, RPM repo HTTP |
+| `api-gateway` | 5000 | Auth (login/refresh/logout/me), YARP routing, rate limiting |
+| `build-service` | 5001 | Build orchestration, pipelines, builds, webhooks, extra sources |
+| `security-service` | 5002 | PGP key management, signing, hashing |
+| `scanner-service` | 5003 | Trivy CVE scanning |
+| `repository-service` | 5004 | RPM repository management & publishing |
+| `source-service` | 5006 | Source fetching (git/tar/rsync), `conf.ini`-driven |
+| `webapp` | 5005 | Blazor WASM UI |
+| `docker-socket-proxy` | 2375 (internal) | Least-privilege Docker API for build-service |
+| `trivy` | 8080 (internal) | CVE database & scan server |
+
+> All infrastructure ports (Postgres, Redis, RabbitMQ, MinIO, Trivy) are
+> intentionally **not published** to the host — services reach them over the
+> internal `lumina-network`. Only `nginx` (80/443) and the per-service debug
+> ports are exposed.
+
+---
+
+## Features
+
+- **Pipeline-driven builds** — name, describe, tag, and trigger builds; each
+  pipeline optionally wires up Git integration and a webhook secret.
+- **Multiple source types** — Git, tarball, and `rsync`, declared in `conf.ini`
+  or managed via the API/UI.
+- **Isolated build containers** — every `rpmbuild`/`dotnet build` runs in a
+  throwaway container on a dedicated network, with caps, limits, and a
+  non-root user (see [Build security model](#build-security-model)).
+- **PGP signing** — generate/manage signing keys and attach detached signatures.
+- **CVE scanning** — Trivy integration with results stored per-artifact.
+- **Managed RPM repository** — publish packages and serve them over HTTP via
+  nginx; `createrepo`-style metadata maintained by repository-service.
+- **Secure session model** — short-lived access JWT in an `HttpOnly`,
+  `Secure`, `SameSite=Strict` cookie, rotated refresh tokens in Redis.
+- **Rate limiting & lockout** — per-IP global token bucket plus a strict
+  per-IP+per-username login bucket, and exponential account lockout.
+- **Live build logs** — Server-Sent Events streaming of build output.
+
+---
+
+## System requirements
+
+- **OS**: Linux (RHEL/CentOS/Fedora/ALTLinux/Ubuntu)
 - **Docker**: >= 24.0
-- **Docker Compose**: >= 2.20 (плагин `docker compose`)
-- **RAM**: минимум 4 ГБ, рекомендуется 8 ГБ
-- **Диск**: минимум 20 ГБ свободного места
-- **Порты**: 80, 443 (основной доступ), 5432, 5672, 6379, 9000 (инфраструктура)
+- **Docker Compose**: >= 2.20 (`docker compose` plugin)
+- **RAM**: minimum 4 GB, 8 GB recommended
+- **Disk**: minimum 20 GB free
+- **Ports**: 80, 443 (entry points); 5000–5006 (per-service debug)
 
-## Быстрый старт
+---
 
-### 1. Клонировать репозиторий
+## Quick start
+
+### 1. Clone
 
 ```bash
-git clone <url-репозитория> lumina-ci
+git clone <repository-url> lumina-ci
 cd lumina-ci
 ```
 
-### 2. Настроить переменные окружения
+### 2. Configure environment
 
 ```bash
 cd deploy
-cp .env.example .env    # если нет .env — создать вручную (см. ниже)
+cp .env.example .env
+# Edit .env and fill in every <set-…> placeholder (see Configuration below).
 ```
 
-Минимальный `.env`:
+Lumina CI has **no default credentials**. The stack will refuse to start unless
+at least these are set:
 
 ```env
-POSTGRES_PASSWORD=lumina_dev_2024
-RABBITMQ_PASSWORD=lumina_rmq_2024
-MINIO_USER=luminaadmin
-MINIO_PASSWORD=lumina_minio_2024
-JWT_SECRET=lumina_jwt_dev_secret_key_2024_min32chars!!
+POSTGRES_PASSWORD=…        # PostgreSQL password
+RABBITMQ_PASSWORD=…        # RabbitMQ password
+MINIO_USER=…               # MinIO (S3) username
+MINIO_PASSWORD=…           # MinIO password
+JWT_SECRET=…               # >= 32 chars, signs access/refresh tokens
+SECRETS_MASTER_KEY=…       # >= 32 chars, encrypts pipeline secrets at rest
+GPG_PASSPHRASE=…           # passphrase for the PGP signing key
+ADMIN_PASSWORD=…           # initial admin password (seeded on first boot)
 ```
 
-### 3. Запустить все сервисы
+### 3. Provide a TLS certificate (required)
+
+nginx terminates TLS for the console vhost and refuses to start without a cert.
+For local dev, generate a self-signed pair:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout deploy/nginx/certs/console.key \
+  -out deploy/nginx/certs/console.crt \
+  -subj "/CN=console.lumina.1t.ru"
+chmod 0400 deploy/nginx/certs/console.key
+```
+
+### 4. Bring the stack up
 
 ```bash
 docker compose up -d --build
 ```
 
-Первый запуск займёт 5-10 минут (сборка образов .NET, загрузка базовых образов).
+The first build takes ~5–10 minutes (compiling .NET services and build images,
+pulling base images).
 
-### 4. Проверить запуск
+### 5. Verify
 
 ```bash
-# Все сервисы должны быть Up/Healthy
+# Everything should be Up / Healthy
 docker compose ps
 
-# Проверить API
-curl -s http://localhost/api/pipelines?page=1 | jq '.success'
-# Ожидаемый ответ: true
-
-# Открыть веб-интерфейс
-# http://localhost
+# API health
+curl -sk https://localhost/health && echo
 ```
 
-### 5. Готово!
-
-Веб-интерфейс доступен на `http://localhost`.
+Open the console at **`https://localhost`** (or `https://console.lumina.1t.ru`
+if you added a hosts/DNS entry) and log in with the admin account you seeded.
 
 ---
 
-## Безопасность сборок
+## Configuration
 
-Контейнер сборки (`rpm-build`/`dotnet-build`) выполняет `dnf builddep` и `rpmbuild`
-над **недоверенными `.spec` файлами**, т.е. по сути произвольный shell от имени
-root внутри контейнера. Чтобы превратить это из примитива побега/компрометации
-хоста в ограниченный sandbox, применены несколько слоёв изоляции:
+All runtime configuration flows through `deploy/.env` (see
+`deploy/.env.example` for the canonical, commented reference).
 
-- **Нет монтирования Docker-сокета в build-service.** Раньше
-  `/var/run/docker.sock:/var/run/docker.sock` + `user: root` давали тривиальный
-  root на хосте (`docker run -v /:/host ...`). Теперь build-service работает от
-  непривилегированного пользователя `app` и обращается к демону через контейнер
-  `docker-socket-proxy` (tecnativa/docker-socket-proxy), который пропускает только
-  нужные endpoints (`containers` create/start/logs/wait/stop/remove, `images`
-  list/pull) и режет всё остальное (`exec`, `networks`, `volumes`, `build` и т.д.).
-- **Изолированная сеть сборок.** Контейнеры сборки запускаются в сети
-  `lumina-buildnet`, отдельной от `lumina-network`. У них есть выход в интернет
-  (для `dnf builddep`, `spectool`, `git clone`), но **нет** пути к PostgreSQL,
-  RabbitMQ, MinIO, Trivy и внутренним сервисам — доступ к ним возможен только
-  через auth-шлюз (api-gateway). Раньше использовался `NetworkMode: host`.
-- **Ограничения контейнера:** `--cap-drop=ALL` (+ минимальный набор для rpmbuild),
-  `--pids-limit`, `--memory` с `--memory-swap` равным памяти (без overcommit),
-  CPU-квота, `--security-opt=no-new-privileges`, `--init`. См. переменные
-  `BUILD_*` в `.env`.
-- **Непривилегированный образ сборки.** `rpm-build.Dockerfile` /
-  `dotnet-build.Dockerfile` создают пользователя `rpmbuilder` (uid/gid 1000) и
-  запускают `rpmbuild` от него. `sudo` из образов убран.
+### Credentials & auth
 
-### Дополнительно: user-namespace remap (рекомендуется для production)
+| Variable | Required | Description |
+|---|---|---|
+| `POSTGRES_PASSWORD` | yes | PostgreSQL password |
+| `RABBITMQ_PASSWORD` | yes | RabbitMQ password |
+| `MINIO_USER` | no | MinIO username (default `luminaadmin`) |
+| `MINIO_PASSWORD` | yes | MinIO password |
+| `JWT_SECRET` | yes | JWT signing key, min 32 chars. Shared with every service so they can re-validate tokens (defense-in-depth). |
+| `JWT_ACCESS_MINUTES` | no | Access-token lifetime (default `15`) |
+| `JWT_REFRESH_HOURS` | no | Refresh-token lifetime / session length (default `8`) |
+| `JWT_COOKIE_SECURE` | no | Set `false` **only** for plain-HTTP local dev (default `true`) |
+| `SECRETS_MASTER_KEY` | yes | AES-256-GCM master key for at-rest encryption of pipeline secrets (`WebhookSecret`, `GitToken`). **Never change it after secrets are written** — they become undecryptable. |
+| `GPG_PASSPHRASE` | yes | Passphrase for the PGP signing key |
+| `ADMIN_USERNAME` | no | Initial admin username (default `admin`) |
+| `ADMIN_PASSWORD` | yes | Initial admin password (seeded once, when the users table is empty) |
+| `DEVELOPER_USERNAME` | no | Optional developer account username |
+| `DEVELOPER_PASSWORD` | no | Optional developer password (account is seeded only if set) |
+| `AUTH_MAX_FAILED_LOGINS` | no | Failed attempts before lockout (default `5`) |
+| `AUTH_LOCKOUT_MINUTES` | no | Base lockout window (default `15`); doubles each cycle |
+| `AUTH_MAX_LOCKOUT_MINUTES` | no | Lockout ceiling (default `1440` = 24 h) |
 
-Чтобы root внутри контейнера сборки маппился на **непривилегированный uid на
-хосте**, включите userns-remap на уровне Docker-демона:
+### LDAP (optional)
+
+Leave `LDAP_HOST` empty to use the built-in credential store.
+
+| Variable | Default | Description |
+|---|---|---|
+| `LDAP_HOST` | _empty_ | LDAP server host |
+| `LDAP_PORT` | `389` | LDAP port |
+| `LDAP_BASE_DN` | _empty_ | Base DN |
+| `LDAP_BIND_DN` | _empty_ | Bind DN |
+| `LDAP_BIND_PASSWORD` | _empty_ | Bind password |
+
+### Rate limiting
+
+| Variable | Default | Description |
+|---|---|---|
+| `RATE_LIMIT_GLOBAL_PERMIT` | `100` | Global token bucket size (per IP) |
+| `RATE_LIMIT_GLOBAL_TPS` | `100` | Global tokens replenished per second |
+| `RATE_LIMIT_GLOBAL_QUEUE` | `10` | Global queued requests allowed |
+| `RATE_LIMIT_LOGIN_PERMIT` | `5` | Login bucket size (per IP + username) |
+| `RATE_LIMIT_LOGIN_TPS` | `5` | Login tokens replenished per second |
+| `RATE_LIMIT_LOGIN_QUEUE` | `0` | Login queue (0 = reject immediately when empty) |
+
+### Build-container isolation
+
+These tune the per-build container that runs untrusted `.spec` files. Defaults
+are intentionally tight — only relax them if you understand the impact.
+
+| Variable | Default | Description |
+|---|---|---|
+| `BUILD_NETWORK` | `lumina-buildnet` | Dedicated bridge network for build containers (separate from `lumina-network`) |
+| `BUILD_MEMORY_BYTES` | `2147483648` | Per-container memory cap in bytes; `memory-swap` is pinned equal to this (no overcommit) |
+| `BUILD_PIDS_LIMIT` | `512` | Max processes per container (blunt fork-bomb guard) |
+| `BUILD_CPU_QUOTA` | `150000` | CPU quota in µs per 100 000 µs period (`150000` = 1.5 CPUs) |
+
+### DNS (production)
+
+For hostname-based access, add DNS records or `/etc/hosts` entries:
+
+```
+<server-ip>  console.lumina.1t.ru
+<server-ip>  packages.lumina.1t.ru
+```
+
+---
+
+## Usage
+
+### Web console
+
+Open `https://<host>/`. Pages:
+
+| Page | Description |
+|---|---|
+| **Dashboard** | System overview and statistics |
+| **Pipelines** | Create, edit, tag, and trigger build pipelines |
+| **Builds** | Build history, live logs, artifacts, scan/sign status |
+| **Repositories** | Managed RPM repositories and published packages |
+| **Sources** | `conf.ini`-defined source packages; fetch/build from here |
+| **Security** | PGP signing keys, signing history, artifact hashes |
+
+### Create a pipeline
+
+1. **Pipelines → + New Pipeline**
+2. Fill in **Name**, **Description**, and optional **Tags** (comma-separated).
+3. (Optional) **Git integration**:
+   - **Git Repository URL** — `.git` URL
+   - **Branch** — default `main`
+   - **Spec File Path** — path to the `.spec` inside the repo
+   - **Webhook Secret** — shared secret used to verify inbound webhooks
+4. **Create**.
+
+### Trigger a build
+
+- **Manual**: on the Pipelines page, press **▶ Run** and complete the form
+  (package spec name, source URL, RPM spec content, triggered-by).
+- **Automatic**: on push to the configured Git branch (see
+  [Webhooks](#webhooks)).
+
+### Watch a build
+
+Open **Builds → `<id>`** for live log streaming (SSE), artifact list,
+downloadable `.spec`, and Trivy/PGP status.
+
+### Webhooks
+
+After creating a pipeline with Git integration, point your Git host at:
+
+```
+https://<host>/api/webhooks/<pipeline-id>
+```
+
+Find the pipeline id:
 
 ```bash
-# 1. Создайте системного пользователя для ремапа (Docker использует диапазоны
-#    subuid/subgid этого пользователя для сдвига uid-ов внутри контейнеров)
+curl -sk https://localhost/api/pipelines?page=1 \
+  | jq '.data.pipelines[] | select(.name=="my-package-build") | .id'
+```
+
+**GitHub** — Repository → Settings → Webhooks → Add webhook.
+Payload URL as above, content type `application/json`, secret = the pipeline's
+webhook secret, trigger = *Just the push event*.
+
+**GitLab** — Project → Settings → Webhooks. URL as above, secret token =
+webhook secret, trigger = *Push events*.
+
+**Forgejo / Gitea** — Repository → Settings → Webhooks → Add webhook.
+Target URL as above, secret = webhook secret, trigger = *Push events*.
+
+### Sources (`conf.ini`)
+
+Source packages are declared in `conf.ini` at the repo root and surfaced in the
+**Sources** page. Each `[package]` block supports `git`, `tar`, and `rsync`
+sources:
+
+```ini
+[package]
+name="aurora"
+source="https://github.com/lumen-rsg/aurora.net"
+source_type="git"
+source_branch="main"
+build_image="lumina-dotnet-build:latest"
+
+[package]
+name="testpkg"
+source="cdn.example.org/testpackage.tar.gz"
+source_type="tar"
+```
+
+From the Sources page you can fetch, check status, download, or build any
+configured package; the running config can also be edited live via the API.
+
+---
+
+## Build security model
+
+The build container (`rpm-build` / `dotnet-build`) runs `dnf builddep` and
+`rpmbuild` over **untrusted `.spec` files** — effectively arbitrary shell as
+root inside the container. Several layers turn that from a host-escape primitive
+into a constrained sandbox:
+
+- **No host Docker socket in build-service.** Instead of mounting
+  `/var/run/docker.sock` (which with `user: root` was trivial host root),
+  build-service runs as a non-privileged `app` user and reaches the daemon
+  through `docker-socket-proxy` (tecnativa/docker-socket-proxy). The proxy
+  forwards only what build-service needs — `containers` create/start/logs/wait/
+  stop/remove and `images` list/pull — and denies `exec`, `networks`,
+  `volumes`, `build`, etc.
+- **Isolated build network.** Build containers attach to `lumina-buildnet`,
+  separate from `lumina-network`. They have outbound internet (for
+  `dnf builddep`, `spectool`, `git clone`) but **no path** to PostgreSQL,
+  RabbitMQ, MinIO, Trivy, or the app services. (Previously this used
+  `NetworkMode: host`.)
+- **Container restrictions** — `--cap-drop=ALL` (plus the minimal set rpmbuild
+  needs), `--pids-limit`, `--memory` with `--memory-swap` pinned equal (no
+  overcommit), CPU quota, `--security-opt=no-new-privileges`, `--init`. Tunable
+  via the `BUILD_*` env vars.
+- **Unprivileged build images.** `rpm-build.Dockerfile` /
+  `dotnet-build.Dockerfile` create a `rpmbuilder` user (uid/gid 1000) and run
+  `rpmbuild` as that user. `sudo` is not present in either image.
+
+### Recommended for production: user-namespace remapping
+
+To map root inside build containers to an **unprivileged uid on the host**,
+enable userns-remap at the Docker-daemon level:
+
+```bash
+# 1. Create the remap identity (Docker uses its subuid/subgid ranges)
 sudo groupadd -r dockremap
 sudo useradd -r -g dockremap -d /nonexistent -s /usr/sbin/nologin dockremap
 sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 dockremap
 
-# 2. Установите эталонный daemon.json (merg'ите со своим существующим, не
-#    перезаписывайте вслепую)
+# 2. Install the reference daemon.json (merge with your existing one — don't
+#    overwrite blindly)
 sudo install -m 644 deploy/docker/daemon.json /etc/docker/daemon.json
 
-# 3. Перезапустите демон
+# 3. Restart the daemon
 sudo systemctl restart docker
 ```
 
-После этого **все** контейнеры на этом хосте (включая сборочные) получат ремап,
-и побег из контейнера с root приземлится на uid `100000+`, а не на хостовый root.
-Приложение в `docker-compose.yml` работает без изменений — compose-сервисы
-продолжают общаться через `lumina-network` как обычно.
+After this, **all** containers on the host (including build containers) are
+remapped; a container-root escape lands on host uid `100000+`, not host root.
+The compose stack works unchanged — services still talk over `lumina-network`.
 
-> ⚠️ Если у вас на этом же хосте есть сервисы, которым **нужен** реальный host-root
-> (напр. другой CI, монтирующий сокет), userns-remap их сломает. Выносите Lumina CI
-> на отдельный хост/демон или используйте `--userns-host` точечно.
-
----
-
-## Конфигурация
-
-### Переменные `.env`
-
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| `POSTGRES_PASSWORD` | `lumina_dev_2024` | Пароль PostgreSQL |
-| `RABBITMQ_PASSWORD` | `lumina_rmq_2024` | Пароль RabbitMQ |
-| `MINIO_USER` | `luminaadmin` | Логин MinIO (S3 хранилище) |
-| `MINIO_PASSWORD` | `lumina_minio_2024` | Пароль MinIO |
-| `JWT_SECRET` | `lumina_jwt_dev...` | Секретный ключ JWT (мин. 32 символа) |
-| `LDAP_HOST` | `localhost` | Адрес LDAP сервера (опционально) |
-| `LDAP_PORT` | `389` | Порт LDAP |
-| `LDAP_BASE_DN` | `dc=lumina,dc=1t,dc=ru` | Base DN для LDAP |
-| `BUILD_NETWORK` | `lumina-buildnet` | Изолированная сеть для контейнеров сборки (отдельная от `lumina-network`) |
-| `BUILD_MEMORY_BYTES` | `2147483648` | Лимит памяти на контейнер сборки (байт). swap приравнен к этому значению |
-| `BUILD_PIDS_LIMIT` | `512` | Максимум процессов в контейнере сборки |
-| `BUILD_CPU_QUOTA` | `150000` | CPU-квота (мкс/период 100000; `150000` = 1.5 CPU) |
-
-### DNS (для production)
-
-Для работы по доменным именам добавьте в `/etc/hosts` или настройте DNS:
-
-```
-<IP-сервера>  console.lumina.1t.ru
-<IP-сервера>  packages.lumina.1t.ru
-```
+> ⚠️ If other services on the same host genuinely need real host root (e.g.
+> another CI mounting the socket), userns-remap will break them. Run Lumina CI
+> on a dedicated host/daemon, or scope `--userns-host` to those services only.
 
 ---
 
-## Использование
+## API reference
 
-### Веб-интерфейс
+All routes are exposed through the gateway at `https://<host>/api/*`. Browser
+sessions authenticate via the `lumina_access` HttpOnly cookie automatically;
+API clients should use the cookie jar from `/api/auth/login` (recommended) or
+send `Authorization: Bearer <access-token>`.
 
-Откройте `http://localhost` в браузере.
-
-**Страницы:**
-- **Dashboard** — обзор системы, статистика
-- **Pipelines** — управление пайплайнами сборки
-- **Builds** — история и статус сборок
-- **Security** — управление ключами PGP
-
-### Создание пайплайна
-
-1. Откройте **Pipelines** → **+ New Pipeline**
-2. Заполните поля:
-   - **Name** — название (например `my-package-build`)
-   - **Description** — описание
-   - **Tags** — теги через запятую (опционально)
-3. Настройте **Git Integration** (опционально):
-   - **Git Repository URL** — URL репозитория (`.git`)
-   - **Branch** — ветка (по умолчанию `main`)
-   - **Spec File Path** — путь к `.spec` файлу в репозитории
-   - **Webhook Secret** — секрет для верификации webhook
-4. Нажмите **Create**
-
-### Ручной запуск сборки
-
-1. На странице **Pipelines** нажмите **▶ Run** рядом с пайплайном
-2. Заполните форму:
-   - **Package Spec Name** — имя пакета
-   - **Source URL** — ссылка на исходники (tar.gz или git://)
-   - **RPM Spec Content** — содержимое `.spec` файла
-   - **Triggered By** — ваше имя
-3. Нажмите **▶ Run Build**
-
-### Автоматическая сборка по Git Push
-
-После создания пайплайна с Git интеграцией, настройте webhook в вашем Git-хостинге:
-
-**URL webhook:** `http://<IP-сервера>/api/webhooks/<pipeline-id>`
-
-Pipeline ID можно узнать в ответе API:
-```bash
-curl -s http://localhost/api/pipelines?page=1 | jq '.data.pipelines[] | select(.name=="my-package-build") | .id'
-```
-
-**Настройка в GitHub:**
-1. Repository → Settings → Webhooks → Add webhook
-2. Payload URL: `http://<IP>/api/webhooks/<pipeline-id>`
-3. Content type: `application/json`
-4. Secret: тот же, что указан в настройках пайплайна
-5. Events: **Just the push event**
-
-**Настройка в GitLab:**
-1. Project → Settings → Webhooks
-2. URL: `http://<IP>/api/webhooks/<pipeline-id>`
-3. Secret token: webhook secret из настроек пайплайна
-4. Trigger: **Push events**
-
-**Настройка в Forgejo/Gitea:**
-1. Repository → Settings → Webhooks → Add webhook
-2. Target URL: `http://<IP>/api/webhooks/<pipeline-id>`
-3. Secret: webhook secret
-4. Trigger: **Push events**
-
-### Скачивание Spec файла
-
-На странице деталей сборки (`/builds/<id>`) нажмите кнопку **📄 Download Spec**.
-
----
-
-## API Reference
-
-### Аутентификация
+### Authentication
 
 ```bash
-# Получить JWT токен
-curl -X POST http://localhost/api/auth/login \
+# Log in — credentials live in cookies (use a jar for subsequent calls)
+curl -skc cookies.txt -X POST https://localhost/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}'
+  -d '{"username":"admin","password":"<ADMIN_PASSWORD>"}'
+
+# Who am I? (reads the access cookie)
+curl -skb cookies.txt https://localhost/api/auth/me
 ```
 
-Для защищённых endpoint'ов добавляйте заголовок:
-```
-Authorization: Bearer <токен>
-```
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/auth/login` | Log in; sets `lumina_access` + `lumina_refresh` cookies |
+| `POST` | `/api/auth/refresh` | Rotate refresh token, issue a new access cookie |
+| `POST` | `/api/auth/logout` | Revoke refresh token server-side, clear cookies |
+| `GET` | `/api/auth/me` | Current user (`{ username, role }`) |
 
 ### Pipelines
 
-| Метод | Endpoint | Описание |
+| Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/pipelines?page=1&pageSize=20` | Список пайплайнов |
-| `GET` | `/api/pipelines/{id}` | Детали пайплайна |
-| `POST` | `/api/pipelines` | Создать пайплайн |
+| `GET` | `/api/pipelines?page=&pageSize=` | List pipelines |
+| `GET` | `/api/pipelines/{id}` | Pipeline details |
+| `POST` | `/api/pipelines` | Create a pipeline |
+| `PUT` | `/api/pipelines/{id}` | Update a pipeline |
+| `DELETE` | `/api/pipelines/{id}` | Delete a pipeline |
+| `POST` | `/api/pipelines/{id}/trigger` | Trigger a manual build |
+| `POST` | `/api/pipelines/{id}/trigger-auto` | Trigger an automatic (webhook-style) build |
 
 ### Builds
 
-| Метод | Endpoint | Описание |
+| Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/builds?page=1&pageSize=20` | Список сборок |
-| `GET` | `/api/builds/{id}` | Детали сборки (артефакты, логи) |
-| `GET` | `/api/builds/{id}/spec` | Скачать .spec файл |
-| `POST` | `/api/pipelines/{id}/trigger` | Запустить сборку вручную |
+| `GET` | `/api/builds?page=&pageSize=` | List builds |
+| `GET` | `/api/builds/{id}` | Build details (artifacts, status) |
+| `GET` | `/api/builds/{id}/artifacts` | List artifacts for a build |
+| `GET` | `/api/builds/{id}/artifacts/{fileName}` | Download an artifact |
+| `GET` | `/api/builds/{id}/spec` | Download the `.spec` file |
+| `GET` | `/api/builds/{id}/logs` | Build logs (plain) |
+| `GET` | `/api/builds/{id}/logs/stream` | Build logs (SSE stream) |
+| `POST` | `/api/builds/{id}/cancel` | Cancel a running/queued build |
+| `GET` | `/api/builds/queue` | Current build queue |
+| `DELETE` | `/api/builds/queue/clear` | Clear the queue |
+| `POST` | `/api/builds/trigger-from-config` | Trigger a build from `conf.ini` |
+| `PUT` | `/api/builds/artifacts/{artifactId}/scan-status` | Record scan result |
+| `PUT` | `/api/builds/artifacts/{artifactId}/pgp-signature` | Record signature |
+| `GET` | `/api/builds/failed-logs` | List failed-build logs |
+| `GET` | `/api/builds/failed-logs/{fileName}` | Download a failed-build log |
+
+### Extra sources (per-pipeline)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/extra-sources/pipeline/{pipelineId}` | List extra sources |
+| `POST` | `/api/extra-sources/pipeline/{pipelineId}` | Add extra sources |
+| `DELETE` | `/api/extra-sources/pipeline/{pipelineId}` | Remove all extra sources |
+| `DELETE` | `/api/extra-sources/pipeline/{pipelineId}/{filePath}` | Remove one extra source |
 
 ### Webhooks
 
-| Метод | Endpoint | Описание |
+| Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/webhooks/{pipelineId}` | Webhook для git push |
+| `POST` | `/api/webhooks/{pipelineId}` | Git push webhook (verified via webhook secret) |
 
-### Security
+### Security (PGP & hashing)
 
-| Метод | Endpoint | Описание |
+| Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/security/sign` | Подписать пакет (PGP) |
-| `POST` | `/api/security/hash` | Вычислить SHA256/MD5 |
+| `GET` | `/api/security/keys` | List signing keys |
+| `POST` | `/api/security/keys/generate` | Generate a new signing key |
+| `POST` | `/api/security/sign` | Sign a package |
+| `GET` | `/api/security/signing/history` | Signing history |
+| `POST` | `/api/security/hash/compute` | Compute SHA-256/MD5 hashes |
+| `POST` | `/api/security/hash/verify` | Verify a hash |
+| `POST` | `/api/security/hash/store` | Store a hash for an artifact |
+| `GET` | `/api/security/hash/{artifactId}` | Get stored hash for an artifact |
+| `GET` | `/api/security/hashes` | List all stored hashes |
 
-### Scanner
+### Scanner (CVE)
 
-| Метод | Endpoint | Описание |
+| Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/scanner/scan` | CVE сканирование пакета |
+| `POST` | `/api/scanner/scan` | Scan an artifact with Trivy |
+| `GET` | `/api/scanner/scans` | List past scans |
+
+### Repository
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/repository` | List repositories |
+| `POST` | `/api/repository` | Create a repository |
+| `POST` | `/api/repository/publish` | Publish a package to a repository |
+| `POST` | `/api/repository/upload` | Upload a package (≤ 500 MiB) |
+| `POST` | `/api/repository/sync` | Re-sync repository metadata |
+| `GET` | `/api/repository/{repositoryId}/packages` | List packages in a repository |
+
+### Sources
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/sources` | List configured sources |
+| `GET` | `/api/sources/{name}` | Get a source by name |
+| `GET` | `/api/sources/config` | Get the live `conf.ini` |
+| `PUT` | `/api/sources/config` | Replace the live `conf.ini` |
+| `POST` | `/api/sources/config/package` | Add a package to the config |
+| `DELETE` | `/api/sources/config/{name}` | Remove a package from the config |
+| `POST` | `/api/sources/reload-config` | Reload config from disk |
+| `POST` | `/api/sources/{name}/fetch` | Fetch one source |
+| `POST` | `/api/sources/fetch-all` | Fetch all sources |
+| `POST` | `/api/sources/{name}/build` | Build a source |
+| `GET` | `/api/sources/{name}/status` | Fetch status for a source |
+| `GET` | `/api/sources/{name}/download` | Download a fetched source |
+
+> Interactive docs (Swagger) are available at `https://localhost/swagger` when
+> the gateway runs in Development mode.
 
 ---
 
-## Устранение неполадок
+## Development
 
-### 502 Bad Gateway
+The solution targets **.NET 10** (`Lumina CI.sln`). Layout:
 
-```bash
-# Проверить статус всех сервисов
-docker compose ps
-
-# Перезапустить nginx и gateway
-docker compose restart nginx api-gateway
-
-# Проверить логи
-docker compose logs api-gateway --tail 20
-docker compose logs nginx --tail 20
+```
+src/
+  Services/
+    Lumina.ApiGateway/        YARP gateway + auth
+    Lumina.BuildService/      build orchestration
+    Lumina.SecurityService/   PGP signing / hashing
+    Lumina.ScannerService/    Trivy scanning
+    Lumina.RepositoryService/ RPM repo management
+    Lumina.SourceService/     source fetching
+    Lumina.WebApp/            Blazor WASM UI
+  Shared/
+    Lumina.Shared/            shared models, DTOs, JWT/auth wiring
+    Lumina.Web.Shared/        shared web concerns (authorization policies)
+tests/
+    Lumina.Shared.Tests/
+    Lumina.SourceService.Tests/
+    Lumina.BuildService.Tests/
+deploy/
+    docker-compose.yml        full stack
+    docker/                   service + build Dockerfiles
+    nginx/                    nginx config + certs/
+    .env.example              canonical env reference
+scripts/
+    build-rpm.sh              local/standalone RPM build driver
+    sign-package.sh           standalone PGP signing helper
+    smoke-test.sh             end-to-end API smoke test
 ```
 
-### Сервисы не запускаются
+### Build & test locally
 
 ```bash
-# Проверить логи конкретного сервиса
-docker compose logs build-service --tail 50
-docker compose logs postgres --tail 20
+dotnet restore "Lumina CI.sln"
+dotnet build  "Lumina CI.sln" -c Release
+dotnet test   "Lumina CI.sln" -c Release --no-build
+```
 
-# Пересобрать все образы
+The unit tests are infrastructure-free (no Docker/RabbitMQ/Redis/Postgres) and
+run identically in CI and locally.
+
+### CI
+
+GitHub Actions (`.github/workflows/`) builds and tests the whole solution on
+every push/PR to `staging` and `main`, and publishes the `tests.trx` results as
+an artifact.
+
+### Smoke test
+
+With the stack running, exercise the full API surface:
+
+```bash
+./scripts/smoke-test.sh        # honors BUILD_URL, GATEWAY_URL, … env overrides
+```
+
+---
+
+## Service management
+
+```bash
+# Start / stop
+docker compose up -d
+docker compose down
+
+# Rebuild after code changes (whole stack, or one service)
 docker compose up -d --build
-```
+docker compose up -d --build build-service
 
-### Ошибка подключения к PostgreSQL
+# Restart a single service
+docker compose restart build-service
 
-```bash
-# Проверить что PostgreSQL healthy
-docker compose ps postgres
+# Tail logs
+docker compose logs -f api-gateway
+docker compose logs -f build-service
 
-# Если не healthy — перезапустить
-docker compose restart postgres
-
-# Проверить подключение
+# Inspect infrastructure without publishing its port
 docker compose exec postgres psql -U lumina -d lumina_ci -c "SELECT 1"
+docker compose exec redis redis-cli ping
 ```
 
-### Сборка зависла (статус Building)
+### Full reset (destroys all data)
 
 ```bash
-# Список активных сборок
-curl -s http://localhost/api/builds?page=1 | jq '.data.builds[] | select(.status==2)'
-
-# Проверить Docker контейнеры сборки
-docker ps --filter "name=rpm-build-" 
-
-# Удалить зависший контейнер
-docker rm -f <container-id>
-```
-
-### Не работает webhook
-
-1. Убедитесь что Pipeline ID правильный (GUID, не имя)
-2. Проверьте что webhook secret совпадает
-3. Проверьте логи: `docker compose logs build-service --tail 50`
-
-### Полный перезапуск (сброс данных)
-
-```bash
-# ⚠️ Удалит ВСЕ данные (БД, файлы, кэш)
+# ⚠️ Deletes the database, object store, queues, and repo contents.
 docker compose down -v
 docker compose up -d --build
 ```
 
 ---
 
-## Управление сервисами
+## Troubleshooting
+
+### 502 Bad Gateway
 
 ```bash
-# Запуск
-docker compose up -d
-
-# Остановка
-docker compose down
-
-# Перезапуск одного сервиса
-docker compose restart build-service
-
-# Пересборка после изменений кода
-docker compose up -d --build build-service
-
-# Логи
-docker compose logs -f build-service
-docker compose logs -f api-gateway
+docker compose ps                       # is everything Up/Healthy?
+docker compose restart nginx api-gateway
+docker compose logs api-gateway --tail 30
+docker compose logs nginx      --tail 30
 ```
+
+### A service won't start
+
+```bash
+docker compose logs build-service --tail 50
+docker compose logs postgres      --tail 20
+docker compose up -d --build      # rebuild images
+```
+
+Most startup failures are a missing required env var — the compose file marks
+each one `:?…` so the error message names exactly what to set in `.env`.
+
+### PostgreSQL connection errors
+
+```bash
+docker compose ps postgres            # must be healthy
+docker compose restart postgres
+docker compose exec postgres psql -U lumina -d lumina_ci -c "SELECT 1"
+```
+
+### Build stuck in `Building`
+
+```bash
+# List in-flight builds
+curl -skb cookies.txt https://localhost/api/builds?page=1 \
+  | jq '.data.builds[] | select(.status==2)'
+
+# Inspect/cleanup stray build containers
+docker ps --filter "name=rpm-build-"
+docker rm -f <container-id>
+```
+
+### Webhook not firing
+
+1. Confirm you're using the pipeline **id** (a GUID), not its name.
+2. Confirm the webhook secret matches the pipeline's configured secret.
+3. Check `docker compose logs build-service --tail 50`.
 
 ---
 
-## Учетные данные
+## Credentials & secrets
 
-В Lumina CI **нет учётных данных по умолчанию**. Перед первым запуском задайте все
-секреты в `.env` (скопируйте `deploy/.env.example`):
+Lumina CI ships with **no default credentials**. Before first start, set every
+required secret in `deploy/.env` (copy `deploy/.env.example`):
 
-- `ADMIN_PASSWORD` — пароль начальной учётки администратора (создаётся при первом
-  запуске, когда таблица пользователей пуста; без него api-gateway не стартует).
-  Необязательные `ADMIN_USERNAME` (по умолчанию `admin`), `DEVELOPER_USERNAME` /
-  `DEVELOPER_PASSWORD` (учётка разработчика создаётся только если задан пароль).
-- `JWT_SECRET` — ключ подписи JWT (мин. 32 символа).
-- `GPG_PASSPHRASE` — парольная фраза PGP-ключа подписи RPM.
-- `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`, `MINIO_PASSWORD` (и `MINIO_USER`).
+- `ADMIN_PASSWORD` — seeds the initial admin (created only when the users table
+  is empty; without it the api-gateway refuses to start). `ADMIN_USERNAME`
+  defaults to `admin`; `DEVELOPER_USERNAME` / `DEVELOPER_PASSWORD` seed an
+  optional developer account only when the password is set.
+- `JWT_SECRET` — signs access and refresh JWTs (min 32 chars).
+- `SECRETS_MASTER_KEY` — AES-256-GCM master key for pipeline-secret encryption
+  at rest. Generate a strong random value (e.g. `openssl rand -base64 48`) and
+  **never rotate it** after secrets are written.
+- `GPG_PASSPHRASE` — passphrase for the RPM signing key.
+- `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`, `MINIO_PASSWORD` (and `MINIO_USER`).
 
-Пароли пользователей хранятся в БД в виде BCrypt-хэшей. Если переменная не задана,
-`docker compose up` завершится с ошибкой, а не откатится на дев-дефолт.
+User passwords are stored in the database as BCrypt hashes. If a required
+variable is missing, `docker compose up` fails with a clear error rather than
+falling back to an insecure dev default.
 
-> ⚠️ **Для production обязательно смените все пароли в `.env`!**
+> ⚠️ **For production, rotate every password in `.env` and keep `.env` out of
+> version control.** TLS certificates under `deploy/nginx/certs/` must also be
+> real (e.g. Let's Encrypt), not the self-signed dev pair.
