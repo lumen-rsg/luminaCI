@@ -1,10 +1,8 @@
 using Lumina.BuildService.Data;
 using Lumina.Shared.Errors;
-using Lumina.Shared.Events;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
-using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.BuildService.Services;
@@ -12,18 +10,18 @@ namespace Lumina.BuildService.Services;
 public class PipelineEngine
 {
     private readonly BuildDbContext _db;
-    private readonly DockerBuildService _dockerBuild;
+    private readonly IBuildLauncher _buildLauncher;
     private readonly ILogger<PipelineEngine> _logger;
     private readonly RedisCacheService _cache;
-    private readonly IBus _bus;
+    private readonly ISigningKeyGate _signingKeyGate;
 
-    public PipelineEngine(BuildDbContext db, DockerBuildService dockerBuild, ILogger<PipelineEngine> logger, RedisCacheService cache, IBus bus)
+    public PipelineEngine(BuildDbContext db, IBuildLauncher buildLauncher, ILogger<PipelineEngine> logger, RedisCacheService cache, ISigningKeyGate signingKeyGate)
     {
         _db = db;
-        _dockerBuild = dockerBuild;
+        _buildLauncher = buildLauncher;
         _logger = logger;
         _cache = cache;
-        _bus = bus;
+        _signingKeyGate = signingKeyGate;
     }
 
     /// <summary>
@@ -33,30 +31,7 @@ public class PipelineEngine
     /// then cannot be published — failing the trigger early gives the operator a
     /// clear, recoverable error instead of a wasted build.
     /// </summary>
-    private async Task RequireActiveSigningKeyAsync()
-    {
-        try
-        {
-            var response = await _bus.Request<GetActiveSigningKey, ActiveSigningKey>(
-                new GetActiveSigningKey(), timeout: TimeSpan.FromSeconds(10));
-
-            if (!response.Message.KeyId.HasValue)
-            {
-                throw new ValidationException(
-                    "No active PGP key. Generate a key in Security settings before triggering a pipeline that includes a Sign step — unsigned artifacts cannot be published.");
-            }
-        }
-        catch (ValidationException)
-        {
-            throw; // our own gate message — propagate verbatim
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to confirm an active PGP key exists via the SecurityService bus; rejecting build trigger (fail-closed)");
-            throw new ValidationException(
-                "Could not confirm an active PGP signing key (SecurityService unreachable). Cannot start a Sign-enabled build without assurance that the artifact can be signed.");
-        }
-    }
+    private Task RequireActiveSigningKeyAsync() => _signingKeyGate.RequireActiveKeyAsync();
 
     public async Task<Pipeline> CreatePipelineAsync(Shared.DTOs.CreatePipelineRequest request, string createdBy)
     {
@@ -190,7 +165,7 @@ public class PipelineEngine
                 var pipelineExtraDir = $"/opt/lumina/extra-sources/pipelines/{pipelineId}";
                 var pipelineExtraExists = Directory.Exists(pipelineExtraDir) && Directory.GetFiles(pipelineExtraDir, "*", SearchOption.AllDirectories).Length > 0;
 
-                await _dockerBuild.StartBuildAsync(job, specContent, sourceUrl, pipeline.BuildImage,
+                await _buildLauncher.StartBuildAsync(job, specContent, sourceUrl, pipeline.BuildImage,
                     pipeline.GitUsername, pipeline.GitToken,
                     extraSourcesPipelineDir: pipelineExtraExists ? pipelineExtraDir : null);
             }
@@ -311,7 +286,7 @@ public class PipelineEngine
         // Start the build container (with or without a formal build step)
         try
         {
-            await _dockerBuild.StartBuildAsync(
+            await _buildLauncher.StartBuildAsync(
                 job, specContent, null, buildImage ?? pipeline.BuildImage,
                 sourceDir: sourceDir);
         }

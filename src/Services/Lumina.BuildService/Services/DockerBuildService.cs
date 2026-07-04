@@ -17,7 +17,7 @@ namespace Lumina.BuildService.Services;
 /// Logs are streamed from Docker containers as they arrive and made available
 /// to SSE subscribers via Channel-based pub/sub.
 /// </summary>
-public class DockerBuildService
+public class DockerBuildService : IBuildLauncher
 {
     private readonly DockerClient _docker;
     private readonly BuildDbContext _db;
@@ -362,7 +362,7 @@ public class DockerBuildService
         }
     }
 
-    public async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? sourceDir = null, string? extraSourcesPipelineDir = null)
+    public virtual async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? sourceDir = null, string? extraSourcesPipelineDir = null)
     {
         var imageName = !string.IsNullOrWhiteSpace(buildImage) ? buildImage : "lumina-rpm-build:latest";
         _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName}) with image {Image}", job.Id, job.SpecName, imageName);

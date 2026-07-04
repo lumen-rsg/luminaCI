@@ -1,8 +1,7 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
+using Lumina.Shared.Security;
 using Lumina.Web.Shared.Errors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -212,34 +211,17 @@ public class WebhooksController : ControllerBase
         // GitHub: X-Hub-Signature-256 header
         // GitLab: X-Gitlab-Token header
         // Forgejo/Gitea: X-Forgejo-Signature header
+        //
+        // The actual HMAC / constant-time comparison now lives in
+        // WebhookSignatureVerifier (Lumina.Shared.Security) so it can be unit-
+        // tested directly. This method just maps the ASP.NET header dictionary
+        // onto the framework-agnostic WebhookHeaders struct.
+        var headers = new WebhookHeaders(
+            GitLabToken: Request.Headers["X-Gitlab-Token"].FirstOrDefault(),
+            HubSignature256: Request.Headers["X-Hub-Signature-256"].FirstOrDefault(),
+            ForgejoSignature: Request.Headers["X-Forgejo-Signature"].FirstOrDefault());
 
-        // Check GitLab token — constant-time comparison to prevent timing attacks
-        if (Request.Headers.TryGetValue("X-Gitlab-Token", out var gitlabToken))
-        {
-            var tokenBytes = Encoding.UTF8.GetBytes(gitlabToken.ToString());
-            var secretBytes = Encoding.UTF8.GetBytes(secret);
-            return CryptographicOperations.FixedTimeEquals(tokenBytes, secretBytes);
-        }
-
-        // Check GitHub/Forgejo HMAC signature. The HMAC is computed over the RAW
-        // request bytes the provider signed, not a re-serialized representation.
-        var signatureHeader = Request.Headers["X-Hub-Signature-256"].FirstOrDefault()
-            ?? Request.Headers["X-Forgejo-Signature"].FirstOrDefault();
-
-        if (signatureHeader != null)
-        {
-            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-            var hash = hmac.ComputeHash(rawBody);
-            var computedSig = $"sha256={Convert.ToHexString(hash).ToLowerInvariant()}";
-
-            // SECURITY: Constant-time comparison to prevent timing attacks
-            return CryptographicOperations.FixedTimeEquals(
-                Encoding.UTF8.GetBytes(computedSig),
-                Encoding.UTF8.GetBytes(signatureHeader.ToLowerInvariant()));
-        }
-
-        // If no signature headers present, reject
-        return false;
+        return WebhookSignatureVerifier.Verify(secret, rawBody, headers);
     }
 
     private (string? repoUrl, string? branch, string? commit, string? author) ExtractPushInfo(JsonElement payload)

@@ -9,9 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="FsCheck.Xunit" Version="2.16.6" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Abstractions" Version="10.0.0-preview.3.25161.1" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0-preview.3.25161.1" />
+    <!-- The Memory provider (AddInMemoryCollection) ships in the base
+         Microsoft.Extensions.Configuration package; the separate .Memory
+         subpackage is not used to avoid pulling an extra dependency. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.4" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-preview.3.25161.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
@@ -19,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Shared\Lumina.Shared\Lumina.Shared.csproj" />
+    <ProjectReference Include="..\..\src\Services\Lumina.SourceService\Lumina.SourceService.csproj" />
   </ItemGroup>
 
 </Project>

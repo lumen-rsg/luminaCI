@@ -6,6 +6,7 @@ obj/
 *.cache
 *.vs/
 .vs/
+TestResults/
 
 ## Build outputs
 [Dd]ebug/

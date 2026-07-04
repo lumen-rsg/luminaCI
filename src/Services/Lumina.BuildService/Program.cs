@@ -33,8 +33,14 @@ try
     // plaintext by accident. See AesSecretProtector for the on-disk format.
     builder.Services.AddSingleton<ISecretProtector, AesSecretProtector>();
 
-    // Services
+    // Services. DockerBuildService is registered both concretely (BuildsController
+    // depends on its LogSubscription / log-streaming surface) and as IBuildLauncher
+    // (PipelineEngine depends on the abstraction so it can be unit-tested without
+    // a Docker daemon). The same instance satisfies both — AddScoped<X>() then
+    // AddScoped<IX>(sp => sp.GetRequiredService<X>()) keeps it a single scoped object.
     builder.Services.AddScoped<DockerBuildService>();
+    builder.Services.AddScoped<IBuildLauncher>(sp => sp.GetRequiredService<DockerBuildService>());
+    builder.Services.AddScoped<ISigningKeyGate, SigningKeyGate>();
     builder.Services.AddScoped<PipelineEngine>();
 
     // Redis distributed cache
