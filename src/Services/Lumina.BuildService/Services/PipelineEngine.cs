@@ -59,6 +59,19 @@ public class PipelineEngine
 
     public async Task<Pipeline> CreatePipelineAsync(Shared.DTOs.CreatePipelineRequest request, string createdBy)
     {
+        // Fail-closed at creation: every pipeline must carry a non-empty webhook
+        // secret. The webhook endpoint (WebhooksController) rejects any pipeline
+        // without one, so allowing a pipeline to be created without a secret
+        // would produce a pipeline whose webhook URL is permanently dead — and,
+        // worse, would have been trivially triggerable by anyone before the
+        // fail-closed handler gate landed. Requiring it here gives the operator
+        // a clear, early error instead of a silent foot-gun.
+        if (string.IsNullOrWhiteSpace(request.WebhookSecret))
+        {
+            throw new InvalidOperationException(
+                "A non-empty WebhookSecret is required — pipelines without a webhook secret cannot be triggered securely.");
+        }
+
         var pipeline = new Pipeline
         {
             Id = Guid.NewGuid(),

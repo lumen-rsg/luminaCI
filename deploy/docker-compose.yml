@@ -433,6 +433,15 @@ services:
     volumes:
       - ../deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro,z
       - ../deploy/nginx/conf.d:/etc/nginx/conf.d:ro,z
+      # TLS certificates for the console vhost (SEC-020). The path is fixed by
+      # console.conf: it loads /etc/nginx/certs/console.crt + console.key. Mount
+      # a host directory (or a docker secret / named volume) containing those
+      # two files; nginx refuses to start without them, which is intentional.
+      # For local dev, generate a self-signed pair:
+      #   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+      #     -keyout console.key -out console.crt -subj "/CN=console.lumina.1t.ru"
+      # and put both files in ../deploy/nginx/certs/.
+      - ../deploy/nginx/certs:/etc/nginx/certs:ro,z
       - repo_data:/srv/packages:ro
     depends_on:
       - api-gateway

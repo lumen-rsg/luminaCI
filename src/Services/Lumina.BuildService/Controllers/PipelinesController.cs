@@ -64,6 +64,13 @@ public class PipelinesController : ControllerBase
                 p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
             return CreatedAtAction(nameof(Get), new { id = p.Id }, new ApiResponse<PipelineResponse>(true, response, null, "Pipeline created"));
         }
+        catch (InvalidOperationException ex)
+        {
+            // Validation gate — e.g. missing WebhookSecret (SEC-020). Surface as
+            // 400 rather than a raw 500 so the caller gets a recoverable error.
+            _logger.LogWarning(ex, "Rejected pipeline creation {Name}", request.Name);
+            return BadRequest(new ApiResponse<PipelineResponse>(false, null, ex.Message, null));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create pipeline {Name}", request.Name);

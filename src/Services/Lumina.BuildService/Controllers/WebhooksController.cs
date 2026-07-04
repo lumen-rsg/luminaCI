@@ -72,19 +72,33 @@ public class WebhooksController : ControllerBase
             return StatusCode(413, new ApiResponse<BuildJobResponse?>(false, null, "Webhook payload too large", null));
         }
 
-        // Verify webhook secret over the RAW bytes if configured. This runs BEFORE
-        // the body is parsed, so an invalid-signature request never reaches the
-        // JSON parser.
-        if (!string.IsNullOrEmpty(pipeline.WebhookSecret))
+        // Fail-closed: a pipeline WITHOUT a configured webhook secret can never
+        // be triggered via this endpoint. The earlier behavior skipped the check
+        // when the secret was empty, which let anyone who learned a pipeline id
+        // POST an arbitrary payload (including a forged repoUrl) and trigger a
+        // build — chaining into the git-clone-as-root and untrusted-spec risks
+        // (SEC-02 / SEC-04). Pipelines are therefore required to carry a secret
+        // at creation time (see PipelineEngine.CreatePipelineAsync); this gate
+        // is the defense-in-depth backstop for rows that predate that rule or
+        // were auto-created internally (TriggerBuildFromConfigAsync) and are not
+        // meant to be webhook-triggered at all.
+        if (string.IsNullOrEmpty(pipeline.WebhookSecret))
         {
-            if (!VerifySignature(pipeline.WebhookSecret, rawBody))
-            {
-                _logger.LogWarning("Webhook signature verification failed for pipeline {PipelineId}", pipelineId);
-                return Unauthorized(new ApiResponse<BuildJobResponse?>(false, null, "Invalid signature", null));
-            }
+            _logger.LogWarning(
+                "Webhook for pipeline {PipelineId} rejected: no webhook secret configured (fail-closed)", pipelineId);
+            return Unauthorized(new ApiResponse<BuildJobResponse?>(false, null,
+                "Webhook secret not configured for this pipeline", null));
         }
 
-        // Signature verified (or no secret configured) — safe to parse now.
+        // Verify the webhook secret over the RAW bytes. This runs BEFORE the body
+        // is parsed, so an invalid-signature request never reaches the JSON parser.
+        if (!VerifySignature(pipeline.WebhookSecret, rawBody))
+        {
+            _logger.LogWarning("Webhook signature verification failed for pipeline {PipelineId}", pipelineId);
+            return Unauthorized(new ApiResponse<BuildJobResponse?>(false, null, "Invalid signature", null));
+        }
+
+        // Signature verified — safe to parse now.
         JsonElement payload;
         try
         {

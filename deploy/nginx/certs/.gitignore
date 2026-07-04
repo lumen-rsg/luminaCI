@@ -1,0 +1,10 @@
+# Never commit TLS private keys or certificates (SEC-020).
+# This directory is mounted read-only into the nginx container at
+# /etc/nginx/certs/ and read by console.conf. Drop these two files here:
+#   console.crt  — fullchain certificate for console.lumina.1t.ru
+#   console.key  — matching private key (chmod 0400)
+# Generate a local-dev self-signed pair with:
+#   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+#     -keyout console.key -out console.crt -subj "/CN=console.lumina.1t.ru"
+*
+!.gitignore
