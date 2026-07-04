@@ -2,7 +2,6 @@
   "userns-remap": "default",
   "icc": false,
   "userland-proxy": false,
-  "no-new-privileges": true,
   "log-driver": "json-file",
   "log-opts": {
     "max-size": "50m",

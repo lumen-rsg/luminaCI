@@ -3,14 +3,28 @@
 # change. Bump deliberately after re-validating the build specs.
 FROM fedora:44
 
-# Install RPM build tools + multi-protocol source fetching tools.
-# NOTE: no `sudo` — the build runs as the unprivileged `rpmbuilder` user, so
-# there is nothing to escalate to. (Previously `sudo dnf builddep`/`sudo cp`
-# was used in the entrypoint; that served no purpose as the container was
-# already root and only widened the attack surface.)
+# Install RPM build tools, a minimal C/C++ build toolchain, and multi-protocol
+# source-fetching tools.
+#
+# Toolchain (FUNC-001): the stock image previously shipped no compiler, so any
+# spec whose %build actually compiles (gcc/make/cmake, autotools) failed with
+# "command not found". gcc/g++/make/cmake + autotools cover the bulk of real
+# specs; .NET specs still need the separate lumina-dotnet-build image.
+#
+# NOTE: no `sudo` — and none is needed. dnf builddep runs as root in the
+# entrypoint (it must, to install into /usr/lib and write /var/lib/rpm); the
+# untrusted %build/%install shell then runs as the `rpmbuilder` user. See the
+# privilege-split comment at the ENTRYPOINT below and in build-rpm.sh.
 RUN dnf install -y \
     rpm-build \
     rpmdevtools \
+    gcc \
+    gcc-c++ \
+    make \
+    cmake \
+    autoconf \
+    automake \
+    libtool \
     curl \
     wget \
     git-core \
@@ -23,32 +37,38 @@ RUN dnf install -y \
     xz \
     && dnf clean all
 
-# Create a dedicated, fixed-id unprivileged user for the build. uid/gid 1000 is
-# chosen so it is stable across image rebuilds (matches /opt/lumina/* host bind
-# ownership expectations) and so any user-namespace remap on the daemon maps it
-# to a non-privileged host uid.
+# Create a dedicated, fixed-id unprivileged user for the build phase. uid/gid
+# 1000 is chosen so it is stable across image rebuilds (matches
+# /opt/lumina/* host bind ownership expectations) and so any user-namespace
+# remap on the daemon maps it to a non-privileged host uid.
 RUN groupadd -g 1000 rpmbuilder \
     && useradd -u 1000 -g 1000 -m -d /home/rpmbuilder -s /bin/bash rpmbuilder
 
+# Create the rpmbuild tree as the non-root user (the tree only needs to exist;
+# the entrypoint later chowns it so the build phase owns its contents).
 USER rpmbuilder
-
-# Create the rpmbuild tree as the non-root user.
 RUN rpmdev-setuptree
 
 WORKDIR /home/rpmbuilder/rpmbuild
 
-# Scripts and entrypoint are owned by root but world-readable/executable; the
-# rpmbuilder user invokes them. /artifacts is the bind-mounted output dir — it
-# must be writable by uid 1000 (host dir /opt/lumina/builds/<jobId> is created
-# and chown'd by build-service).
+# Scripts and entrypoint are owned by root but world-readable/executable.
+# /artifacts is the bind-mounted output dir — it must be writable by uid 1000
+# (host dir /opt/lumina/builds/<jobId> is created and chown'd by build-service);
+# we chown the in-image placeholder here as a fallback for the non-root copy.
 COPY --chown=rpmbuilder:rpmbuilder scripts/build-rpm.sh /usr/local/bin/build-rpm.sh
 RUN chmod +x /usr/local/bin/build-rpm.sh
 
-# Ensure artifacts dir is writable by the build user. (We can't chown a bind
-# mount here; build-service sets ownership on the host side. This entry only
-# governs the in-image placeholder.)
 USER root
 RUN mkdir -p /artifacts && chown -R rpmbuilder:rpmbuilder /artifacts
-USER rpmbuilder
 
+# The entrypoint runs as root so dnf builddep can install build dependencies
+# into the writable overlay (FUNC-002: builddep writes to /usr/lib and
+# /var/lib/rpm, which are not writable by uid 1000). The script then drops to
+# the rpmbuilder user for the rpmbuild step — i.e. for the untrusted %build /
+# %install shell supplied by the spec.
+#
+# The drop uses `setpriv` (direct setuid/setgid syscalls), NOT su/sudo/runuser:
+# the build container is launched with the per-container `no-new-privileges`
+# security opt (see DockerBuildService.cs), which neutralizes setuid binaries,
+# so only a syscall-based drop works.
 ENTRYPOINT ["/usr/local/bin/build-rpm.sh"]

@@ -3,24 +3,28 @@
 # Runs inside the rpm-build container
 #
 # Environment variables:
-#   SPEC_CONTENT  — .spec file content (base64 encoded)
-#   SPEC_NAME     — Name of the spec file
-#   SOURCE_URL    — URL to download source, or git://... for git clone
-#   SOURCE_DIR    — Directory with pre-fetched sources (mounted by SourceService)
-#   ARTIFACTS_DIR — Output directory for built RPMs
-#   BUILD_JOB_ID  — Build job ID for tracking
-#   AUTO_DOWNLOAD — "true" to run spectool for missing sources (default: true)
-#   GIT_USERNAME  — Username for private git repositories
-#   GIT_TOKEN     — PAT / password for git auth
+#   SPEC_CONTENT       — .spec file content (base64 encoded)
+#   SPEC_NAME          — Name of the spec file
+#   SOURCE_URL         — URL to download source, or git://... for git clone
+#   SOURCE_DIR         — Directory with pre-fetched sources (mounted by SourceService)
+#   SPEC_PATH_IN_REPO  — Repo-relative path to the .spec, used to disambiguate
+#                        when a repo contains more than one spec (FUNC-004).
+#   ARTIFACTS_DIR      — Output directory for built RPMs
+#   BUILD_JOB_ID       — Build job ID for tracking
+#   AUTO_DOWNLOAD      — "true" to run spectool for missing sources (default: true)
+#   GIT_USERNAME       — Username for private git repositories
+#   GIT_TOKEN          — PAT / password for git auth
 
 set -euo pipefail
 
 SPEC_NAME="${SPEC_NAME:-package.spec}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-/artifacts}"
-# Build tree lives under the unprivileged user's HOME (set by the image to
-# /home/rpmbuilder). Avoids hardcoding /root, which no longer exists as the
-# build runs non-root.
-BUILD_DIR="${HOME}/rpmbuild"
+# Build tree is the rpmbuilder user's rpmbuild tree, created at image-build
+# time by `rpmdev-setuptree`. Anchored to the fixed rpmbuilder home rather than
+# $HOME because this entrypoint runs as root (so $HOME=/root), while the tree
+# lives under /home/rpmbuilder (uid/gid 1000) — see rpm-build.Dockerfile.
+RPMBUILDER_HOME="/home/rpmbuilder"
+BUILD_DIR="${RPMBUILDER_HOME}/rpmbuild"
 AUTO_DOWNLOAD="${AUTO_DOWNLOAD:-true}"
 
 echo "=== Lumina CI RPM Build ==="
@@ -65,6 +69,46 @@ get_setup_dirname() {
     fi
 }
 
+# ─── Helper: resolve a single .spec file from a source tree ───
+# Args: $1 = directory to search, $2 = search label for messages.
+# Honors SPEC_PATH_IN_REPO (a repo-relative path) if set. When more than one
+# spec is found and no SPEC_PATH_IN_REPO disambiguates, fails loudly with the
+# candidate list (FUNC-004) instead of picking one nondeterministically.
+# Echoes the resolved spec path (absolute) and returns 0 on success, 1 on
+# ambiguous/missing.
+resolve_spec_file() {
+    local search_dir="$1"
+    local label="$2"
+
+    # Explicit path wins.
+    if [ -n "${SPEC_PATH_IN_REPO:-}" ] && [ -f "${search_dir}/${SPEC_PATH_IN_REPO}" ]; then
+        echo "${search_dir}/${SPEC_PATH_IN_REPO}"
+        return 0
+    fi
+
+    local specs
+    # Sort for a stable candidate listing if we have to fail.
+    specs=$(find "${search_dir}" -maxdepth 3 -name "*.spec" -type f 2>/dev/null | sort || true)
+
+    local count
+    count=$(printf '%s\n' "${specs}" | grep -c . || true)
+
+    if [ "${count}" -eq 1 ]; then
+        printf '%s\n' "${specs}"
+        return 0
+    fi
+
+    if [ "${count}" -eq 0 ]; then
+        echo "ERROR: No .spec file found under ${label} (${search_dir})." >&2
+        return 1
+    fi
+
+    # Ambiguous: fail with the candidate list rather than silently picking one.
+    echo "ERROR: Multiple .spec files found under ${label}; set SPEC_PATH_IN_REPO to disambiguate:" >&2
+    printf '  - %s\n' ${specs} >&2
+    return 1
+}
+
 # ─── Helper: create tarball from a directory ───
 # Args: $1 = source directory to archive, $2 = expected tarball filename
 create_tarball() {
@@ -91,8 +135,10 @@ create_tarball() {
     tmp_dir=$(mktemp -d)
     mkdir -p "${tmp_dir}/${tarball_stem}"
     cp -a "${src_dir}"/* "${tmp_dir}/${tarball_stem}/" 2>/dev/null || true
-    # Also copy dotfiles (e.g. .gitmodules)
-    cp -a "${src_dir}"/.* "${tmp_dir}/${tarball_stem}/" 2>/dev/null || true
+    # Also copy dotfiles (e.g. .gitmodules). Use the [!.] glob so the pattern
+    # cannot expand to `.` or `..` (the classic `cp -a src/.*` footgun, which
+    # recurses into the parent directory and pollutes the tarball).
+    cp -a "${src_dir}"/.[!.]* "${tmp_dir}/${tarball_stem}/" 2>/dev/null || true
 
     local file_count
     file_count=$(find "${tmp_dir}/${tarball_stem}" -type f 2>/dev/null | wc -l)
@@ -159,11 +205,12 @@ if [ -n "${SOURCE_DIR:-}" ] && [ -d "${SOURCE_DIR}" ]; then
         echo "  Source is a git repository: ${REPO_DIR}"
 
         if $SPEC_DEFERRED; then
-            FOUND_SPEC=$(find "${REPO_DIR}" -maxdepth 3 -name "*.spec" -type f 2>/dev/null | head -1)
-            if [ -n "${FOUND_SPEC}" ]; then
+            if FOUND_SPEC=$(resolve_spec_file "${REPO_DIR}" "pre-fetched sources"); then
                 cp "${FOUND_SPEC}" "${BUILD_DIR}/SPECS/${SPEC_NAME}"
-                echo "  Auto-found spec: ${FOUND_SPEC}"
+                echo "  Found spec: ${FOUND_SPEC}"
                 SPEC_DEFERRED=false
+            else
+                exit 1
             fi
         fi
 
@@ -313,25 +360,25 @@ if [ -n "${SOURCE_URL:-}" ]; then
         if [ -f "${CLONE_DIR}/repo/.gitmodules" ]; then
             echo "Initializing git submodules..."
             cd "${CLONE_DIR}/repo"
-            git submodule update --init --recursive 2>/dev/null || echo "Warning: submodule init failed"
+            # FUNC-005: a failed submodule init (auth, missing repo, network)
+            # breaks the build; fatal with stderr preserved rather than
+            # silently warning and continuing.
+            if ! git submodule update --init --recursive; then
+                echo "ERROR: git submodule update failed — see stderr above."
+                exit 1
+            fi
             cd /
         fi
 
-        # Find and copy spec file
-        if [ -n "${SPEC_PATH_IN_REPO}" ] && [ -f "${CLONE_DIR}/repo/${SPEC_PATH_IN_REPO}" ]; then
-            cp "${CLONE_DIR}/repo/${SPEC_PATH_IN_REPO}" "${BUILD_DIR}/SPECS/${SPEC_NAME}"
-            echo "Spec file copied from ${SPEC_PATH_IN_REPO}"
+        # Find and copy spec file. SPEC_PATH_IN_REPO is honored first; an
+        # ambiguous auto-discovery fails loudly with the candidate list
+        # (FUNC-004) rather than picking one nondeterministically.
+        if FOUND_SPEC=$(resolve_spec_file "${CLONE_DIR}/repo" "cloned repository"); then
+            cp "${FOUND_SPEC}" "${BUILD_DIR}/SPECS/${SPEC_NAME}"
+            echo "Spec file: ${FOUND_SPEC}"
             SPEC_DEFERRED=false
-        elif $SPEC_DEFERRED; then
-            FOUND_SPEC=$(find "${CLONE_DIR}/repo" -maxdepth 3 -name "*.spec" -type f | head -1)
-            if [ -n "${FOUND_SPEC}" ]; then
-                cp "${FOUND_SPEC}" "${BUILD_DIR}/SPECS/${SPEC_NAME}"
-                echo "Auto-found spec: ${FOUND_SPEC}"
-                SPEC_DEFERRED=false
-            else
-                echo "ERROR: No .spec file found in repository"
-                exit 1
-            fi
+        else
+            exit 1
         fi
 
         # Copy tarballs and patches from repo to SOURCES/
@@ -364,9 +411,13 @@ fi
 
 if [ "${AUTO_DOWNLOAD}" = "true" ]; then
     echo "=== Auto-downloading sources via spectool ==="
-    spectool -g -R -a "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>&1 || {
-        echo "WARNING: spectool reported failures (some sources may already be present)"
-    }
+    # FUNC-005: a source-fetch failure (404, checksum mismatch, network) makes
+    # the later rpmbuild fail with a confusing unrelated error, so it is fatal
+    # with stderr preserved instead of being downgraded to a warning.
+    if ! spectool -g -R -a "${BUILD_DIR}/SPECS/${SPEC_NAME}"; then
+        echo "ERROR: spectool failed to download sources — see stderr above."
+        exit 1
+    fi
 else
     echo "Skipping auto-download (AUTO_DOWNLOAD=false)"
 fi
@@ -418,51 +469,66 @@ ls -la "${BUILD_DIR}/SOURCES/"
 # ═══════════════════════════════════════════════════════════
 # Step 6: Build
 # ═══════════════════════════════════════════════════════════
-echo "Installing build dependencies..."
-# Runs as the unprivileged `rpmbuilder` user; dnf builddep installs into the
-# container's own writable rpmdb. No sudo (the image no longer ships it).
-dnf builddep -y "${BUILD_DIR}/SPECS/${SPEC_NAME}" 2>/dev/null || echo "Warning: Some build dependencies may be missing"
+# PRIVILEGE SPLIT (FUNC-002): this script runs as root so that dnf builddep can
+# install build dependencies into the writable overlay (/usr/lib, /var/lib/rpm
+# are not writable by uid 1000). The dependency install stays root; the
+# untrusted %build/%install shell in the spec then runs as the `rpmbuilder`
+# user via the builder_phase drop below.
+#
+# The drop uses `setpriv` (direct syscalls), not su/sudo/runuser: the build
+# container is launched with the per-container `no-new-privileges` security opt,
+# which neutralizes setuid binaries, so a syscall-based drop is the only option.
 
-echo "Building RPM..."
-rpmbuild -bb "${BUILD_DIR}/SPECS/${SPEC_NAME}" \
-    --define "_topdir ${BUILD_DIR}" \
-    --define "debug_package %{nil}" \
-    2>&1 | tee /tmp/build.log
+# builder_phase: everything that runs as the unprivileged rpmbuilder user — the
+# rpmbuild step (which executes spec-supplied %build/%install shell) and the
+# artifact copy into /artifacts (owned by uid 1000).
+builder_phase() {
+    echo "Building RPM (as uid $(id -u))..."
+    rpmbuild -bb "${BUILD_DIR}/SPECS/${SPEC_NAME}" \
+        --define "_topdir ${BUILD_DIR}" \
+        --define "debug_package %{nil}" \
+        2>&1 | tee /tmp/build.log
+    local rpmbuild_exit=${PIPESTATUS[0]}
 
-BUILD_EXIT=${PIPESTATUS[0]}
+    if [ "${rpmbuild_exit}" -ne 0 ]; then
+        echo "ERROR: RPM build failed with exit code ${rpmbuild_exit}!"
+        return "${rpmbuild_exit}"
+    fi
 
-if [ ${BUILD_EXIT} -ne 0 ]; then
-    echo "ERROR: RPM build failed with exit code ${BUILD_EXIT}!"
-    exit ${BUILD_EXIT}
+    # Collect binary RPMs. -bb produces RPMS/<arch>/*.rpm only (no SRPMS); the
+    # RPMS/*/*.rpm glob gathers every arch subpackage (FUNC-009: the previous
+    # SRPMS copy was dead code under -bb and is removed).
+    mkdir -p "${ARTIFACTS_DIR}"
+    cp -v "${BUILD_DIR}"/RPMS/*/*.rpm "${ARTIFACTS_DIR}/" || {
+        echo "ERROR: rpmbuild reported success but no RPMs were found under ${BUILD_DIR}/RPMS/"
+        return 1
+    }
+    return 0
+}
+
+echo "Installing build dependencies (as root)..."
+# FUNC-002: builddep failure is fatal with stderr preserved. The previous
+# `2>/dev/null || echo "Warning..."` discarded the real error and downgraded a
+# hard failure to a hint, so operators chased downstream rpmbuild errors
+# instead of the missing-deps root cause.
+if ! dnf builddep -y "${BUILD_DIR}/SPECS/${SPEC_NAME}"; then
+    echo "ERROR: dnf builddep failed — see stderr above for the unresolvable/missing dependencies."
+    exit 1
 fi
 
-# ═══════════════════════════════════════════════════════════
-# Step 7: Collect artifacts
-# ═══════════════════════════════════════════════════════════
-# /artifacts is a bind mount owned by uid 1000 (rpmbuilder); no sudo needed.
-mkdir -p "${ARTIFACTS_DIR}" 2>/dev/null || true
-cp -v "${BUILD_DIR}"/RPMS/*/*.rpm "${ARTIFACTS_DIR}/" 2>/dev/null || true
-cp -v "${BUILD_DIR}"/SRPMS/*.rpm "${ARTIFACTS_DIR}/" 2>/dev/null || true
+# Hand the build tree to the unprivileged user so %build/%install can write to it.
+chown -R rpmbuilder:rpmbuilder "${BUILD_DIR}"
+
+# Run the untrusted build phase as rpmbuilder (uid/gid 1000).
+export -f builder_phase
+export BUILD_DIR SPEC_NAME ARTIFACTS_DIR
+setpriv --reuid 1000 --regid 1000 --clear-groups -- bash -c 'builder_phase'
+BUILD_EXIT=$?
+
+if [ ${BUILD_EXIT} -ne 0 ]; then
+    exit ${BUILD_EXIT}
+fi
 
 echo "=== Build completed successfully ==="
 echo "Artifacts:"
 ls -la "${ARTIFACTS_DIR}/"
-
-echo "=== ARTIFACTS_JSON ==="
-ARTIFACTS_ARRAY="["
-FIRST=true
-for f in "${ARTIFACTS_DIR}"/*.rpm; do
-    if [ -f "$f" ]; then
-        FILENAME=$(basename "$f")
-        FILESIZE=$(stat -c%s "$f" 2>/dev/null || echo "0")
-        HASH=$(sha256sum "$f" | cut -d' ' -f1)
-        if [ "$FIRST" = true ]; then
-            FIRST=false
-        else
-            ARTIFACTS_ARRAY+=","
-        fi
-        ARTIFACTS_ARRAY+="{\"fileName\":\"${FILENAME}\",\"fileSize\":${FILESIZE},\"hashSha256\":\"${HASH}\"}"
-    fi
-done
-ARTIFACTS_ARRAY+="]"
-echo "${ARTIFACTS_ARRAY}"
