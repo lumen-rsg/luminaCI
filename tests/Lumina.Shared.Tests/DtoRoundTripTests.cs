@@ -253,4 +253,34 @@ public class DtoRoundTripTests
             new List<BuildJobSummaryResponse>(), new List<BuildJobSummaryResponse>(), 0, 0);
         RoundTrip(queue);
     }
+
+    [Fact]
+    public void Source_Config_And_Download_Responses_RoundTrip()
+    {
+        // These DTOs back the SourceController responses that previously leaked
+        // out as ad-hoc anonymous objects. Pin their shape so every source JSON
+        // response flows through ApiResponse<T> the same way the rest of the API
+        // does.
+        var download = new SourceDownloadResponse("https://signed/url", "pkg", 2048L, "sha");
+        var dlRt = RoundTrip(download);
+        Assert.Equal("https://signed/url", dlRt.Url);
+        Assert.Equal("pkg", dlRt.PackageName);
+        Assert.Equal(2048L, dlRt.FileSize);
+
+        var config = new SourceConfigResponse("Name: pkg");
+        var cfgRt = RoundTrip(config);
+        Assert.Equal("Name: pkg", cfgRt.Content);
+
+        var mutationWithCount = new SourceConfigMutationResponse("Saved", 5);
+        var mwcRt = RoundTrip(mutationWithCount);
+        Assert.Equal("Saved", mwcRt.Message);
+        Assert.Equal(5, mwcRt.Count);
+
+        // Count is optional (add/remove return only a message) — must round-trip
+        // to null, not default(int).
+        var mutationNoCount = new SourceConfigMutationResponse("Package added");
+        var mncRt = RoundTrip(mutationNoCount);
+        Assert.Equal("Package added", mncRt.Message);
+        Assert.Null(mncRt.Count);
+    }
 }

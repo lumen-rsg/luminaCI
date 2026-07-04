@@ -77,5 +77,18 @@ public record SourceListResponse(List<SourcePackageResponse> Packages, int Total
 
 public record SourceFetchResponse(Guid JobId, string PackageName, SourceStatus Status, string? ErrorMessage);
 
+// Pre-signed download URL for a fetched source archive. Replaces the ad-hoc
+// `new { url, packageName, fileSize, hashSha256 }` shape that SourceController
+// used to return, so every source JSON response shares the ApiResponse<T> envelope.
+public record SourceDownloadResponse(string Url, string PackageName, long? FileSize, string? HashSha256);
+
+// Raw conf.ini content. Replaces the ad-hoc `new { content }` shape so the
+// config GET/PUT also flows through ApiResponse<T>.
+public record SourceConfigResponse(string Content);
+
+// Acknowledgement for conf.ini mutations (save / add / remove / reload).
+// `Count` is null when the operation does not produce a package count.
+public record SourceConfigMutationResponse(string Message, int? Count = null);
+
 // Uploaded Extra Source Responses (pipeline-level & build-level)
 public record UploadedSourceResponse(string FileName, string Path, long FileSize, DateTime UploadedAt, string? SubFolder);

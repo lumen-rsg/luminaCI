@@ -6,6 +6,7 @@ using Lumina.Shared.Models.Enums;
 using Lumina.SourceService.Data;
 using Lumina.SourceService.Services;
 using Lumina.Web.Shared.Authorization;
+using Lumina.Web.Shared.Errors;
 using MassTransit;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -88,39 +89,43 @@ public class SourceController : ControllerBase
     /// Get info about a specific package
     /// </summary>
     [HttpGet("{name}")]
-    public async Task<ActionResult<SourcePackageResponse>> GetSource(string name)
+    public async Task<ActionResult<ApiResponse<SourcePackageResponse>>> GetSource(string name)
     {
         var pkg = _configParser.GetPackage(name);
         if (pkg == null)
-            return NotFound(new { error = $"Package '{name}' not found in configuration" });
+            return NotFound(new ApiResponse<SourcePackageResponse>(false, null, $"Package '{name}' not found in configuration", null));
 
         var job = await _db.SourceJobs
             .Where(j => j.PackageName.Equals(name, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(j => j.CreatedAt)
             .FirstOrDefaultAsync();
 
-        return Ok(new SourcePackageResponse(
-            pkg.Name,
-            pkg.Source,
-            pkg.SourceType,
-            pkg.SourceBranch,
-            job?.Status ?? SourceStatus.Pending,
-            job?.ErrorMessage,
-            job?.FileSize,
-            job?.HashSha256,
-            job?.FetchCompletedAt
-        ));
+        return Ok(new ApiResponse<SourcePackageResponse>(
+            true,
+            new SourcePackageResponse(
+                pkg.Name,
+                pkg.Source,
+                pkg.SourceType,
+                pkg.SourceBranch,
+                job?.Status ?? SourceStatus.Pending,
+                job?.ErrorMessage,
+                job?.FileSize,
+                job?.HashSha256,
+                job?.FetchCompletedAt
+            ),
+            null,
+            null));
     }
 
     /// <summary>
     /// Fetch sources for a specific package
     /// </summary>
     [HttpPost("{name}/fetch")]
-    public async Task<ActionResult<SourceFetchResponse>> FetchSource(string name, [FromBody] FetchSourceRequest? request = null)
+    public async Task<ActionResult<ApiResponse<SourceFetchResponse>>> FetchSource(string name, [FromBody] FetchSourceRequest? request = null)
     {
         var pkg = _configParser.GetPackage(name);
         if (pkg == null)
-            return NotFound(new { error = $"Package '{name}' not found in configuration" });
+            return NotFound(new ApiResponse<SourceFetchResponse>(false, null, $"Package '{name}' not found in configuration", null));
 
         try
         {
@@ -136,16 +141,21 @@ public class SourceController : ControllerBase
                 pkg.SourceBranch,
                 request?.MaxRetries ?? 3);
 
-            return Accepted(new SourceFetchResponse(job.Id, job.PackageName, job.Status, job.ErrorMessage));
+            return Accepted(new ApiResponse<SourceFetchResponse>(
+                true,
+                new SourceFetchResponse(job.Id, job.PackageName, job.Status, job.ErrorMessage),
+                null,
+                null));
         }
         catch (SourceValidationException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            // Domain-authored message — safe to surface as the Error field.
+            return BadRequest(new ApiResponse<SourceFetchResponse>(false, null, ex.Message, null));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to start fetch for {Package}", name);
-            return StatusCode(500, new { error = $"Failed to start fetch: {ex.Message}" });
+            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
+            return ApiResults.FromException<SourceFetchResponse>(ex, _logger, "Sources.FetchSource", name);
         }
     }
 
@@ -153,19 +163,21 @@ public class SourceController : ControllerBase
     /// Fetch all sources from config
     /// </summary>
     [HttpPost("fetch-all")]
-    public async Task<ActionResult<List<SourceFetchResponse>>> FetchAllSources([FromBody] FetchAllSourcesRequest? request = null)
+    public async Task<ActionResult<ApiResponse<List<SourceFetchResponse>>>> FetchAllSources([FromBody] FetchAllSourcesRequest? request = null)
     {
         try
         {
             var jobs = await _fetchService.FetchAllAsync(_configParser, request?.MaxRetries ?? 3);
 
-            return Accepted(jobs.Select(j =>
-                new SourceFetchResponse(j.Id, j.PackageName, j.Status, j.ErrorMessage)).ToList());
+            var data = jobs.Select(j =>
+                new SourceFetchResponse(j.Id, j.PackageName, j.Status, j.ErrorMessage)).ToList();
+
+            return Accepted(new ApiResponse<List<SourceFetchResponse>>(true, data, null, null));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to start fetch-all");
-            return StatusCode(500, new { error = $"Failed to start fetch: {ex.Message}" });
+            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
+            return ApiResults.FromException<List<SourceFetchResponse>>(ex, _logger, "Sources.FetchAllSources");
         }
     }
 
@@ -173,7 +185,7 @@ public class SourceController : ControllerBase
     /// Get the fetch status of a package
     /// </summary>
     [HttpGet("{name}/status")]
-    public async Task<ActionResult<SourceFetchResponse>> GetSourceStatus(string name)
+    public async Task<ActionResult<ApiResponse<SourceFetchResponse>>> GetSourceStatus(string name)
     {
         var job = await _db.SourceJobs
             .Where(j => j.PackageName.Equals(name, StringComparison.OrdinalIgnoreCase))
@@ -181,20 +193,24 @@ public class SourceController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (job == null)
-            return NotFound(new { error = $"No fetch job found for package '{name}'" });
+            return NotFound(new ApiResponse<SourceFetchResponse>(false, null, $"No fetch job found for package '{name}'", null));
 
-        return Ok(new SourceFetchResponse(job.Id, job.PackageName, job.Status, job.ErrorMessage));
+        return Ok(new ApiResponse<SourceFetchResponse>(
+            true,
+            new SourceFetchResponse(job.Id, job.PackageName, job.Status, job.ErrorMessage),
+            null,
+            null));
     }
 
     /// <summary>
     /// Get a download URL for a fetched source archive
     /// </summary>
     [HttpGet("{name}/download")]
-    public async Task<ActionResult> DownloadSource(string name)
+    public async Task<ActionResult<ApiResponse<SourceDownloadResponse>>> DownloadSource(string name)
     {
         var pkg = _configParser.GetPackage(name);
         if (pkg == null)
-            return NotFound(new { error = $"Package '{name}' not found in configuration" });
+            return NotFound(new ApiResponse<SourceDownloadResponse>(false, null, $"Package '{name}' not found in configuration", null));
 
         var job = await _db.SourceJobs
             .Where(j => j.PackageName.Equals(name, StringComparison.OrdinalIgnoreCase)
@@ -203,20 +219,24 @@ public class SourceController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (job == null)
-            return BadRequest(new { error = $"No ready source for package '{name}'. Fetch first." });
+            return BadRequest(new ApiResponse<SourceDownloadResponse>(false, null, $"No ready source for package '{name}'. Fetch first.", null));
 
         try
         {
             var url = await _storageService.GetDownloadUrlAsync(name);
             if (url == null)
-                return NotFound(new { error = "Source archive not found in storage" });
+                return NotFound(new ApiResponse<SourceDownloadResponse>(false, null, "Source archive not found in storage", null));
 
-            return Ok(new { url, packageName = name, fileSize = job.FileSize, hashSha256 = job.HashSha256 });
+            return Ok(new ApiResponse<SourceDownloadResponse>(
+                true,
+                new SourceDownloadResponse(url, name, job.FileSize, job.HashSha256),
+                null,
+                null));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to generate download URL for {Package}", name);
-            return StatusCode(500, new { error = ex.Message });
+            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
+            return ApiResults.FromException<SourceDownloadResponse>(ex, _logger, "Sources.DownloadSource", name);
         }
     }
 
@@ -225,11 +245,11 @@ public class SourceController : ControllerBase
     /// Reads conf.ini for source info, fetches, creates tarball, then calls BuildService.
     /// </summary>
     [HttpPost("{name}/build")]
-    public async Task<ActionResult> BuildPackage(string name, [FromBody] BuildFromConfigRequest? request = null)
+    public async Task<ActionResult<ApiResponse<object>>> BuildPackage(string name, [FromBody] BuildFromConfigRequest? request = null)
     {
         var pkg = _configParser.GetPackage(name);
         if (pkg == null)
-            return NotFound(new { error = $"Package '{name}' not found in configuration" });
+            return NotFound(new ApiResponse<object>(false, null, $"Package '{name}' not found in configuration", null));
 
         try
         {
@@ -263,7 +283,7 @@ public class SourceController : ControllerBase
                 }
 
                 if (string.IsNullOrEmpty(specContent))
-                    return BadRequest(new { error = $"No spec file found for package '{name}'. Provide SpecContent in request or place spec file in /app/specs/" });
+                    return BadRequest(new ApiResponse<object>(false, null, $"No spec file found for package '{name}'. Provide SpecContent in request or place spec file in /app/specs/", null));
             }
 
             // 2. Extract version from spec (Version: X.Y)
@@ -294,12 +314,13 @@ public class SourceController : ControllerBase
         }
         catch (SourceValidationException ex)
         {
+            // Domain-authored message — safe to surface as the Error field.
             return BadRequest(new ApiResponse<object>(false, null, ex.Message, null));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to build package {Package}", name);
-            return StatusCode(500, new ApiResponse<object>(false, null, $"Build failed: {ex.Message}", null));
+            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
+            return ApiResults.FromException<object>(ex, _logger, "Sources.BuildPackage", name);
         }
     }
 
@@ -307,10 +328,10 @@ public class SourceController : ControllerBase
     /// Get the raw conf.ini content
     /// </summary>
     [HttpGet("config")]
-    public ActionResult GetConfig()
+    public ActionResult<ApiResponse<SourceConfigResponse>> GetConfig()
     {
         var content = _configParser.GetRawContent();
-        return Ok(new { content });
+        return Ok(new ApiResponse<SourceConfigResponse>(true, new SourceConfigResponse(content), null, null));
     }
 
     /// <summary>
@@ -318,18 +339,22 @@ public class SourceController : ControllerBase
     /// </summary>
     [HttpPut("config")]
     [Authorize(Policy = AuthPolicies.Admin)]
-    public ActionResult SaveConfig([FromBody] UpdateConfigRequest request)
+    public ActionResult<ApiResponse<SourceConfigMutationResponse>> SaveConfig([FromBody] UpdateConfigRequest request)
     {
         try
         {
             _configParser.SaveContent(request.Content);
             var packages = _configParser.ParsePackages();
-            return Ok(new { message = $"Saved config with {packages.Count} packages", count = packages.Count });
+            return Ok(new ApiResponse<SourceConfigMutationResponse>(
+                true,
+                new SourceConfigMutationResponse($"Saved config with {packages.Count} packages", packages.Count),
+                null,
+                null));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to save config");
-            return StatusCode(500, new { error = ex.Message });
+            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
+            return ApiResults.FromException<SourceConfigMutationResponse>(ex, _logger, "Sources.SaveConfig");
         }
     }
 
@@ -338,7 +363,7 @@ public class SourceController : ControllerBase
     /// </summary>
     [HttpPost("config/package")]
     [Authorize(Policy = AuthPolicies.Admin)]
-    public async Task<ActionResult> AddPackageToConfig([FromBody] AddPackageToConfigRequest request)
+    public async Task<ActionResult<ApiResponse<SourceConfigMutationResponse>>> AddPackageToConfig([FromBody] AddPackageToConfigRequest request)
     {
         try
         {
@@ -351,7 +376,7 @@ public class SourceController : ControllerBase
 
             var existing = _configParser.GetPackage(request.Name);
             if (existing != null)
-                return BadRequest(new { error = $"Package '{request.Name}' already exists in configuration" });
+                return BadRequest(new ApiResponse<SourceConfigMutationResponse>(false, null, $"Package '{request.Name}' already exists in configuration", null));
 
             _configParser.AddPackage(new Services.PackageSourceConfig
             {
@@ -373,16 +398,21 @@ public class SourceController : ControllerBase
                 _logger.LogInformation("Saved spec file for {Name} to {Path}", request.Name, specPath);
             }
 
-            return Ok(new { message = $"Package '{request.Name}' added to configuration" });
+            return Ok(new ApiResponse<SourceConfigMutationResponse>(
+                true,
+                new SourceConfigMutationResponse($"Package '{request.Name}' added to configuration"),
+                null,
+                null));
         }
         catch (SourceValidationException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            // Domain-authored message — safe to surface as the Error field.
+            return BadRequest(new ApiResponse<SourceConfigMutationResponse>(false, null, ex.Message, null));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to add package to config");
-            return StatusCode(500, new { error = ex.Message });
+            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
+            return ApiResults.FromException<SourceConfigMutationResponse>(ex, _logger, "Sources.AddPackageToConfig", request.Name);
         }
     }
 
@@ -391,20 +421,24 @@ public class SourceController : ControllerBase
     /// </summary>
     [HttpDelete("config/{name}")]
     [Authorize(Policy = AuthPolicies.Admin)]
-    public ActionResult RemovePackageFromConfig(string name)
+    public ActionResult<ApiResponse<SourceConfigMutationResponse>> RemovePackageFromConfig(string name)
     {
         try
         {
             var removed = _configParser.RemovePackage(name);
             if (!removed)
-                return NotFound(new { error = $"Package '{name}' not found in configuration" });
+                return NotFound(new ApiResponse<SourceConfigMutationResponse>(false, null, $"Package '{name}' not found in configuration", null));
 
-            return Ok(new { message = $"Package '{name}' removed from configuration" });
+            return Ok(new ApiResponse<SourceConfigMutationResponse>(
+                true,
+                new SourceConfigMutationResponse($"Package '{name}' removed from configuration"),
+                null,
+                null));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to remove package from config");
-            return StatusCode(500, new { error = ex.Message });
+            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
+            return ApiResults.FromException<SourceConfigMutationResponse>(ex, _logger, "Sources.RemovePackageFromConfig", name);
         }
     }
 
@@ -412,11 +446,15 @@ public class SourceController : ControllerBase
     /// Reload configuration from conf.ini
     /// </summary>
     [HttpPost("reload-config")]
-    public ActionResult ReloadConfig()
+    public ActionResult<ApiResponse<SourceConfigMutationResponse>> ReloadConfig()
     {
         _configParser.ParsePackages(); // Forces re-read
         var packages = _configParser.ParsePackages();
-        return Ok(new { message = $"Reloaded {packages.Count} packages from configuration", count = packages.Count });
+        return Ok(new ApiResponse<SourceConfigMutationResponse>(
+            true,
+            new SourceConfigMutationResponse($"Reloaded {packages.Count} packages from configuration", packages.Count),
+            null,
+            null));
     }
 }
 

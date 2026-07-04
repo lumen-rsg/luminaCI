@@ -274,22 +274,21 @@ public class LuminaApiService
         return await resp.Content.ReadFromJsonAsync<ApiResponse<SourceFetchResponse>>();
     }
 
-    public async Task<string?> GetConfigAsync()
+    public async Task<ApiResponse<SourceConfigResponse>?> GetConfigAsync()
     {
-        var resp = await _http.GetFromJsonAsync<System.Text.Json.JsonElement>("/api/sources/config");
-        return resp.TryGetProperty("content", out var c) ? c.GetString() : null;
+        return await _http.GetFromJsonAsync<ApiResponse<SourceConfigResponse>>("/api/sources/config");
     }
 
-    public async Task<bool> SaveConfigAsync(string content)
+    public async Task<ApiResponse<SourceConfigMutationResponse>?> SaveConfigAsync(string content)
     {
-        var resp = await _http.PutAsJsonAsync("/api/sources/config", new { content });
-        return resp.IsSuccessStatusCode;
+        var resp = await _http.PutAsJsonAsync("/api/sources/config", new UpdateConfigRequest(content));
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<SourceConfigMutationResponse>>();
     }
 
-    public async Task<bool> RemovePackageFromConfigAsync(string name)
+    public async Task<ApiResponse<SourceConfigMutationResponse>?> RemovePackageFromConfigAsync(string name)
     {
         var resp = await _http.DeleteAsync($"/api/sources/config/{name}");
-        return resp.IsSuccessStatusCode;
+        return await resp.Content.ReadFromJsonAsync<ApiResponse<SourceConfigMutationResponse>>();
     }
 
     public async Task<ApiResponse<object>?> AddPackageToConfigAsync(AddPackageToConfigRequest request)

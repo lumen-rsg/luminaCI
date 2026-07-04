@@ -220,8 +220,10 @@ public class BuildsController : ControllerBase
     public async Task<IActionResult> DownloadSpec(Guid id)
     {
         var job = await _engine.GetBuildJobAsync(id);
-        if (job == null) return NotFound();
-        if (string.IsNullOrEmpty(job.SpecContent)) return NotFound("No spec content saved for this build");
+        if (job == null)
+            return NotFound(new ApiResponse<object>(false, null, "Build not found", null));
+        if (string.IsNullOrEmpty(job.SpecContent))
+            return NotFound(new ApiResponse<object>(false, null, "No spec content saved for this build", null));
 
         var fileName = job.SpecName.EndsWith(".spec") ? job.SpecName : $"{job.SpecName}.spec";
         return File(System.Text.Encoding.UTF8.GetBytes(job.SpecContent), "text/plain", fileName);
@@ -234,13 +236,15 @@ public class BuildsController : ControllerBase
     public async Task<IActionResult> DownloadArtifact(Guid id, string fileName)
     {
         var job = await _engine.GetBuildJobAsync(id);
-        if (job == null) return NotFound(new { error = "Build not found" });
+        if (job == null)
+            return NotFound(new ApiResponse<object>(false, null, "Build not found", null));
 
         var artifact = job.Artifacts.FirstOrDefault(a => a.FileName == fileName);
-        if (artifact == null) return NotFound(new { error = $"Artifact '{fileName}' not found for this build" });
+        if (artifact == null)
+            return NotFound(new ApiResponse<object>(false, null, $"Artifact '{fileName}' not found for this build", null));
 
         if (string.IsNullOrEmpty(artifact.FilePath) || !System.IO.File.Exists(artifact.FilePath))
-            return NotFound(new { error = "Artifact file not found on disk" });
+            return NotFound(new ApiResponse<object>(false, null, "Artifact file not found on disk", null));
 
         var contentType = fileName.EndsWith(".src.rpm") ? "application/x-rpm" : "application/x-rpm";
         return File(System.IO.File.OpenRead(artifact.FilePath), contentType, fileName);
@@ -368,10 +372,11 @@ public class BuildsController : ControllerBase
     public async Task<IActionResult> DownloadAllArtifacts(Guid id)
     {
         var job = await _engine.GetBuildJobAsync(id);
-        if (job == null) return NotFound(new { error = "Build not found" });
+        if (job == null)
+            return NotFound(new ApiResponse<object>(false, null, "Build not found", null));
 
         if (!job.Artifacts.Any())
-            return NotFound(new { error = "No artifacts available for this build" });
+            return NotFound(new ApiResponse<object>(false, null, "No artifacts available for this build", null));
 
         // If only one artifact, serve it directly
         if (job.Artifacts.Count == 1)
@@ -379,7 +384,7 @@ public class BuildsController : ControllerBase
             var single = job.Artifacts.First();
             if (!string.IsNullOrEmpty(single.FilePath) && System.IO.File.Exists(single.FilePath))
                 return File(System.IO.File.OpenRead(single.FilePath), "application/x-rpm", single.FileName);
-            return NotFound(new { error = "Artifact file not found on disk" });
+            return NotFound(new ApiResponse<object>(false, null, "Artifact file not found on disk", null));
         }
 
         // Multiple artifacts — create a zip archive on the fly
@@ -409,7 +414,7 @@ public class BuildsController : ControllerBase
                 !string.IsNullOrEmpty(a.FilePath) && System.IO.File.Exists(a.FilePath));
             if (firstArtifact != null)
                 return File(System.IO.File.OpenRead(firstArtifact.FilePath), "application/x-rpm", firstArtifact.FileName);
-            return NotFound(new { error = "Could not create archive" });
+            return NotFound(new ApiResponse<object>(false, null, "Could not create archive", null));
         }
 
         return File(System.IO.File.OpenRead(tempArchive), "application/zip", archiveName);

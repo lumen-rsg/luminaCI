@@ -223,7 +223,8 @@ else
         _showConfigEditor = !_showConfigEditor;
         if (_showConfigEditor)
         {
-            _configContent = await Api.GetConfigAsync() ?? "";
+            var result = await Api.GetConfigAsync();
+            _configContent = result?.Data?.Content ?? "";
         }
     }
 
@@ -231,10 +232,17 @@ else
     {
         try
         {
-            await Api.SaveConfigAsync(_configContent);
-            _showConfigEditor = false;
-            _statusMessage = "Configuration saved successfully";
-            await LoadPackages();
+            var result = await Api.SaveConfigAsync(_configContent);
+            if (result?.Success == true)
+            {
+                _showConfigEditor = false;
+                _statusMessage = result.Data?.Message ?? "Configuration saved successfully";
+                await LoadPackages();
+            }
+            else
+            {
+                _errorMessage = result?.Error ?? "Failed to save config";
+            }
         }
         catch (Exception ex)
         {
@@ -277,9 +285,16 @@ else
     {
         try
         {
-            await Api.RemovePackageFromConfigAsync(name);
-            _statusMessage = $"Package '{name}' removed from configuration";
-            await LoadPackages();
+            var result = await Api.RemovePackageFromConfigAsync(name);
+            if (result?.Success == true)
+            {
+                _statusMessage = result.Data?.Message ?? $"Package '{name}' removed from configuration";
+                await LoadPackages();
+            }
+            else
+            {
+                _errorMessage = result?.Error ?? $"Failed to remove package '{name}'";
+            }
         }
         catch (Exception ex)
         {
@@ -291,9 +306,16 @@ else
     {
         try
         {
-            await Api.FetchSourceAsync(name);
-            _statusMessage = $"Fetch started for '{name}'";
-            await LoadPackages();
+            var result = await Api.FetchSourceAsync(name);
+            if (result?.Success == true)
+            {
+                _statusMessage = $"Fetch started for '{name}'";
+                await LoadPackages();
+            }
+            else
+            {
+                _errorMessage = result?.Error ?? $"Failed to fetch '{name}'";
+            }
         }
         catch (Exception ex)
         {
