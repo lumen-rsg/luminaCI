@@ -205,7 +205,8 @@ services:
   docker-socket-proxy:
     # Pinned: docker-socket-proxy has no 0.4 rolling tag, and 0.3 points at the
     # stale 0.3.0. Fix to a specific patch release; verify multi-arch before bump.
-    image: tecnativa/docker-socket-proxy:0.4.2
+    # Note: upstream tags are v-prefixed (v0.4.2), multi-arch incl. arm64.
+    image: tecnativa/docker-socket-proxy:v0.4.2
     container_name: lumina-docker-socket-proxy
     environment:
       # Only the API surfaces build-service needs; everything else stays off.
