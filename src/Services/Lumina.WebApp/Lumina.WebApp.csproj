@@ -8,8 +8,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.4" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.4" PrivateAssets="all" />
+    <!-- Keep in sync with the SDK's runtime pack band (10.0.300 → 10.0.9).
+         Pinning a lagging patch (e.g. 10.0.4) ships a bootstrapper that predates
+         .NET 10's import-map runtime boot: it imports bare "./dotnet.js", but the
+         SDK only emits the content-hashed "dotnet.<hash>.js", so the import 404s
+         and Blazor dies with "disallowed MIME type text/html". The 10.0.9
+         bootstrapper emits and populates the import map, mapping dotnet.js → the
+         hashed file. Verify multi-arch before bumping further. -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.9" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.9" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

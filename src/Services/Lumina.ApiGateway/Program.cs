@@ -6,6 +6,7 @@ using Lumina.ApiGateway.Data;
 using Lumina.ApiGateway.Services;
 using Lumina.Shared.Models;
 using Lumina.Web.Shared;
+using Lumina.Web.Shared.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -411,7 +412,7 @@ try
             role = user.FindFirst(ClaimTypes.Role)?.Value
         });
     })
-    .RequireAuthorization("default");
+    .RequireAuthorization(AuthPolicies.Default);
 
     app.Run();
 }

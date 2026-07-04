@@ -232,8 +232,12 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     read_only: true
+    # The proxy's entrypoint generates its HAProxy config in /tmp at startup
+    # (docker-entrypoint.sh → /tmp/haproxy.cfg), so /tmp must be writable even
+    # though the rootfs is read-only. Mount it as tmpfs alongside /run.
     tmpfs:
       - /run
+      - /tmp
     security_opt:
       - no-new-privileges:true
     cap_drop:

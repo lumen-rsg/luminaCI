@@ -72,13 +72,14 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Adds authorization with the shared policy set:
     /// <list type="bullet">
-    /// <item><c>default</c> — any authenticated caller (used by YARP routes).</item>
+    /// <item><c>lumina-default</c> — any authenticated caller (used by YARP routes).</item>
     /// <item><c>admin</c> — caller in the <c>Admin</c> role.</item>
-    /// <item><c>anonymous</c> — always allowed (used by YARP for webhook routes).</item>
+    /// <item><c>lumina-anonymous</c> — always allowed (used by YARP for webhook routes).</item>
     /// </list>
-    /// The <c>default</c> policy is registered explicitly so YARP's
-    /// <c>AuthorizationPolicy: "default"</c> resolves to a real policy instead of
-    /// depending on YARP's implicit "deny anonymous" fallback.
+    /// The policy values are deliberately prefixed <c>lumina-</c>: YARP reserves
+    /// the bare strings <c>"default"</c> and <c>"anonymous"</c> as route-config
+    /// sentinels, and loading the route config throws if the app also registers
+    /// a policy under either name (dotnet/yarp#2346). See AuthPolicies.cs.
     /// </summary>
     public static IServiceCollection AddLuminaAuthorization(this IServiceCollection services)
     {

@@ -13,18 +13,25 @@ public static class AuthRoles
 
 /// <summary>
 /// Named authorization policies. These mirror the policy names referenced from
-/// configuration (e.g. the YARP <c>AuthorizationPolicy: "default"</c> routes in
+/// configuration (the YARP <c>AuthorizationPolicy</c> routes in
 /// ApiGateway/appsettings.json) and from <c>[Authorize(Policy = ...)]</c>
 /// attributes on downstream controllers.
 /// </summary>
 public static class AuthPolicies
 {
     /// <summary>
-    /// Any authenticated principal — a valid JWT. Registered so the YARP routes
-    /// that carry <c>AuthorizationPolicy: "default"</c> resolve to an explicit
-    /// policy rather than relying on YARP's implicit fallback.
+    /// Any authenticated principal — a valid JWT.
     /// </summary>
-    public const string Default = "default";
+    /// <remarks>
+    /// The value is deliberately <c>"lumina-default"</c>, not <c>"default"</c>:
+    /// YARP treats the literal strings <c>"default"</c> and <c>"anonymous"</c>
+    /// as reserved sentinels ("use the app default policy" / "skip authz"), and
+    /// refuses to load its route config if the app also registers a policy under
+    /// either name (dotnet/yarp#2346). The policy name constant here is a
+    /// well-known internal identifier referenced from <c>[Authorize]</c> and from
+    /// the YARP route config in ApiGateway/appsettings.json — keep them in sync.
+    /// </remarks>
+    public const string Default = "lumina-default";
 
     /// <summary>
     /// An authenticated principal whose <c>role</c> claim is <see cref="AuthRoles.Admin"/>.
@@ -37,5 +44,9 @@ public static class AuthPolicies
     /// Allows the request through with no authentication. Used by YARP for the
     /// anonymous webhook route, whose own signature-secret check is the real gate.
     /// </summary>
-    public const string Anonymous = "anonymous";
+    /// <remarks>
+    /// Value is <c>"lumina-anonymous"</c>, not <c>"anonymous"</c>, for the same
+    /// reserved-name reason as <see cref="Default"/> — see dotnet/yarp#2346.
+    /// </remarks>
+    public const string Anonymous = "lumina-anonymous";
 }

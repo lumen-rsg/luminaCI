@@ -19,12 +19,20 @@
     <link rel="stylesheet" href="css/app.css" />
     <link rel="icon" type="image/png" href="favicon.png" />
     <!--
-      The import map is the only inline script on the page. .NET 10 Blazor
-      WebAssembly injects it at runtime. A strict CSP blocks inline scripts, so
-      nginx substitutes __CSP_NONCE__ with a per-request nonce and adds the same
-      nonce to the Content-Security-Policy header (deploy/nginx/conf.d/console.conf).
+      The import map is the only inline script on the page, and .NET 10 Blazor
+      needs it to resolve "dotnet.js" → the content-hashed "dotnet.<hash>.js".
+      dotnet publish populates this tag at build time — but ONLY if it matches the
+      exact placeholder "<script type=\"importmap\"></script>". Do NOT add any
+      attribute (e.g. nonce=) here: it breaks the SDK's tag match and leaves the
+      map empty, so Blazor fails with "error loading dynamically imported module:
+      dotnet.js".
+
+      CSP compliance is handled at the edge instead: nginx injects a per-request
+      nonce attribute into this tag via sub_filter and emits the same nonce in the
+      Content-Security-Policy header (deploy/nginx/conf.d/console.conf). That keeps
+      'unsafe-inline' out of script-src without fighting the SDK.
     -->
-    <script type="importmap" nonce="__CSP_NONCE__"></script>
+    <script type="importmap"></script>
 </head>
 
 <body>

@@ -13,8 +13,9 @@ namespace Lumina.BuildService.Controllers;
 [Route("api/[controller]")]
 // Git providers push here without a JWT; the per-pipeline webhook-secret HMAC
 // check in HandleWebhook is the real gate. YARP also marks this route
-// AuthorizationPolicy: "anonymous". AllowAnonymous also exempts it from the
-// FallbackPolicy so the global "require auth" default doesn't reject webhooks.
+// AuthorizationPolicy: "lumina-anonymous". AllowAnonymous also exempts it from
+// the FallbackPolicy so the global "require auth" default doesn't reject
+// webhooks.
 [AllowAnonymous]
 public class WebhooksController : ControllerBase
 {
