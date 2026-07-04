@@ -1,6 +1,7 @@
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
 using Lumina.Web.Shared.Authorization;
+using Lumina.Web.Shared.Errors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -36,8 +37,9 @@ public class BuildsController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to list builds (page={Page}, pageSize={PageSize})", page, pageSize);
-            return StatusCode(500, new ApiResponse<BuildListResponse>(false, null, $"Failed to load builds: {ex.Message}", null));
+            // ex.Message may carry DB/stack hints — log it server-side and
+            // return a fixed message (SEC-022).
+            return ApiResults.FromException<BuildListResponse>(ex, _logger, "Builds.List", page, pageSize);
         }
     }
 
@@ -269,8 +271,8 @@ public class BuildsController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to trigger build from config for {Package}", request.PackageName);
-            return StatusCode(500, new ApiResponse<BuildJobResponse>(false, null, ex.Message, null));
+            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
+            return ApiResults.FromException<BuildJobResponse>(ex, _logger, "Builds.TriggerFromConfig", request.PackageName);
         }
     }
 

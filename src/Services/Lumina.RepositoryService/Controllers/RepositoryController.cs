@@ -1,9 +1,12 @@
 using Lumina.Shared.DTOs;
+using Lumina.Shared.Errors;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
 using Lumina.Web.Shared.Authorization;
+using Lumina.Web.Shared.Errors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.RepositoryService.Controllers;
 
@@ -52,12 +55,28 @@ public class RepositoryController : ControllerBase
         }
         catch (ArgumentException ex)
         {
+            // BasePath/Arch allow-list validation (SEC-016). The message is
+            // application-authored and safe to return.
+            _logger.LogWarning(ex, "Rejected repository create (invalid basePath/arch)");
             return BadRequest(new ApiResponse<PackageRepository>(false, null, ex.Message, null));
         }
-        catch (Exception ex) when (ex.InnerException?.Message?.Contains("duplicate key") == true ||
-                                    ex.Message?.Contains("duplicate key") == true)
+        catch (ConflictException ex)
         {
-            return Conflict(new ApiResponse<PackageRepository>(false, null, "Repository with this name already exists", null));
+            // Duplicate Name — raised by the pre-check in MinioStorageService.
+            return Conflict(new ApiResponse<PackageRepository>(false, null, ex.Message, null));
+        }
+        catch (DbUpdateException ex)
+        {
+            // Backstop for a create/create race that beats the duplicate-name
+            // pre-check. Do NOT match on driver-specific "duplicate key" text —
+            // log the full exception (it carries the SqlState) and return a
+            // stable message so no DB internals cross the wire (SEC-022).
+            _logger.LogError(ex, "Repository create failed DB update (possible duplicate name)");
+            return Conflict(new ApiResponse<PackageRepository>(false, null, "A repository with this name already exists.", null));
+        }
+        catch (Exception ex)
+        {
+            return ApiResults.FromException<PackageRepository>(ex, _logger, "Repository.Create");
         }
     }
 
@@ -72,7 +91,9 @@ public class RepositoryController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(new ApiResponse<PackageResponse>(false, null, ex.Message, null));
+            // NotFoundException (repository) -> 404; ValidationException (no
+            // signature) -> 400; other faults -> generic 500 (SEC-022).
+            return ApiResults.FromException<PackageResponse>(ex, _logger, "Repository.PublishPackage", request.RepositoryId);
         }
     }
 
@@ -117,8 +138,10 @@ public class RepositoryController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to upload package to repository {RepoId}", repositoryId);
-            return BadRequest(new ApiResponse<PackageResponse>(false, null, ex.Message, null));
+            // ValidationException (signature missing/failed, repository
+            // validation) -> 400; NotFoundException (repository) -> 404;
+            // anything else -> generic 500 (SEC-022).
+            return ApiResults.FromException<PackageResponse>(ex, _logger, "Repository.UploadPackage", repositoryId);
         }
     }
 
@@ -133,7 +156,8 @@ public class RepositoryController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(new ApiResponse<object>(false, null, ex.Message, null));
+            // NotFoundException (repository) -> 404; other faults -> 500 (SEC-022).
+            return ApiResults.FromException<object>(ex, _logger, "Repository.Sync", request.RepositoryId);
         }
     }
 

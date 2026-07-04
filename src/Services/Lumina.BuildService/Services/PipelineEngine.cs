@@ -1,4 +1,5 @@
 using Lumina.BuildService.Data;
+using Lumina.Shared.Errors;
 using Lumina.Shared.Events;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
@@ -41,18 +42,18 @@ public class PipelineEngine
 
             if (!response.Message.KeyId.HasValue)
             {
-                throw new InvalidOperationException(
+                throw new ValidationException(
                     "No active PGP key. Generate a key in Security settings before triggering a pipeline that includes a Sign step — unsigned artifacts cannot be published.");
             }
         }
-        catch (InvalidOperationException)
+        catch (ValidationException)
         {
             throw; // our own gate message — propagate verbatim
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to confirm an active PGP key exists via the SecurityService bus; rejecting build trigger (fail-closed)");
-            throw new InvalidOperationException(
+            throw new ValidationException(
                 "Could not confirm an active PGP signing key (SecurityService unreachable). Cannot start a Sign-enabled build without assurance that the artifact can be signed.");
         }
     }
@@ -68,7 +69,7 @@ public class PipelineEngine
         // a clear, early error instead of a silent foot-gun.
         if (string.IsNullOrWhiteSpace(request.WebhookSecret))
         {
-            throw new InvalidOperationException(
+            throw new ValidationException(
                 "A non-empty WebhookSecret is required — pipelines without a webhook secret cannot be triggered securely.");
         }
 
@@ -118,7 +119,7 @@ public class PipelineEngine
             .FirstOrDefaultAsync(p => p.Id == pipelineId);
 
         if (pipeline == null)
-            throw new InvalidOperationException($"Pipeline {pipelineId} not found");
+            throw new NotFoundException($"Pipeline {pipelineId} not found");
 
         // Fail-closed: a pipeline that declares a Sign step must have an active
         // PGP key before any build starts, otherwise the artifact would be built
@@ -214,10 +215,10 @@ public class PipelineEngine
             .FirstOrDefaultAsync(p => p.Id == pipelineId);
 
         if (pipeline == null)
-            throw new InvalidOperationException($"Pipeline {pipelineId} not found");
+            throw new NotFoundException($"Pipeline {pipelineId} not found");
 
         if (string.IsNullOrWhiteSpace(pipeline.GitRepoUrl))
-            throw new InvalidOperationException($"Pipeline {pipelineId} has no Git repository URL configured. Cannot auto-build.");
+            throw new ValidationException($"Pipeline {pipelineId} has no Git repository URL configured. Cannot auto-build.");
 
         var branch = pipeline.GitBranch ?? "main";
         var specPath = pipeline.SpecPath ?? $"{pipeline.Name}.spec";
@@ -386,7 +387,7 @@ public class PipelineEngine
     {
         var pipeline = await _db.Pipelines.Include(p => p.Steps).FirstOrDefaultAsync(p => p.Id == id);
         if (pipeline == null)
-            throw new InvalidOperationException($"Pipeline {id} not found");
+            throw new NotFoundException($"Pipeline {id} not found");
 
         pipeline.Name = request.Name;
         pipeline.Description = request.Description;
@@ -435,7 +436,7 @@ public class PipelineEngine
             .Where(b => b.PipelineId == id && (b.Status == BuildStatus.Queued || b.Status == BuildStatus.Building))
             .CountAsync();
         if (activeBuilds > 0)
-            throw new InvalidOperationException($"Cannot delete pipeline {id}: {activeBuilds} active build(s) running");
+            throw new ConflictException($"Cannot delete pipeline {id}: {activeBuilds} active build(s) running");
 
         _db.PipelineSteps.RemoveRange(pipeline.Steps);
         _db.Pipelines.Remove(pipeline);

@@ -1,4 +1,5 @@
 using Lumina.RepositoryService.Data;
+using Lumina.Shared.Errors;
 using Lumina.Shared.Events;
 using Lumina.Shared.Models;
 using MassTransit;
@@ -27,6 +28,16 @@ public class MinioStorageService
 
     public async Task<PackageRepository> CreateRepositoryAsync(string name, string displayName, string basePath, string arch, string distribution, string createdBy)
     {
+        // Fail fast on a duplicate Name before any MinIO bucket or filesystem
+        // directory is created. The Name column has a unique index
+        // (RepositoryDbContext), so relying on the DB to reject duplicates would
+        // leak a driver-specific "duplicate key violates ..." message back to the
+        // caller; the pre-check lets us raise a clean ConflictException instead.
+        if (await _db.Repositories.AnyAsync(r => r.Name == name))
+        {
+            throw new ConflictException($"A repository named '{name}' already exists.");
+        }
+
         var repo = new PackageRepository
         {
             Id = Guid.NewGuid(),
@@ -79,13 +90,13 @@ public class MinioStorageService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to fetch PGP signature for artifact {ArtifactId} from BuildService via bus", artifactId);
-            throw new InvalidOperationException(
+            throw new ValidationException(
                 $"Could not confirm a PGP signature for artifact {artifactId} (BuildService unreachable). Unsigned packages cannot be published.");
         }
 
         if (string.IsNullOrWhiteSpace(signature))
         {
-            throw new InvalidOperationException(
+            throw new ValidationException(
                 $"Artifact {artifactId} is not PGP-signed. Unsigned packages cannot be published — generate an active PGP key and ensure the Sign stage completed before publishing.");
         }
 
@@ -99,7 +110,7 @@ public class MinioStorageService
     public async Task<Package> PublishPackageAsync(Guid artifactId, Guid repositoryId, string publishedBy)
     {
         var repo = await _db.Repositories.FindAsync(repositoryId)
-            ?? throw new InvalidOperationException($"Repository {repositoryId} not found");
+            ?? throw new NotFoundException($"Repository {repositoryId} not found");
 
         // Try to download artifact from MinIO
         var bucketName = $"repo-{repo.Name.ToLowerInvariant()}";
@@ -216,12 +227,12 @@ public class MinioStorageService
         // calling this, but reject here too in case a future caller forgets.
         if (string.IsNullOrWhiteSpace(pgpSignature))
         {
-            throw new InvalidOperationException(
+            throw new ValidationException(
                 "Uploaded RPM has no verified PGP signature. Provide a detached .asc signature that verifies against the active public key.");
         }
 
         var repo = await _db.Repositories.FindAsync(repositoryId)
-            ?? throw new InvalidOperationException($"Repository {repositoryId} not found");
+            ?? throw new NotFoundException($"Repository {repositoryId} not found");
 
         // Save RPM to filesystem
         var savedPath = await _repoManager.SaveRpmAsync(repo.BasePath, repo.Arch, fileName, fileStream);
@@ -294,7 +305,7 @@ public class MinioStorageService
     public async Task SyncRepositoryAsync(Guid repositoryId)
     {
         var repo = await _db.Repositories.FindAsync(repositoryId)
-            ?? throw new InvalidOperationException($"Repository {repositoryId} not found");
+            ?? throw new NotFoundException($"Repository {repositoryId} not found");
 
         _logger.LogInformation("Syncing repository {RepoName} (basePath: {BasePath})", repo.Name, repo.BasePath);
 

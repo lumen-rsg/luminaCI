@@ -1,6 +1,7 @@
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models;
 using Lumina.Web.Shared.Authorization;
+using Lumina.Web.Shared.Errors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -28,8 +29,25 @@ public class ScannerController : ControllerBase
         if (request.ArtifactId == Guid.Empty)
             return BadRequest(new ApiResponse<CveReport>(false, null, "Invalid artifact ID", null));
 
-        var report = await _scanner.ScanArtifactAsync(request.ArtifactId, request.ArtifactPath ?? "", request.ScannerType);
-        return Accepted(new ApiResponse<CveReport>(true, report, null, "Scan started"));
+        try
+        {
+            var report = await _scanner.ScanArtifactAsync(request.ArtifactId, request.ArtifactPath ?? "", request.ScannerType);
+            return Accepted(new ApiResponse<CveReport>(true, report, null, "Scan started"));
+        }
+        catch (ArgumentException ex)
+        {
+            // Path confinement failure (traversal / control chars in
+            // ArtifactPath). The message is application-authored and safe, but
+            // route it through the domain mapper so it lands as a 400 rather
+            // than leaking out as a raw 500.
+            _logger.LogWarning(ex, "Rejected scan request for artifact {ArtifactId} (invalid path)", request.ArtifactId);
+            return BadRequest(new ApiResponse<CveReport>(false, null, "The supplied artifact path is invalid.", null));
+        }
+        catch (Exception ex)
+        {
+            // DB / Trivy faults: log server-side, return a fixed message (SEC-022).
+            return ApiResults.FromException<CveReport>(ex, _logger, "Scanner.ScanArtifact", request.ArtifactId);
+        }
     }
 
     [HttpGet("reports/{id:guid}")]

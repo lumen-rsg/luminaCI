@@ -22,4 +22,10 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.12.1" />
   </ItemGroup>
 
+  <!-- Domain exception types (DomainException, NotFoundException, ...) that the
+       ApiResult mapper translates into structured HTTP responses. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Lumina.Shared\Lumina.Shared.csproj" />
+  </ItemGroup>
+
 </Project>

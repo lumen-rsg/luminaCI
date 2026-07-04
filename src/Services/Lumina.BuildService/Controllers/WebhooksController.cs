@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
+using Lumina.Web.Shared.Errors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
@@ -173,8 +174,10 @@ public class WebhooksController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to trigger build from webhook for pipeline {PipelineId}", pipelineId);
-            return StatusCode(500, new ApiResponse<BuildJobResponse?>(false, null, ex.Message, null));
+            // NotFoundException (pipeline gone) -> 404; ValidationException
+            // (Sign-step key gate) -> 400; anything else -> generic 500. Never
+            // surface ex.Message — it can carry DB/stack hints (SEC-022).
+            return ApiResults.FromException<BuildJobResponse?>(ex, _logger, "Webhooks.TriggerBuild", pipelineId);
         }
     }
 

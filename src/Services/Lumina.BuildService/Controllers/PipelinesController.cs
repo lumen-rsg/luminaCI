@@ -1,5 +1,6 @@
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
+using Lumina.Web.Shared.Errors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -33,8 +34,9 @@ public class PipelinesController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to list pipelines (page={Page}, pageSize={PageSize})", page, pageSize);
-            return StatusCode(500, new ApiResponse<PipelineListResponse>(false, null, $"Failed to load pipelines: {ex.Message}", null));
+            // ex.Message may contain DB/stack hints — never return it. The full
+            // exception is logged here; the client gets a fixed message (SEC-022).
+            return ApiResults.FromException<PipelineListResponse>(ex, _logger, "Pipelines.List", page, pageSize);
         }
     }
 
@@ -64,17 +66,13 @@ public class PipelinesController : ControllerBase
                 p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
             return CreatedAtAction(nameof(Get), new { id = p.Id }, new ApiResponse<PipelineResponse>(true, response, null, "Pipeline created"));
         }
-        catch (InvalidOperationException ex)
-        {
-            // Validation gate — e.g. missing WebhookSecret (SEC-020). Surface as
-            // 400 rather than a raw 500 so the caller gets a recoverable error.
-            _logger.LogWarning(ex, "Rejected pipeline creation {Name}", request.Name);
-            return BadRequest(new ApiResponse<PipelineResponse>(false, null, ex.Message, null));
-        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create pipeline {Name}", request.Name);
-            return StatusCode(500, new ApiResponse<PipelineResponse>(false, null, $"Failed to create pipeline: {ex.Message}", null));
+            // Validation gates (e.g. missing WebhookSecret, SEC-020) now throw
+            // ValidationException and surface as a recoverable 400 with their
+            // own message; any other fault is logged and returned as a generic
+            // 500 (never ex.Message — see SEC-022).
+            return ApiResults.FromException<PipelineResponse>(ex, _logger, "Pipelines.Create", request.Name);
         }
     }
 
@@ -87,11 +85,11 @@ public class PipelinesController : ControllerBase
             var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
             return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Build triggered"));
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
-            // Includes the Sign-step key gate (no active PGP key) and
-            // "pipeline not found"; surface as 400 rather than a raw 500.
-            return BadRequest(new ApiResponse<BuildJobResponse>(false, null, ex.Message, null));
+            // NotFoundException (missing pipeline) -> 404; ValidationException
+            // (Sign-step key gate) -> 400; anything else -> generic 500 (SEC-022).
+            return ApiResults.FromException<BuildJobResponse>(ex, _logger, "Pipelines.Trigger", id);
         }
     }
 
@@ -108,9 +106,11 @@ public class PipelinesController : ControllerBase
                 p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
             return Ok(new ApiResponse<PipelineResponse>(true, response, null, "Pipeline updated"));
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
-            return NotFound(new ApiResponse<PipelineResponse>(false, null, ex.Message, null));
+            // NotFoundException (missing pipeline) -> 404 with its own message;
+            // other faults -> generic 500 (SEC-022).
+            return ApiResults.FromException<PipelineResponse>(ex, _logger, "Pipelines.Update", id);
         }
     }
 
@@ -123,9 +123,10 @@ public class PipelinesController : ControllerBase
             if (!deleted) return NotFound(new ApiResponse<object>(false, null, "Pipeline not found", null));
             return Ok(new ApiResponse<object>(true, null, null, "Pipeline deleted"));
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
-            return BadRequest(new ApiResponse<object>(false, null, ex.Message, null));
+            // ConflictException (active builds) -> 409; other faults -> 500 (SEC-022).
+            return ApiResults.FromException<object>(ex, _logger, "Pipelines.Delete", id);
         }
     }
 
@@ -143,9 +144,11 @@ public class PipelinesController : ControllerBase
             var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
             return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Auto build triggered — sources will be fetched from git"));
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
-            return BadRequest(new ApiResponse<BuildJobResponse>(false, null, ex.Message, null));
+            // NotFoundException (missing pipeline) -> 404; ValidationException
+            // (no GitRepoUrl) -> 400; other faults -> generic 500 (SEC-022).
+            return ApiResults.FromException<BuildJobResponse>(ex, _logger, "Pipelines.TriggerAuto", id);
         }
     }
 }

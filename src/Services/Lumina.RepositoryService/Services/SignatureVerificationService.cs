@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Lumina.Shared.Errors;
 using Lumina.Shared.Events;
 using MassTransit;
 
@@ -32,8 +33,9 @@ public class SignatureVerificationService
     /// Verifies that <paramref name="signatureStream"/> is a valid detached PGP
     /// signature for <paramref name="rpmStream"/>, against the active public key.
     /// Returns the armored signature content on success (for storage on the
-    /// published Package). Throws <see cref="InvalidOperationException"/> on any
-    /// verification failure.
+    /// published Package). Throws <see cref="ValidationException"/> on any
+    /// verification failure (no active key, unreachable SecurityService, or a
+    /// signature that does not validate).
     /// </summary>
     public async Task<string> VerifyAsync(Stream rpmStream, Stream signatureStream, string rpmFileNameForLogs)
     {
@@ -48,13 +50,13 @@ public class SignatureVerificationService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to fetch active public key from SecurityService via bus");
-            throw new InvalidOperationException(
+            throw new ValidationException(
                 "Could not retrieve the active PGP public key (SecurityService unreachable). Cannot verify the uploaded signature.");
         }
 
         if (string.IsNullOrWhiteSpace(publicKeyArmored))
         {
-            throw new InvalidOperationException(
+            throw new ValidationException(
                 "No active PGP key — cannot verify uploaded packages. Generate a key in Security settings first.");
         }
 
@@ -82,7 +84,11 @@ public class SignatureVerificationService
             });
             if (!importResult.Success)
             {
-                throw new InvalidOperationException($"Failed to import the active public key into the verification keyring: {importResult.Error}");
+                // Log the gpg stderr server-side only; never surface driver/tool
+                // output to the client.
+                _logger.LogWarning("Failed to import active public key into verification keyring: {Error}", importResult.Error);
+                throw new ValidationException(
+                    "Could not import the active PGP public key into the verification keyring.");
             }
 
             // 4. Verify the detached signature against the RPM.
@@ -95,7 +101,7 @@ public class SignatureVerificationService
             if (!verifyResult.Success)
             {
                 _logger.LogWarning("Signature verification failed for uploaded RPM '{File}': {Error}", rpmFileNameForLogs, verifyResult.Error);
-                throw new InvalidOperationException(
+                throw new ValidationException(
                     "Signature verification failed: the detached signature does not match the uploaded RPM, or it was not produced by the active key.");
             }
 
