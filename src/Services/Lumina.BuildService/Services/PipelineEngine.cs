@@ -325,9 +325,10 @@ public class PipelineEngine
 
     public async Task<(List<Pipeline> Items, int TotalCount)> ListPipelinesAsync(int page = 1, int pageSize = 20)
     {
-        // Do NOT cache list queries — EF Core entities with navigation properties
-        // (ValueTuple + System.Text.Json) cause broken deserialization that makes
-        // pipelines disappear on refresh.
+        // Not cached: this returns EF Core entities with navigation properties
+        // (Pipeline.Steps), which System.Text.Json cannot round-trip. The
+        // RedisCacheService contract is "DTOs only" and now rejects non-round-
+        // trippable values; to cache lists here, project to a DTO first.
         var totalCount = await _db.Pipelines.CountAsync();
         var items = await _db.Pipelines
             .Include(p => p.Steps)
@@ -340,8 +341,8 @@ public class PipelineEngine
 
     public async Task<Pipeline?> GetPipelineAsync(Guid id)
     {
-        // Direct DB query — avoid caching EF Core entities with navigation properties
-        // (System.Text.Json cannot round-trip them correctly through Redis)
+        // Not cached: EF entity with navigation properties — see RedisCacheService
+        // contract (cache DTOs only). Project to a DTO first to enable caching.
         return await _db.Pipelines
             .Include(p => p.Steps)
             .FirstOrDefaultAsync(p => p.Id == id);
@@ -349,7 +350,7 @@ public class PipelineEngine
 
     public async Task<BuildJob?> GetBuildJobAsync(Guid id)
     {
-        // Direct DB query — avoid caching EF Core entities with navigation properties
+        // Not cached: EF entity with navigation properties — see RedisCacheService contract.
         return await _db.BuildJobs
             .Include(b => b.Artifacts)
             .FirstOrDefaultAsync(b => b.Id == id);
@@ -357,8 +358,7 @@ public class PipelineEngine
 
     public async Task<(List<BuildJob> Items, int TotalCount)> ListBuildJobsAsync(int page = 1, int pageSize = 20)
     {
-        // Do NOT cache list queries — same issue as ListPipelinesAsync:
-        // ValueTuple + System.Text.Json + EF Core entities = broken deserialization
+        // Not cached: EF entities — see ListPipelinesAsync / RedisCacheService contract.
         var totalCount = await _db.BuildJobs.CountAsync();
         var items = await _db.BuildJobs
             .OrderByDescending(b => b.CreatedAt)
