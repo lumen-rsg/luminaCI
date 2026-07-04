@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumina CI — Build, Sign, Scan, Publish RPMs</title>
+<meta name="description" content="A self-hosted microservice CI system for RPM packages. Build in isolated containers, PGP-sign every artifact, CVE-scan with Trivy, and publish to a managed repository. Built on .NET 10 and Docker Compose.">
+<style>
+/* ========== RESET & BASE ========== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&family=JetBrains+Mono:wght@400..700&display=swap');
+
+:root {
+  /* Soft neumorphic pastel palette — lavender / mint / peach */
+  --bg:        #ece9f2;   /* warm lavender-white base */
+  --bg-2:      #e4e0ee;   /* slightly deeper, for section alternation */
+  --raised:    #f6f4fb;   /* neumorphic raised surface */
+  --card:      #ffffff;   /* cards on top */
+  --inset:     #e0dcea;   /* pressed/inset surface (code blocks) */
+  --ink:       #3a3550;   /* soft aubergine text */
+  --ink-soft:  #5a5470;
+  --muted:     #8a85a0;
+  --accent:    #a78bfa;   /* lavender */
+  --accent2:   #6ee7c7;   /* mint */
+  --accent3:   #fbbf95;   /* peach */
+  --accent-ink:#7c5fd6;   /* deeper lavender for links/text on light */
+  --line:      rgba(120,110,160,0.16);
+
+  /* Neumorphic dual shadows */
+  --sh-raise:    8px 8px 20px rgba(160,150,195,0.38), -8px -8px 20px rgba(255,255,255,0.92);
+  --sh-raise-sm: 5px 5px 12px rgba(160,150,195,0.32), -5px -5px 12px rgba(255,255,255,0.90);
+  --sh-inset:    inset 5px 5px 12px rgba(160,150,195,0.30), inset -5px -5px 12px rgba(255,255,255,0.85);
+  --sh-hover:    12px 12px 28px rgba(160,150,195,0.42), -12px -12px 28px rgba(255,255,255,0.95);
+
+  --font:      'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Source Code Pro', 'Fira Code', monospace;
+  --font-size: 16px;
+  --max-w:     1180px;
+  --radius:    20px;
+}
+
+html {
+  scroll-behavior: smooth;
+  font-size: var(--font-size);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font);
+  line-height: 1.7;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -webkit-font-feature-settings: "liga" on;
+}
+
+a { color: var(--accent-ink); text-decoration: none; transition: color 0.2s; }
+a:hover { color: var(--accent); }
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--inset);
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+  color: var(--accent-ink);
+}
+
+::selection { background: rgba(167,139,250,0.28); color: var(--ink); }
+
+/* ========== NAVIGATION ========== */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(236,233,242,0.78);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border-bottom: 1px solid var(--line);
+  padding: 0 2rem;
+  transition: box-shadow 0.3s;
+}
+nav.scrolled { box-shadow: 0 6px 18px rgba(160,150,195,0.18); }
+
+nav .nav-inner {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+}
+
+nav .logo {
+  font-family: var(--font-mono);
+  font-size: 1.18rem;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+nav .logo .dot {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  box-shadow: 0 0 10px rgba(167,139,250,0.6);
+}
+
+nav .nav-links { display: flex; gap: 1.9rem; align-items: center; }
+nav .nav-links a {
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: lowercase;
+  transition: color 0.2s;
+}
+nav .nav-links a:hover { color: var(--accent-ink); }
+
+nav .nav-cta {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--raised);
+  padding: 0.5rem 1.1rem;
+  border-radius: 999px;
+  box-shadow: var(--sh-raise-sm);
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+nav .nav-cta:hover { box-shadow: var(--sh-hover); transform: translateY(-1px); color: var(--accent-ink); }
+
+/* ========== LAYOUT PRIMITIVES ========== */
+section {
+  padding: 6rem 2rem;
+  position: relative;
+}
+.section-inner { max-width: var(--max-w); margin: 0 auto; }
+
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.9rem;
+}
+.section-title {
+  font-family: var(--font);
+  font-size: clamp(2.1rem, 4.5vw, 3.2rem);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ink);
+  margin-bottom: 1.1rem;
+  letter-spacing: -0.025em;
+}
+.section-subtitle {
+  font-size: 1.18rem;
+  color: var(--ink-soft);
+  max-width: 640px;
+  line-height: 1.65;
+}
+.section-subtitle strong { color: var(--ink); font-weight: 600; }
+
+/* Alternate section backgrounds for rhythm */
+.alt-bg { background: var(--bg-2); }
+
+/* ========== HERO ========== */
+.hero {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8rem 2rem 5rem;
+  position: relative;
+  overflow: hidden;
+}
+.hero-bg { position: absolute; inset: 0; z-index: 0; }
+.hero-bg canvas { width: 100%; height: 100%; display: block; }
+.hero-gradient {
+  position: absolute; inset: 0; z-index: 1;
+  background: radial-gradient(ellipse at 50% 40%, rgba(236,233,242,0.25) 0%, rgba(236,233,242,0.7) 55%, var(--bg) 100%);
+}
+.hero-content { position: relative; z-index: 2; max-width: 880px; }
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  background: var(--raised);
+  padding: 0.5rem 1.15rem;
+  border-radius: 999px;
+  box-shadow: var(--sh-raise-sm);
+  margin-bottom: 2rem;
+  letter-spacing: 0.02em;
+}
+.hero-badge .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent2);
+  box-shadow: 0 0 8px rgba(110,231,199,0.8);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+
+.hero h1 {
+  font-family: var(--font);
+  font-size: clamp(2.9rem, 7vw, 5.2rem);
+  font-weight: 800;
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+  margin-bottom: 1.6rem;
+  color: var(--ink);
+}
+.hero h1 .accent {
+  background: linear-gradient(120deg, var(--accent), var(--accent2) 60%, var(--accent3));
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 800;
+}
+.hero h1 .dim { color: var(--muted); font-weight: 300; }
+
+.hero-tagline {
+  font-size: 1.28rem;
+  color: var(--ink-soft);
+  max-width: 640px;
+  margin: 0 auto 2.4rem;
+  line-height: 1.6;
+}
+.hero-tagline strong { color: var(--ink); font-weight: 600; }
+
+.hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-bottom: 3.2rem; }
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 0.9rem 1.8rem;
+  border-radius: 999px;
+  transition: box-shadow 0.22s, transform 0.22s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-ink));
+  color: #fff;
+  box-shadow: 6px 6px 16px rgba(124,95,214,0.34);
+}
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 8px 10px 24px rgba(124,95,214,0.42); color:#fff; }
+.btn-secondary {
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: var(--sh-raise-sm);
+}
+.btn-secondary:hover { transform: translateY(-2px); box-shadow: var(--sh-hover); color: var(--ink); }
+
+.hero-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.hero-stat {
+  background: var(--raised);
+  border-radius: var(--radius);
+  padding: 1.2rem 0.8rem;
+  box-shadow: var(--sh-raise-sm);
+}
+.hero-stat .num {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  background: linear-gradient(120deg, var(--accent-ink), var(--accent));
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.hero-stat .label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
+
+/* ========== PRINCIPLES ========== */
+.philosophy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.6rem;
+  margin-top: 3.2rem;
+}
+.phil-item {
+  background: var(--raised);
+  border-radius: var(--radius);
+  padding: 1.9rem 1.7rem;
+  box-shadow: var(--sh-raise);
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+.phil-item:hover { transform: translateY(-4px); box-shadow: var(--sh-hover); }
+.phil-item .icon {
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  width: 48px; height: 48px;
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--sh-inset);
+  margin-bottom: 1.1rem;
+  color: var(--accent);
+}
+.phil-item .icon svg { width: 22px; height: 22px; }
+/* Shared line-icon style: stroke = currentColor, no fill. */
+.svgicon { stroke: currentColor; fill: none; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round; }
+.phil-item h3 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 0.5rem;
+}
+.phil-item p { color: var(--ink-soft); font-size: 1.04rem; line-height: 1.6; }
+
+/* ========== CODE BLOCKS ========== */
+.code-block {
+  background: var(--inset);
+  border-radius: var(--radius);
+  box-shadow: var(--sh-inset);
+  overflow: hidden;
+  margin: 1.4rem 0;
+}
+.code-header {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.85rem 1.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.code-dots { display: flex; gap: 0.4rem; }
+.code-dots span { width: 11px; height: 11px; border-radius: 50%; box-shadow: var(--sh-inset); }
+.code-dots .d1 { background: #f0b4a8; }
+.code-dots .d2 { background: #ffe7a3; }
+.code-dots .d3 { background: #a8e0c8; }
+.code-block pre {
+  padding: 1.3rem 1.4rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.code-block pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+/* pastel syntax tokens */
+.code-block .kw  { color: #8b6fd6; font-weight: 600; }
+.code-block .ty  { color: #2fa37a; }
+.code-block .fn  { color: #c97a4a; }
+.code-block .str { color: #d98c6a; }
+.code-block .num { color: #8b6fd6; }
+.code-block .cm  { color: var(--muted); font-style: italic; }
+.code-block .param { color: #5a9fb8; }
+.code-block .annotation { color: #b85ea3; }
+
+/* ========== SECURITY CENTERPIECE ========== */
+.chap-hero {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  align-items: center;
+  margin-top: 2.5rem;
+}
+.chap-canvas-wrap {
+  background: var(--raised);
+  border-radius: var(--radius);
+  box-shadow: var(--sh-raise);
+  padding: 1.4rem;
+  aspect-ratio: 1 / 1;
+  position: relative;
+}
+.chap-canvas-wrap canvas { width: 100%; height: 100%; display: block; border-radius: 14px; }
+.chap-legend {
+  position: absolute; bottom: 1.1rem; left: 1.1rem; right: 1.1rem;
+  display: flex; flex-wrap: wrap; gap: 0.8rem;
+  font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-soft);
+}
+.legend-item { display: flex; align-items: center; gap: 0.4rem;
+  background: rgba(255,255,255,0.7); padding: 0.25rem 0.6rem; border-radius: 999px;
+  box-shadow: var(--sh-inset); }
+.legend-dot { width: 9px; height: 9px; border-radius: 50%; }
+
+.chap-pillars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.2rem;
+  margin-top: 3rem;
+}
+.chap-pillar {
+  background: var(--raised);
+  border-radius: var(--radius);
+  padding: 1.5rem 1.4rem;
+  box-shadow: var(--sh-raise);
+}
+.chap-pillar h4 {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  margin-bottom: 0.4rem;
+  text-transform: uppercase;
+}
+.chap-pillar p { color: var(--ink-soft); font-size: 1rem; line-height: 1.55; }
+
+/* The isolation layers */
+.kw-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.4rem;
+  margin-top: 2.5rem;
+}
+.kw-card {
+  background: var(--raised);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  box-shadow: var(--sh-raise);
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+.kw-card:hover { transform: translateY(-3px); box-shadow: var(--sh-hover); }
+.kw-card .kw-head { display: flex; align-items: baseline; gap: 0.7rem; margin-bottom: 0.6rem; }
+.kw-card .kw-name {
+  font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700;
+  color: var(--accent-ink);
+}
+.kw-card .kw-tag {
+  font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600;
+  padding: 0.18rem 0.6rem; border-radius: 999px;
+}
+.kw-card[data-tag="value"] .kw-tag { background: rgba(110,231,199,0.22); color: #2a9a78; }
+.kw-card[data-tag="tracked"] .kw-tag { background: rgba(167,139,250,0.20); color: #7c5fd6; }
+.kw-card[data-tag="borrow"] .kw-tag { background: rgba(251,191,149,0.28); color: #b8703a; }
+.kw-card .kw-desc { color: var(--ink-soft); font-size: 1rem; line-height: 1.55; margin-bottom: 0.9rem; }
+.kw-card .code-block { margin: 0; }
+
+/* Security controls table */
+.diag-table-wrap {
+  background: var(--raised);
+  border-radius: var(--radius);
+  box-shadow: var(--sh-raise);
+  padding: 1.6rem;
+  margin-top: 2.5rem;
+  overflow-x: auto;
+}
+.diag-table { width: 100%; border-collapse: collapse; font-size: 0.98rem; }
+.diag-table th {
+  font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+  text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--line);
+}
+.diag-table td { padding: 0.7rem 0.8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.diag-table tr:last-child td { border-bottom: none; }
+.diag-table .code-cell {
+  font-family: var(--font-mono); font-weight: 700; font-size: 0.86rem;
+  white-space: nowrap;
+}
+.diag-table .e-code { color: var(--accent-ink); }
+.diag-table .w-code { color: #b8783a; }
+.diag-table .metaphor { color: var(--ink); font-weight: 500; white-space: nowrap; }
+.diag-table .metaphor .svgicon { width: 17px; height: 17px; vertical-align: -3px; margin-right: 0.45rem; }
+/* Tint the metaphor icon to match the control's severity. */
+.metaphor .e-ic { color: var(--accent-ink); }
+.metaphor .w-ic { color: #b8783a; }
+.diag-table .meaning { color: var(--ink-soft); }
+
+/* ========== PIPELINE / API ========== */
+.features-grid, .contracts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.6rem;
+  margin-top: 2.8rem;
+}
+.feature-card, .contracts-grid > div {
+  background: var(--raised);
+  border-radius: var(--radius);
+  padding: 1.6rem;
+  box-shadow: var(--sh-raise);
+}
+.feature-desc { margin-top: 1.1rem; }
+.feature-desc h3 { font-size: 1.5rem; font-weight: 600; color: var(--ink); margin-bottom: 0.4rem; }
+.feature-desc p { color: var(--ink-soft); }
+
+/* Auth comparison table */
+.contract-comparison {
+  background: var(--raised);
+  border-radius: var(--radius);
+  box-shadow: var(--sh-raise);
+  padding: 2rem;
+  margin-top: 2.8rem;
+}
+.comparison-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+.comparison-table th, .comparison-table td {
+  padding: 0.75rem 0.9rem; text-align: left; border-bottom: 1px solid var(--line); font-size: 1.02rem;
+}
+.comparison-table th { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.comparison-table .check { color: #2a9a78; font-weight: 700; }
+.comparison-table .cross { color: #c47a6a; font-weight: 700; }
+
+/* ========== STACK ========== */
+.perf-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.1rem;
+  margin-top: 2.8rem;
+}
+.perf-card {
+  background: var(--raised);
+  border-radius: var(--radius);
+  padding: 1.4rem 1.1rem;
+  box-shadow: var(--sh-raise);
+  text-align: center;
+}
+.perf-card .perf-num {
+  font-family: var(--font-mono); font-size: 1.7rem; font-weight: 700;
+  background: linear-gradient(120deg, var(--accent-ink), var(--accent));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.perf-card .perf-name { font-size: 0.95rem; color: var(--ink); margin-top: 0.3rem; font-weight: 500; }
+.perf-card .perf-note { font-size: 0.78rem; color: var(--muted); margin-top: 0.25rem; }
+.perf-footer { text-align: center; color: var(--muted); font-size: 0.92rem; margin-top: 1.8rem; font-family: var(--font-mono); }
+
+/* ========== SERVICES ========== */
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-top: 2.8rem;
+}
+.module-card {
+  background: var(--raised);
+  border-radius: 16px;
+  padding: 1.1rem 1.2rem;
+  box-shadow: var(--sh-raise-sm);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.module-card:hover { transform: translateY(-3px); box-shadow: var(--sh-hover); }
+.module-card .mod-name {
+  font-family: var(--font-mono); font-size: 1rem; font-weight: 700; color: var(--accent-ink);
+  margin-bottom: 0.25rem;
+}
+.module-card .mod-desc { font-size: 0.86rem; color: var(--ink-soft); line-height: 1.45; }
+
+/* ========== CTA ========== */
+.cta-section {
+  text-align: center;
+  padding: 7rem 2rem;
+}
+.cta-card {
+  max-width: 760px; margin: 0 auto;
+  background: var(--raised);
+  border-radius: 32px;
+  padding: 3.5rem 2.5rem;
+  box-shadow: var(--sh-raise);
+}
+.cta-card h2 {
+  font-family: var(--font); font-size: clamp(2rem, 4vw, 2.8rem); font-weight: 600;
+  color: var(--ink); margin-bottom: 1rem; line-height: 1.1;
+}
+.cta-card p { color: var(--ink-soft); font-size: 1.15rem; margin-bottom: 2rem; }
+
+/* ========== FOOTER ========== */
+footer {
+  padding: 2.5rem 2rem;
+  text-align: center;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+}
+footer a { color: var(--ink-soft); }
+
+/* ========== SCROLL REVEAL ========== */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.7s cubic-bezier(0.2,0.7,0.3,1), transform 0.7s cubic-bezier(0.2,0.7,0.3,1);
+}
+.reveal.visible { opacity: 1; transform: translateY(0); }
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 900px) {
+  nav .nav-links { display: none; }
+  .philosophy-grid, .features-grid, .contracts-grid, .kw-grid { grid-template-columns: 1fr; }
+  .chap-hero { grid-template-columns: 1fr; }
+  .perf-grid, .module-grid { grid-template-columns: repeat(2, 1fr); }
+  .hero-stats { grid-template-columns: repeat(2, 1fr); }
+  section { padding: 4.5rem 1.3rem; }
+}
+@media (max-width: 560px) {
+  .perf-grid, .module-grid, .hero-stats { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .hero-badge .dot { animation: none; }
+  * { scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== SVG ICON SPRITE ==================== -->
+<!-- Hidden symbol defs; referenced via <svg class="svgicon"><use href="#i-..."/></svg>.
+     Line icons, 24x24 viewBox, 1.6px rounded stroke = currentColor. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- Principles -->
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z"/><path d="M19.4 13.5l1.8 1.4-1.6 2.8-2.2-.6a7.6 7.6 0 0 1-1.3.75l-.5 2.25h-3.2l-.5-2.25a7.6 7.6 0 0 1-1.3-.75l-2.2.6-1.6-2.8 1.8-1.4a7.7 7.7 0 0 1 0-1.5L2.8 10.6l1.6-2.8 2.2.6c.4-.3.83-.55 1.3-.75L8.4 5.4h3.2l.5 2.25c.47.2.9.45 1.3.75l2.2-.6 1.6 2.8-1.8 1.4c.05.5.05 1 0 1.5z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L5 13h5l-1 8 8-10h-5l1-8z"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/><path d="M3 16.5l9 5 9-5"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5"/><path d="M15 3v5"/><path d="M7 8h10v3a5 5 0 0 1-10 0V8z"/><path d="M12 16v5"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"/></symbol>
+    <!-- Security controls -->
+    <symbol id="i-droplet" viewBox="0 0 24 24"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/><circle cx="10" cy="14" r="1.2"/></symbol>
+    <symbol id="i-skull" viewBox="0 0 24 24"><path d="M12 3a8 8 0 0 0-5 14v3a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3a8 8 0 0 0-5-14z"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><path d="M10 18v3M14 18v3"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M4 9a5 5 0 0 1 5-5h8"/><path d="M14 2l3 2-3 2"/><path d="M20 15a5 5 0 0 1-5 5H7"/><path d="M10 22l-3-2 3-2"/></symbol>
+    <symbol id="i-cycle" viewBox="0 0 24 24"><path d="M5 12a7 7 0 0 1 12-4.9L19 9"/><path d="M19 4v5h-5"/><path d="M19 12a7 7 0 0 1-12 4.9L5 15"/><path d="M5 20v-5h5"/></symbol>
+    <symbol id="i-escape" viewBox="0 0 24 24"><path d="M9 19l-5-5 5-5"/><path d="M4 14h9a6 6 0 0 0 6-6V4"/><path d="M15 6l4-2 2 4"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8"/><path d="M20 4v4h-4"/><path d="M20 12a8 8 0 0 1-13.7 5.6L4 16"/><path d="M4 20v-4h4"/></symbol>
+    <symbol id="i-move" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/><circle cx="5" cy="12" r="1.3"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M9 15l6-6"/><path d="M10.5 6.5l1-1a4 4 0 0 1 5.7 5.7l-2 2"/><path d="M13.5 17.5l-1 1a4 4 0 0 1-5.7-5.7l2-2"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l9 16H3l9-16z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></symbol>
+  </defs>
+</svg>
+
+<!-- ==================== NAV ==================== -->
+<nav id="nav">
+  <div class="nav-inner">
+    <a href="#" class="logo"><span class="dot"></span>lumina&nbsp;CI</a>
+    <div class="nav-links">
+      <a href="#architecture">architecture</a>
+      <a href="#security">security</a>
+      <a href="#pipeline">pipeline</a>
+      <a href="#api">api</a>
+      <a href="#services">services</a>
+    </div>
+    <a href="https://github.com/lumen-rsg/luminaCI" class="nav-cta">GitHub &rarr;</a>
+  </div>
+</nav>
+
+<!-- ==================== HERO ==================== -->
+<section class="hero">
+  <div class="hero-bg"><canvas id="hero-canvas"></canvas></div>
+  <div class="hero-gradient"></div>
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="dot"></span>
+      Self-hosted &middot; .NET 10 &middot; Docker Compose &mdash; RPM CI you actually own.
+    </div>
+    <h1>
+      Build, sign, scan,<br>
+      <span class="accent">publish</span><br>
+      <span class="dim">RPM packages.</span>
+    </h1>
+    <p class="hero-tagline">
+      Lumina CI is a <strong>microservice CI for RPM packages</strong>. It fetches sources, builds in
+      <strong>isolated containers</strong>, <strong>PGP-signs</strong> every artifact,
+      <strong>CVE-scans</strong> with Trivy, and <strong>publishes</strong> to a managed repository &mdash;
+      triggered manually or on every git push.
+    </p>
+    <div class="hero-actions">
+      <a href="#security" class="btn btn-primary">See the security model</a>
+      <a href="https://github.com/lumen-rsg/luminaCI" class="btn btn-secondary">View on GitHub</a>
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stat"><div class="num">6</div><div class="label">Backend services</div></div>
+      <div class="hero-stat"><div class="num">0</div><div class="label">Infra ports to host</div></div>
+      <div class="hero-stat"><div class="num">PGP</div><div class="label">Artifact signing</div></div>
+      <div class="hero-stat"><div class="num">Trivy</div><div class="label">CVE scanning</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== ARCHITECTURE / PRINCIPLES ==================== -->
+<section id="architecture" class="alt-bg">
+  <div class="section-inner">
+    <div class="reveal">
+      <div class="section-label">Architecture</div>
+      <div class="section-title">A pipeline you can<br>actually trust.</div>
+      <p class="section-subtitle">
+        Lumina CI is a set of small .NET services fronted by a YARP gateway that owns auth and fans
+        requests out to the workers. Sources are fetched, built in isolated containers, signed,
+        scanned, and published &mdash; every stage is an independently deployable service.
+      </p>
+    </div>
+
+    <div class="philosophy-grid">
+      <div class="phil-item reveal">
+        <span class="icon"><svg class="svgicon"><use href="#i-gear"/></svg></span>
+        <h3>Isolated Builds</h3>
+        <p>Every <code>rpmbuild</code> runs in a throwaway container on a dedicated network &mdash; cap-dropped, memory-capped, non-root. Untrusted <code>.spec</code> files stay in the sandbox.</p>
+      </div>
+      <div class="phil-item reveal">
+        <span class="icon"><svg class="svgicon"><use href="#i-shield"/></svg></span>
+        <h3>PGP-Signed Artifacts</h3>
+        <p><code>security-service</code> signs every published RPM with a managed GPG key. Detached signatures are stored alongside the artifacts they cover.</p>
+      </div>
+      <div class="phil-item reveal">
+        <span class="icon"><svg class="svgicon"><use href="#i-bolt"/></svg></span>
+        <h3>CVE Scanning</h3>
+        <p><code>scanner-service</code> runs <strong>Trivy</strong> against each artifact and records findings per-artifact. Vulnerabilities surface before publish, not after.</p>
+      </div>
+      <div class="phil-item reveal">
+        <span class="icon"><svg class="svgicon"><use href="#i-layers"/></svg></span>
+        <h3>Managed Repository</h3>
+        <p><code>repository-service</code> maintains repo metadata and publishes packages to an HTTP-served repo. <code>createrepo</code>-style updates land on every publish.</p>
+      </div>
+      <div class="phil-item reveal">
+        <span class="icon"><svg class="svgicon"><use href="#i-plug"/></svg></span>
+        <h3>Git / Tar / rsync</h3>
+        <p>Pull sources from a Git repo, a tarball URL, or rsync. Declare them in <code>conf.ini</code> or manage them live from the console &mdash; whichever fits your flow.</p>
+      </div>
+      <div class="phil-item reveal">
+        <span class="icon"><svg class="svgicon"><use href="#i-chip"/></svg></span>
+        <h3>Secure by Default</h3>
+        <p>HttpOnly cookies, rotated refresh tokens, per-IP rate limiting, exponential lockout, at-rest encryption of pipeline secrets. <strong>No default credentials.</strong></p>
+      </div>
+    </div>
+
+    <div class="code-block reveal" style="margin-top: 3rem;">
+      <div class="code-header">
+        <div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+        conf.ini &mdash; declare a source package
+      </div>
+      <pre><code><span class="kw">[package]</span>
+<span class="param">name</span>=<span class="str">"aurora"</span>
+<span class="param">source</span>=<span class="str">"https://github.com/lumen-rsg/aurora.net"</span>
+<span class="param">source_type</span>=<span class="str">"git"</span>
+<span class="param">source_branch</span>=<span class="str">"main"</span>
+<span class="param">build_image</span>=<span class="str">"lumina-dotnet-build:latest"</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SECURITY CENTERPIECE ==================== -->
+<section id="security">
+  <div class="section-inner">
+    <div class="reveal">
+      <div class="section-label">Build Security</div>
+      <div class="section-title">Untrusted .spec files,<br>sandboxed by design.</div>
+      <p class="section-subtitle">
+        A build container runs <code>dnf builddep</code> and <code>rpmbuild</code> over untrusted
+        <code>.spec</code> files &mdash; effectively arbitrary shell as root inside the container. Several
+        layers turn that from a host-escape primitive into a constrained sandbox.
+      </p>
+    </div>
+
+    <div class="chap-hero">
+      <div class="chap-canvas-wrap reveal">
+        <canvas id="chap-canvas"></canvas>
+        <div class="chap-legend">
+          <div class="legend-item"><span class="legend-dot" style="background:#6ee7c7"></span> Build</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#a78bfa"></span> Sign</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#fbbf95"></span> Scan</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#c47a6a"></span> Publish</div>
+        </div>
+      </div>
+      <div class="reveal">
+        <div class="chap-pillars" style="margin-top:0;">
+          <div class="chap-pillar">
+            <h4>No Socket Mount</h4>
+            <p><code>build-service</code> never mounts <code>/var/run/docker.sock</code>. It reaches the daemon through <code>docker-socket-proxy</code>, which whitelists only the endpoints it needs.</p>
+          </div>
+          <div class="chap-pillar">
+            <h4>Isolated buildnet</h4>
+            <p>Build containers attach to <code>lumina-buildnet</code> &mdash; separate from <code>lumina-network</code>. Outbound internet for <code>dnf</code>/<code>git</code>, but no path to Postgres, RabbitMQ, MinIO, or Trivy.</p>
+          </div>
+          <div class="chap-pillar">
+            <h4>Container Caps</h4>
+            <p><code>cap-drop=ALL</code> plus the minimum <code>rpmbuild</code> needs, <code>pids-limit</code>, <code>memory==swap</code>, CPU quota, <code>no-new-privileges</code>, <code>--init</code>. Tunable via <code>BUILD_*</code> env vars.</p>
+          </div>
+          <div class="chap-pillar">
+            <h4>Non-root Images</h4>
+            <p><code>rpm-build</code> and <code>dotnet-build</code> images create a <code>rpmbuilder</code> user (uid 1000) and run <code>rpmbuild</code> as it. No <code>sudo</code> in the images.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="reveal" style="margin-top: 4rem;">
+      <div class="section-label" style="color:var(--accent2);">Isolation Layers</div>
+      <div class="section-title" style="font-size: clamp(1.7rem,3.5vw,2.4rem);">Four walls around every build.</div>
+    </div>
+
+    <div class="kw-grid">
+      <div class="kw-card reveal" data-tag="value">
+        <div class="kw-head">
+          <span class="kw-name">docker-socket-proxy</span>
+          <span class="kw-tag">filtered</span>
+        </div>
+        <div class="kw-desc">The host socket is mounted here, but this container only forwards explicitly enabled endpoints to <code>build-service</code>. A compromised builder cannot <code>docker run</code> arbitrary images or read the host filesystem.</div>
+        <div class="code-block">
+          <div class="code-header"><div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div> whitelisted Docker API</div>
+          <pre><code><span class="param">CONTAINERS</span>: <span class="num">1</span>   <span class="cm"># create/start/logs/wait/stop/remove</span>
+<span class="param">IMAGES</span>:     <span class="num">1</span>   <span class="cm"># list + pull</span>
+<span class="param">POST</span>:       <span class="num">1</span>
+<span class="param">EXEC</span>:       <span class="num">0</span>   <span class="cm"># denied</span>
+<span class="param">NETWORKS</span>:   <span class="num">0</span>   <span class="cm"># denied</span>
+<span class="param">VOLUMES</span>:    <span class="num">0</span>   <span class="cm"># denied</span>
+<span class="param">BUILD</span>:      <span class="num">0</span>   <span class="cm"># denied</span></code></pre>
+        </div>
+      </div>
+
+      <div class="kw-card reveal" data-tag="tracked">
+        <div class="kw-head">
+          <span class="kw-name">lumina-buildnet</span>
+          <span class="kw-tag">isolated</span>
+        </div>
+        <div class="kw-desc">A dedicated bridge network for build containers, intentionally separate from <code>lumina-network</code>. Builders get outbound internet but cannot reach any stateful service.</div>
+        <div class="code-block">
+          <div class="code-header"><div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div> network split</div>
+          <pre><code><span class="kw">networks</span>:
+  <span class="fn">lumina-network</span>:        <span class="cm"># app + infra</span>
+    driver: bridge
+  <span class="fn">lumina-buildnet</span>:       <span class="cm"># untrusted builders</span>
+    driver: bridge
+<span class="cm"># build containers attach ONLY to buildnet —</span>
+<span class="cm"># no route to postgres / rabbitmq / minio / trivy</span></code></pre>
+        </div>
+      </div>
+
+      <div class="kw-card reveal" data-tag="tracked">
+        <div class="kw-head">
+          <span class="kw-name">resource limits</span>
+          <span class="kw-tag">hardened</span>
+        </div>
+        <div class="kw-desc">Each build container is capped on memory, PIDs, CPU, and capabilities &mdash; and denied privilege escalation. Fork bombs and OOM can&rsquo;t reach the host.</div>
+        <div class="code-block">
+          <div class="code-header"><div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div> per-build caps</div>
+          <pre><code>--cap-drop=<span class="ty">ALL</span>
+--memory=<span class="num">2147483648</span>
+--memory-swap=<span class="num">2147483648</span>   <span class="cm"># no overcommit</span>
+--pids-limit=<span class="num">512</span>
+--cpu-quota=<span class="num">150000</span>        <span class="cm"># 1.5 CPUs</span>
+--security-opt=no-new-privileges
+--init</code></pre>
+        </div>
+      </div>
+
+      <div class="kw-card reveal" data-tag="borrow">
+        <div class="kw-head">
+          <span class="kw-name">userns-remap</span>
+          <span class="kw-tag">remapped</span>
+        </div>
+        <div class="kw-desc">For production, enable user-namespace remapping at the daemon. Container root maps to an unprivileged host uid, so even a sandbox escape lands on <code>uid 100000+</code>, not host root.</div>
+        <div class="code-block">
+          <div class="code-header"><div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div> /etc/docker/daemon.json</div>
+          <pre><code>{
+  <span class="str">"userns-remap"</span>: <span class="str">"dockremap"</span>
+}
+<span class="cm"># container root → host uid 100000+</span>
+<span class="cm"># the compose stack keeps working unchanged</span></code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="reveal" style="margin-top: 4rem;">
+      <div class="section-label" style="color:var(--accent3);">Controls</div>
+      <div class="section-title" style="font-size: clamp(1.7rem,3.5vw,2.4rem);">Every control, named and enforced.</div>
+      <p class="section-subtitle">
+        Beyond the build sandbox, the rest of the stack is hardened end to end. Each control below is
+        wired into the compose file or service code &mdash; not a roadmap item.
+      </p>
+    </div>
+
+    <div class="diag-table-wrap reveal">
+      <table class="diag-table">
+        <thead>
+          <tr><th>Code</th><th>Control</th><th>What it enforces</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="code-cell e-code">SEC-01</td><td class="metaphor"><svg class="svgicon e-ic"><use href="#i-shield"/></svg>Sealed infra</td><td class="meaning">Postgres / Redis / RabbitMQ / MinIO / Trivy are never published to the host &mdash; internal-only on <code>lumina-network</code></td></tr>
+          <tr><td class="code-cell e-code">SEC-04</td><td class="metaphor"><svg class="svgicon e-ic"><use href="#i-link"/></svg>Re-validated JWT</td><td class="meaning">Every downstream service independently re-validates the bearer token &mdash; defense in depth, not trust-by-network</td></tr>
+          <tr><td class="code-cell e-code">SEC-05</td><td class="metaphor"><svg class="svgicon e-ic"><use href="#i-cycle"/></svg>Cookie session</td><td class="meaning">Short-lived access JWT in an HttpOnly, Secure, SameSite=Strict cookie; rotated refresh tokens in Redis</td></tr>
+          <tr><td class="code-cell e-code">SEC-012</td><td class="metaphor"><svg class="svgicon e-ic"><use href="#i-repeat"/></svg>Rate-limited</td><td class="meaning">Per-IP global token bucket plus a strict per-IP+username login bucket; exponential account lockout</td></tr>
+          <tr><td class="code-cell e-code">SEC-013</td><td class="metaphor"><svg class="svgicon e-ic"><use href="#i-chip"/></svg>Secrets at rest</td><td class="meaning">Pipeline secrets (<code>WebhookSecret</code>, <code>GitToken</code>) encrypted with AES-256-GCM before they touch the DB</td></tr>
+          <tr><td class="code-cell w-code">SEC-015</td><td class="metaphor"><svg class="svgicon w-ic"><use href="#i-droplet"/></svg>Body caps</td><td class="meaning">Per-route request-body limits &mdash; oversized uploads rejected at the door except on the two genuine upload routes</td></tr>
+          <tr><td class="code-cell e-code">SEC-020</td><td class="metaphor"><svg class="svgicon e-ic"><use href="#i-shield"/></svg>TLS everywhere</td><td class="meaning">nginx terminates TLS for the console; <code>:80</code> only redirects to <code>:443</code>; no app traffic in the clear</td></tr>
+          <tr><td class="code-cell w-code">SEC-024</td><td class="metaphor"><svg class="svgicon w-ic"><use href="#i-alert"/></svg>Fail closed</td><td class="meaning">Fatal errors propagate a non-zero exit so Docker&rsquo;s restart policy can tell a crash from a clean stop</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== PIPELINE ==================== -->
+<section id="pipeline" class="alt-bg">
+  <div class="section-inner">
+    <div class="reveal">
+      <div class="section-label">Pipeline</div>
+      <div class="section-title">Declare once.<br>Build on push or on click.</div>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card reveal">
+        <div class="code-block" style="border:none; border-radius:0; margin:0; box-shadow:none; background:transparent;">
+          <div class="code-header"><div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div> create a pipeline</div>
+          <pre><code><span class="kw">POST</span> <span class="str">/api/pipelines</span>
+{
+  <span class="param">"name"</span>: <span class="str">"aurora-build"</span>,
+  <span class="param">"tags"</span>: [<span class="str">"dotnet"</span>, <span class="str">"release"</span>],
+  <span class="param">"gitRepositoryUrl"</span>: <span class="str">"https://github.com/lumen-rsg/aurora.net"</span>,
+  <span class="param">"branch"</span>: <span class="str">"main"</span>,
+  <span class="param">"specFilePath"</span>: <span class="str">"aurora.spec"</span>,
+  <span class="param">"webhookSecret"</span>: <span class="str">"&hellip;"</span>
+}</code></pre>
+        </div>
+        <div class="feature-desc">
+          <h3>Pipeline-driven</h3>
+          <p>Name, tag, and describe pipelines. Wire up Git integration with a branch, spec path, and webhook secret &mdash; or trigger ad-hoc builds from the console.</p>
+        </div>
+      </div>
+
+      <div class="feature-card reveal">
+        <div class="code-block" style="border:none; border-radius:0; margin:0; box-shadow:none; background:transparent;">
+          <div class="code-header"><div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div> build on push</div>
+          <pre><code><span class="cm"># GitHub / GitLab / Forgejo webhook</span>
+<span class="kw">POST</span> <span class="str">/api/webhooks/{pipelineId}</span>
+X-Hub-Signature-256: sha256=<span class="str">&hellip;</span>   <span class="cm"># verified</span>
+
+<span class="cm"># &rarr; pipeline triggers a build</span>
+<span class="cm"># &rarr; stream it live:</span>
+<span class="kw">GET</span> <span class="str">/api/builds/{id}/logs/stream</span>   <span class="cm"># SSE</span></code></pre>
+        </div>
+        <div class="feature-desc">
+          <h3>Build on push</h3>
+          <p>Point your Git host at <code>/api/webhooks/&lt;id&gt;</code>. Lumina verifies the signature and streams live logs (Server-Sent Events) as the build runs.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== API ==================== -->
+<section id="api">
+  <div class="section-inner">
+    <div class="reveal">
+      <div class="section-label">API</div>
+      <div class="section-title">One gateway.<br>Every route authenticated.</div>
+      <p class="section-subtitle">
+        All routes are exposed through the gateway at <code>/api/*</code>. Browser sessions authenticate
+        via an HttpOnly cookie automatically; API clients reuse the cookie jar or send a bearer token.
+      </p>
+    </div>
+
+    <div class="contracts-grid">
+      <div class="reveal">
+        <div class="code-block">
+          <div class="code-header"><div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div> authenticate</div>
+          <pre><code><span class="kw">curl</span> -kc cookies.txt -X POST \
+  https://localhost/api/auth/login \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"username":"admin","password":"&hellip;"}'</span>
+
+<span class="cm"># sets HttpOnly lumina_access + lumina_refresh</span></code></pre>
+        </div>
+      </div>
+      <div class="reveal">
+        <div class="code-block">
+          <div class="code-header"><div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div> use the API</div>
+          <pre><code><span class="cm"># list builds</span>
+<span class="kw">curl</span> -kb cookies.txt \
+  https://localhost/api/builds?page=1 \
+  | jq <span class="str">'.data.builds[] | {id, status}'</span>
+
+<span class="cm"># trigger a pipeline</span>
+<span class="kw">curl</span> -kb cookies.txt -X POST \
+  https://localhost/api/pipelines/{id}/trigger</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="contract-comparison reveal">
+      <div class="section-title" style="font-size: 1.4rem;">Session model &mdash; cookie vs. bearer</div>
+      <p class="section-subtitle" style="margin-bottom: 1rem;">
+        Browsers get a hardened cookie session; automation gets the same JWT as a bearer header. The
+        raw token is never returned to client-side JS, so XSS can&rsquo;t read it.
+      </p>
+      <table class="comparison-table">
+        <thead><tr><th>Concern</th><th>Browser cookie</th><th>API bearer</th></tr></thead>
+        <tbody>
+          <tr><td>HttpOnly storage</td><td><span class="check">&#10003;</span></td><td><span class="cross">&#10007;</span></td></tr>
+          <tr><td>Auto refresh</td><td><span class="check">&#10003;</span></td><td><span class="cross">&#10007;</span></td></tr>
+          <tr><td>Server-side revocation</td><td><span class="check">&#10003;</span></td><td><span class="check">&#10003;</span></td></tr>
+          <tr><td>Access-token lifetime</td><td>15 min</td><td>15 min</td></tr>
+          <tr><td>Session lifetime</td><td>8 hours</td><td>8 hours</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== STACK ==================== -->
+<section id="stack" class="alt-bg">
+  <div class="section-inner">
+    <div class="reveal">
+      <div class="section-label">Stack</div>
+      <div class="section-title">Boring, proven,<br>production-grade.</div>
+      <p class="section-subtitle">
+        No exotic dependencies. Lumina CI is .NET 10 services and a Blazor WASM console on top of
+        off-the-shelf infrastructure you already operate.
+      </p>
+    </div>
+
+    <div class="perf-grid">
+      <div class="perf-card reveal"><div class="perf-num">.NET 10</div><div class="perf-name">Runtime</div><div class="perf-note">services + Blazor</div></div>
+      <div class="perf-card reveal"><div class="perf-num">Blazor</div><div class="perf-name">Web console</div><div class="perf-note">WASM, client-side</div></div>
+      <div class="perf-card reveal"><div class="perf-num">YARP</div><div class="perf-name">Gateway</div><div class="perf-note">reverse proxy + auth</div></div>
+      <div class="perf-card reveal"><div class="perf-num">Postgres 16</div><div class="perf-name">State</div><div class="perf-note">users, pipelines, builds</div></div>
+      <div class="perf-card reveal"><div class="perf-num">RabbitMQ 3</div><div class="perf-name">Messaging</div><div class="perf-note">build / scan / sign jobs</div></div>
+      <div class="perf-card reveal"><div class="perf-num">Redis 7</div><div class="perf-name">Cache</div><div class="perf-note">refresh tokens, rate buckets</div></div>
+      <div class="perf-card reveal"><div class="perf-num">MinIO</div><div class="perf-name">Object store</div><div class="perf-note">S3 artifacts &amp; logs</div></div>
+      <div class="perf-card reveal"><div class="perf-num">Trivy 0.72</div><div class="perf-name">Scanner</div><div class="perf-note">CVE database + server</div></div>
+    </div>
+    <div class="perf-footer">Orchestrated with Docker Compose &middot; TLS terminated at nginx &middot; every image pinned to a specific tag.</div>
+  </div>
+</section>
+
+<!-- ==================== SERVICES ==================== -->
+<section id="services">
+  <div class="section-inner">
+    <div class="reveal">
+      <div class="section-label">Services</div>
+      <div class="section-title">Six workers behind<br>one gateway.</div>
+      <p class="section-subtitle">
+        Each stage of the pipeline is its own service. Scale, rebuild, or replace them independently &mdash;
+        they share nothing but the message bus and the database.
+      </p>
+    </div>
+
+    <div class="module-grid">
+      <div class="module-card reveal"><div class="mod-name">api-gateway</div><div class="mod-desc">Auth (login/refresh/logout), YARP routing, rate limiting</div></div>
+      <div class="module-card reveal"><div class="mod-name">build-service</div><div class="mod-desc">Build orchestration, pipelines, builds, webhooks</div></div>
+      <div class="module-card reveal"><div class="mod-name">security-service</div><div class="mod-desc">PGP key management, signing, hashing</div></div>
+      <div class="module-card reveal"><div class="mod-name">scanner-service</div><div class="mod-desc">Trivy CVE scanning, per-artifact findings</div></div>
+      <div class="module-card reveal"><div class="mod-name">repository-service</div><div class="mod-desc">RPM repository management &amp; publishing</div></div>
+      <div class="module-card reveal"><div class="mod-name">source-service</div><div class="mod-desc">git / tar / rsync source fetching</div></div>
+      <div class="module-card reveal"><div class="mod-name">webapp</div><div class="mod-desc">Blazor WASM console</div></div>
+      <div class="module-card reveal"><div class="mod-name">docker-socket-proxy</div><div class="mod-desc">Least-privilege Docker API for builds</div></div>
+      <div class="module-card reveal"><div class="mod-name">trivy</div><div class="mod-desc">CVE database &amp; scan server</div></div>
+      <div class="module-card reveal"><div class="mod-name">nginx</div><div class="mod-desc">TLS termination &amp; repository HTTP</div></div>
+    </div>
+
+    <div class="code-block reveal" style="margin-top: 3rem;">
+      <div class="code-header"><div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div> quickstart &mdash; from clone to console in one command</div>
+      <pre><code><span class="kw">git</span> clone &lt;repo&gt; lumina-ci <span class="kw">&&</span> <span class="kw">cd</span> lumina-ci/deploy
+<span class="kw">cp</span> .env.example .env       <span class="cm"># fill in the secrets (no defaults!)</span>
+<span class="kw">docker compose</span> up -d --build
+<span class="cm"># &rarr; https://localhost  (log in with ADMIN_USERNAME / ADMIN_PASSWORD)</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== CTA ==================== -->
+<section class="cta-section alt-bg">
+  <div class="cta-card reveal">
+    <div class="section-label">Get Started</div>
+    <h2>Own your RPM pipeline.</h2>
+    <p>Self-hosted CI that builds in isolated containers, signs every artifact, scans for CVEs, and publishes to your repo. No default credentials, no exposed infrastructure.</p>
+    <div class="hero-actions" style="justify-content:center; margin-bottom:0;">
+      <a href="https://github.com/lumen-rsg/luminaCI" class="btn btn-primary">View on GitHub</a>
+      <a href="#security" class="btn btn-secondary">Read the security model</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Lumina CI &mdash; self-hosted RPM CI: build, sign, scan, publish. &nbsp;|&nbsp;
+  <a href="https://github.com/lumen-rsg/luminaCI">GitHub</a> &nbsp;|&nbsp;
+  .NET 10 &middot; Docker Compose. Open source.
+</footer>
+
+<script>
+(function () {
+  'use strict';
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------- Scroll reveal ---------- */
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); }
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+  document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+  /* ---------- Nav shadow on scroll ---------- */
+  const nav = document.getElementById('nav');
+  window.addEventListener('scroll', () => {
+    nav.classList.toggle('scrolled', window.scrollY > 12);
+  }, { passive: true });
+
+  /* ---------- Soft pastel canvas helpers ---------- */
+  function setupCanvas(canvas) {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    return { ctx, w: rect.width, h: rect.height };
+  }
+
+  const PASTEL = {
+    lavender: 'rgba(167,139,250,0.85)',
+    mint:     'rgba(110,231,199,0.85)',
+    peach:    'rgba(251,191,149,0.85)',
+    rose:     'rgba(196,122,106,0.7)',
+    dim:      'rgba(140,130,170,0.5)',
+  };
+
+  /* ---------- Hero canvas: floating pipeline-graph nodes ---------- */
+  function initHero() {
+    const canvas = document.getElementById('hero-canvas');
+    if (!canvas || reduced) return;
+    let env = setupCanvas(canvas);
+    let nodes = [];
+    const COUNT = 26;
+    for (let i = 0; i < COUNT; i++) {
+      nodes.push({
+        x: Math.random() * env.w,
+        y: Math.random() * env.h,
+        vx: (Math.random() - 0.5) * 0.28,
+        vy: (Math.random() - 0.5) * 0.28,
+        r: 2 + Math.random() * 3.5,
+        c: [PASTEL.lavender, PASTEL.mint, PASTEL.peach][i % 3],
+      });
+    }
+    function frame() {
+      const { ctx, w, h } = env;
+      ctx.clearRect(0, 0, w, h);
+      // connecting lines (pipeline edges)
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const dx = nodes[i].x - nodes[j].x, dy = nodes[i].y - nodes[j].y;
+          const d = Math.hypot(dx, dy);
+          if (d < 130) {
+            ctx.strokeStyle = 'rgba(167,139,250,' + (0.14 * (1 - d / 130)) + ')';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(nodes[i].x, nodes[i].y); ctx.lineTo(nodes[j].x, nodes[j].y); ctx.stroke();
+          }
+        }
+      }
+      // nodes
+      nodes.forEach((n) => {
+        n.x += n.vx; n.y += n.vy;
+        if (n.x < 0 || n.x > w) n.vx *= -1;
+        if (n.y < 0 || n.y > h) n.vy *= -1;
+        ctx.fillStyle = n.c;
+        ctx.shadowColor = n.c; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+      });
+      requestAnimationFrame(frame);
+    }
+    frame();
+    window.addEventListener('resize', () => { env = setupCanvas(canvas); });
+  }
+
+  /* ---------- Security canvas: animated pipeline-stage graph ---------- */
+  function initChap() {
+    const canvas = document.getElementById('chap-canvas');
+    if (!canvas || reduced) return;
+    let env = setupCanvas(canvas);
+    // The four pipeline stages — states breathe to suggest flow through the pipeline.
+    const graph = [
+      { id: 'build',   x: 0.50, y: 0.30, r: 16, label: 'build',   base: 'mint' },
+      { id: 'sign',    x: 0.28, y: 0.62, r: 13, label: 'sign',    base: 'lavender' },
+      { id: 'scan',    x: 0.72, y: 0.62, r: 13, label: 'scan',    base: 'peach' },
+      { id: 'publish', x: 0.50, y: 0.84, r: 11, label: 'publish', base: 'rose' },
+    ];
+    const edges = [['build','sign'], ['build','scan'], ['sign','publish'], ['scan','publish']];
+    const colorOf = { mint: PASTEL.mint, lavender: PASTEL.lavender, peach: PASTEL.peach, rose: PASTEL.rose };
+    let t = 0;
+    function frame() {
+      const { ctx, w, h } = env;
+      ctx.clearRect(0, 0, w, h);
+      t += 0.012;
+      // edges
+      edges.forEach(([a, b]) => {
+        const na = graph.find(n => n.id === a), nb = graph.find(n => n.id === b);
+        ctx.strokeStyle = 'rgba(140,130,170,0.32)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 5]);
+        ctx.beginPath(); ctx.moveTo(na.x * w, na.y * h); ctx.lineTo(nb.x * w, nb.y * h); ctx.stroke();
+        ctx.setLineDash([]);
+      });
+      // nodes with breathing pulse + state drift
+      graph.forEach((n, i) => {
+        const pulse = 1 + 0.08 * Math.sin(t * 1.5 + i);
+        const x = n.x * w, y = n.y * h, r = n.r * pulse;
+        // soft glow ring
+        const grad = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * 2.4);
+        grad.addColorStop(0, colorOf[n.base]);
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(x, y, r * 2.4, 0, Math.PI * 2); ctx.fill();
+        // core
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = colorOf[n.base]; ctx.shadowBlur = 16;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = colorOf[n.base];
+        ctx.beginPath(); ctx.arc(x, y, r * 0.55, 0, Math.PI * 2); ctx.fill();
+        // label
+        ctx.fillStyle = '#5a5470';
+        ctx.font = '600 11px "Source Code Pro", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(n.label, x, y + r + 16);
+      });
+      requestAnimationFrame(frame);
+    }
+    frame();
+    window.addEventListener('resize', () => { env = setupCanvas(canvas); });
+  }
+
+  /* ---------- init after layout ---------- */
+  if (document.readyState === 'complete') { initHero(); initChap(); }
+  else { window.addEventListener('load', () => { initHero(); initChap(); }); }
+})();
+</script>
+</body>
+</html>
