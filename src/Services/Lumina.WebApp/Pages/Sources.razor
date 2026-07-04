@@ -306,7 +306,7 @@ else
         try
         {
             // SpecContent is not needed — the server looks for spec files in
-            // /app/specs/{name}.spec or /app/Test/{name}.txt automatically.
+            // /app/specs/{name}.spec automatically.
             var result = await Api.BuildSourceAsync(name);
             if (result?.Success == true)
             {

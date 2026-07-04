@@ -50,30 +50,6 @@ public class ScannerController : ControllerBase
         }
     }
 
-    [HttpGet("reports/{id:guid}")]
-    public async Task<ActionResult<ApiResponse<CveReport>>> GetReport(Guid id)
-    {
-        var report = await _scanner.GetReportAsync(id);
-        if (report == null) return NotFound(new ApiResponse<CveReport>(false, null, "Report not found", null));
-        return Ok(new ApiResponse<CveReport>(true, report, null, null));
-    }
-
-    [HttpGet("reports/artifact/{artifactId:guid}")]
-    public async Task<ActionResult<ApiResponse<List<CveReport>>>> GetArtifactReports(Guid artifactId)
-    {
-        var reports = await _scanner.GetArtifactReportsAsync(artifactId);
-        return Ok(new ApiResponse<List<CveReport>>(true, reports, null, null));
-    }
-
-    [HttpGet("reports/recent")]
-    public async Task<ActionResult<ApiResponse<List<CveReport>>>> GetRecentReports([FromQuery] int count = 20)
-    {
-        // Clamp to prevent excessive data retrieval
-        count = Math.Clamp(count, 1, 100);
-        var reports = await _scanner.GetRecentReportsAsync(count);
-        return Ok(new ApiResponse<List<CveReport>>(true, reports, null, null));
-    }
-
     [HttpGet("scans")]
     public async Task<ActionResult<ApiResponse<ScanPaginatedResponse>>> ListScans([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {

@@ -441,41 +441,6 @@ public class TrivyScannerService
         };
     }
 
-    public async Task<CveReport?> GetReportAsync(Guid id)
-    {
-        return await _cache.GetOrSetAsync(
-            CacheKeys.ScanReport(id),
-            async () =>
-            {
-                var report = await _db.CveReports
-                    .Include(r => r.Vulnerabilities)
-                    .FirstOrDefaultAsync(r => r.Id == id);
-                return report;
-            },
-            TimeSpan.FromMinutes(5));
-    }
-
-    public async Task<List<CveReport>> GetArtifactReportsAsync(Guid artifactId)
-    {
-        return await _cache.GetOrSetAsync(
-            CacheKeys.ScanArtifactReports(artifactId),
-            async () => await _db.CveReports
-                .Include(r => r.Vulnerabilities)
-                .Where(r => r.ArtifactId == artifactId)
-                .OrderByDescending(r => r.CreatedAt)
-                .ToListAsync(),
-            TimeSpan.FromMinutes(5));
-    }
-
-    public async Task<List<CveReport>> GetRecentReportsAsync(int count)
-    {
-        return await _db.CveReports
-            .Include(r => r.Vulnerabilities)
-            .OrderByDescending(r => r.CreatedAt)
-            .Take(count)
-            .ToListAsync();
-    }
-
     /// <summary>
     /// Get paginated scan results with vulnerability counts.
     /// </summary>

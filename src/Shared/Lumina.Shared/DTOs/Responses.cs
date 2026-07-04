@@ -31,22 +31,11 @@ public record SignPackageResponse(Guid ArtifactId, string PgpSignature, DateTime
 
 public record VerifySignatureResponse(Guid ArtifactId, bool IsValid, DateTime VerifiedAt);
 
-public record HashResponse(Guid ArtifactId, string HashSha256, string HashSha512, string HashMd5, DateTime ComputedAt);
+public record HashResponse(Guid ArtifactId, string HashSha256, string HashSha1, string HashMd5, DateTime ComputedAt);
 
 public record HashListResponse(List<HashResponse> Hashes, int TotalCount, int Page, int PageSize);
 
 // Scanner Responses
-public record ScanResponse(Guid Id, Guid ArtifactId, string ScannerType, ScanStatus Status, DateTime StartedAt, DateTime? CompletedAt);
-
-public record ScanListResponse(List<ScanResponse> Scans, int TotalCount, int Page, int PageSize);
-
-public record CveReportResponse(Guid Id, Guid ArtifactId, string ScannerType, ScanStatus Status, List<VulnerabilityResponse> Vulnerabilities, DateTime ScannedAt, int CriticalCount, int HighCount, int MediumCount, int LowCount);
-
-public record VulnerabilityResponse(string Id, string PackageName, string Title, string Description, string Severity, string? FixedVersion, string InstalledVersion);
-
-public record CveReportListResponse(List<CveReportSummaryResponse> Reports, int TotalCount, int Page, int PageSize);
-
-public record CveReportSummaryResponse(Guid Id, Guid ArtifactId, string ScannerType, ScanStatus Status, DateTime ScannedAt, int TotalVulnerabilities);
 
 // Scan summary for paginated lists (used by ScannerService)
 public record ScanSummaryResponse(Guid Id, Guid ArtifactId, string ScannerType, ScanStatus Status, int TotalVulnerabilities, int CriticalCount, int HighCount, DateTime CreatedAt, DateTime? CompletedAt);

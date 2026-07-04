@@ -380,7 +380,6 @@ services:
       - Jwt__Audience=LuminaCI
     volumes:
       - ../conf.ini:/app/conf.ini:ro,z
-      - ../Test:/app/Test:ro,z
       - source_temp:/tmp/source-fetch
       - /opt/lumina/sources:/opt/lumina/sources:z
     depends_on:

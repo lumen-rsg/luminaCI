@@ -236,20 +236,20 @@ public class SourceController : ControllerBase
             // SECURITY: validate the configured source before fetch/build.
             await _uriValidator.ValidateAsync(pkg.Source, pkg.SourceType, pkg.SourceBranch);
 
-            // 1. Find spec content — look in /app/specs/{name}.*, /app/Test/{name}.*, or use request
+            // 1. Find spec content — look in /app/specs/{name}.*, or use request
             var specContent = request?.SpecContent;
             var specName = request?.SpecName ?? $"{name}.spec";
 
             if (string.IsNullOrEmpty(specContent))
             {
-                // Try to find spec file in known locations
+                // Try to find spec file in known locations. Spec files must be
+                // supplied via the request body or placed under /app/specs/ —
+                // never load test/dev fixtures from the runtime image.
                 var specSearchPaths = new[]
                 {
                     $"/app/specs/{name}.spec",
                     $"/app/specs/{name}.txt",
-                    $"/app/Test/{name}.txt",
-                    $"/app/specs/test_package.txt",
-                    $"/app/Test/test_package.txt"
+                    $"/app/specs/test_package.txt"
                 };
 
                 foreach (var specPath in specSearchPaths)

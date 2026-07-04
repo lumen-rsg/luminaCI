@@ -202,20 +202,14 @@ public class LuminaApiService
     }
 
     // === Scanner ===
-    public async Task<ApiResponse<ScanListResponse>?> GetScansAsync(int page = 1)
+    // The backend GET /api/scanner/scans returns ScanPaginatedResponse (a list of
+    // ScanSummaryResponse). The DTO must match: previously this deserialised into
+    // ScanListResponse/ScanResponse, which left fields like CreatedAt unbound and
+    // rendered default(DateTime) in the UI.
+    public async Task<ApiResponse<ScanPaginatedResponse>?> GetScansAsync(int page = 1)
     {
-        return await _http.GetFromJsonAsync<ApiResponse<ScanListResponse>>($"/api/scanner/scans?page={page}");
-    }
-
-    public async Task<ApiResponse<CveReportResponse>?> GetScanReportAsync(Guid id)
-    {
-        return await _http.GetFromJsonAsync<ApiResponse<CveReportResponse>>($"/api/scanner/scans/{id}");
-    }
-
-    public async Task<ApiResponse<ScanResponse>?> StartScanAsync(ScanRequest request)
-    {
-        var resp = await _http.PostAsJsonAsync("/api/scanner/scan", request);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<ScanResponse>>();
+        return await GetJsonWithRetryAsync<ApiResponse<ScanPaginatedResponse>>(
+            $"/api/scanner/scans?page={page}", nameof(GetScansAsync));
     }
 
     // === Repositories ===

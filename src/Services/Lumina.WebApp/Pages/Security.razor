@@ -157,7 +157,7 @@
                                     @scan.Status
                                 </span>
                             </td>
-                            <td class="text-sm text-muted">@scan.StartedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
+                            <td class="text-sm text-muted">@scan.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
                         </tr>
                     }
                 </tbody>
@@ -176,7 +176,7 @@
 
 @code {
     private ApiResponse<HashListResponse>? _hashes;
-    private ApiResponse<ScanListResponse>? _scans;
+    private ApiResponse<ScanPaginatedResponse>? _scans;
     private ApiResponse<object>? _signResult;
     private bool _signing = false;
     private string _signArtifactId = "";
