@@ -112,13 +112,37 @@ public class BuildsController : ControllerBase
         var isRunning = job.Status == BuildStatus.Building ||
                         job.Status == BuildStatus.Queued;
 
-        if (!isRunning || !Services.DockerBuildService.IsStreaming(id))
+        // Decide live-vs-replay ATOMICALLY with the subscription. The previous
+        // flow checked IsStreaming() here, then subscribed separately — a build
+        // that completed in between left the client on a channel that never
+        // received [BUILD …]. SubscribeToLogsAsync re-checks liveness under the
+        // per-build lock while attaching, so the answer is consistent.
+        //
+        // It also enforces the global concurrent-SSE limit: when full it returns
+        // IsLive=false (replay) instead of refusing, so an unbounded number of
+        // clients can't exhaust server memory.
+        Services.DockerBuildService.LogSubscription? sub = null;
+        if (isRunning)
         {
-            // Build is completed — send all logs at once and finish
-            var allLogs = job.Logs ?? "";
-            if (!string.IsNullOrEmpty(allLogs))
+            sub = await _dockerBuild.SubscribeToLogsAsync(id);
+        }
+
+        var liveReader = sub?.IsLive == true ? sub.Reader : null;
+        var existingLogs = liveReader is not null ? sub!.ExistingLogs : (job.Logs ?? "");
+
+        if (liveReader is null)
+        {
+            // Replay (or subscriber-limit hit): send whatever logs we have, then end.
+            if (sub?.SubscriberLimitReached == true)
             {
-                foreach (var line in allLogs.Split('\n'))
+                Response.Headers.Append("X-Lumina-Live-Stream-Denied", "subscriber-limit");
+                _logger.LogWarning(
+                    "Live SSE subscriber limit reached for build {BuildId}; serving replay instead", id);
+            }
+
+            if (!string.IsNullOrEmpty(existingLogs))
+            {
+                foreach (var line in existingLogs.Split('\n'))
                 {
                     var cleaned = new string(line.Where(c => !char.IsControl(c) || c == '\t').ToArray());
                     if (!string.IsNullOrWhiteSpace(cleaned))
@@ -132,8 +156,7 @@ public class BuildsController : ControllerBase
             return;
         }
 
-        // Live streaming — subscribe to the log channel
-        var (existingLogs, reader) = _dockerBuild.SubscribeToLogs(id);
+        // Live streaming — a channel is attached; guaranteed to receive [BUILD …].
         try
         {
             // Send existing logs first
@@ -150,7 +173,7 @@ public class BuildsController : ControllerBase
             }
 
             // Stream new lines as they arrive
-            await foreach (var line in reader.ReadAllAsync(cancellationToken))
+            await foreach (var line in liveReader.ReadAllAsync(cancellationToken))
             {
                 var cleaned = new string(line.Where(c => !char.IsControl(c) || c == '\t').ToArray());
                 if (!string.IsNullOrWhiteSpace(cleaned))
@@ -170,9 +193,16 @@ public class BuildsController : ControllerBase
         {
             // Client disconnected
         }
+        catch (System.Threading.Channels.ChannelClosedException)
+        {
+            // The build finished and the channel was completed without the client
+            // seeing the [BUILD …] marker (e.g. it was dropped as the oldest item
+            // under backpressure). End the stream cleanly.
+            await WriteSseEvent("[STREAM_END]");
+        }
         finally
         {
-            _dockerBuild.UnsubscribeFromLogs(id, reader);
+            _dockerBuild.UnsubscribeFromLogs(id, liveReader);
         }
 
         async Task WriteSseEvent(string data)
