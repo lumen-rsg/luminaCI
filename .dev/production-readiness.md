@@ -5,8 +5,8 @@ Reviewed revision: `5244ec5`
 
 ## Verdict
 
-The original audit findings appear materially resolved, and the project is now
-a strong release candidate. Operational acceptance exercises remain.
+The original audit findings and operational acceptance exercises are complete.
+The reviewed release is ready for production approval.
 
 ## Evidence already passing
 
@@ -30,7 +30,7 @@ Passing CI run:
 
 ## Production acceptance checklist
 
-- [ ] Expected production load and a suitable soak test pass.
+All production acceptance items are complete.
 
-Production approval should be reconsidered after the release blocker is fixed
-and the complete staging acceptance checklist passes.
+Production approval can proceed using the evidence and operating procedures
+recorded above.

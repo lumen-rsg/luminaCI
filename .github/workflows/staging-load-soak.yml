@@ -1,0 +1,40 @@
+name: staging load and soak
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-load-soak
+  cancel-in-progress: false
+
+jobs:
+  accepted-profile:
+    name: accepted production traffic profile
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run expected load and soak
+        env:
+          BASE_URL: ${{ vars.LUMINA_BASE_URL }}
+          LOAD_USERNAME: ${{ secrets.LUMINA_STAGING_USERNAME }}
+          LOAD_PASSWORD: ${{ secrets.LUMINA_STAGING_PASSWORD }}
+          LOAD_VUS: '10'
+          LOAD_DURATION: 2m
+          SOAK_VUS: '5'
+          SOAK_DURATION: 10m
+        run: scripts/load-soak.sh all
+
+      - name: Retain acceptance summaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-load-soak-results
+          path: load-results/*.json
+          if-no-files-found: error

@@ -93,6 +93,17 @@ STAGING_USERNAME=admin \
 STAGING_PASSWORD=ci-admin-password \
     "${REPOSITORY_ROOT}/scripts/staging-canary.sh"
 
+BASE_URL=https://localhost \
+LOAD_USERNAME=admin \
+LOAD_PASSWORD=ci-admin-password \
+LOAD_VUS="${LOAD_VUS:-4}" \
+LOAD_DURATION="${LOAD_DURATION:-15s}" \
+SOAK_VUS="${SOAK_VUS:-2}" \
+SOAK_DURATION="${SOAK_DURATION:-30s}" \
+K6_INSECURE_SKIP_TLS_VERIFY=true \
+RESULTS_DIR="${temporary_directory}/load-results" \
+    "${REPOSITORY_ROOT}/scripts/load-soak.sh" all
+
 docker tag lumina-api-gateway:local lumina-api-gateway:rollback-rehearsal
 docker tag lumina-build-service:local lumina-build-service:rollback-rehearsal
 docker tag lumina-security-service:local lumina-security-service:rollback-rehearsal

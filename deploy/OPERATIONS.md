@@ -92,3 +92,18 @@ healthy and alert paths before each monitoring change with:
 ```bash
 tests/ci/monitoring-alerts.sh
 ```
+
+## Load and soak acceptance
+
+The accepted baseline for this internal console is 10 concurrent authenticated
+users for two minutes, followed by a five-user ten-minute soak. Each user
+loads the console, dependency readiness, pipelines, builds, repositories, and
+sources once per second. Acceptance requires fewer than 0.5% failed requests
+and checks, p95 latency below 1 second, and p99 below 2 seconds.
+
+Run the `staging load and soak` workflow after material application, database,
+proxy, or infrastructure changes and retain its k6 summaries with the release
+record. If expected concurrency grows beyond 10 active users, raise the profile
+before approval rather than treating this baseline as permanent capacity.
+The complete Compose smoke job also runs a short version to catch authentication,
+routing, threshold, and script regressions on every protected branch.
