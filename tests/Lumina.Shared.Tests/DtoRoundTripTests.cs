@@ -252,7 +252,7 @@ public class DtoRoundTripTests
     }
 
     [Fact]
-    public void Source_Config_And_Download_Responses_RoundTrip()
+    public void Source_Download_And_Reload_Responses_RoundTrip()
     {
         // These DTOs back the SourceController responses that previously leaked
         // out as ad-hoc anonymous objects. Pin their shape so every source JSON
@@ -263,10 +263,6 @@ public class DtoRoundTripTests
         Assert.Equal("https://signed/url", dlRt.Url);
         Assert.Equal("pkg", dlRt.PackageName);
         Assert.Equal(2048L, dlRt.FileSize);
-
-        var config = new SourceConfigResponse("Name: pkg");
-        var cfgRt = RoundTrip(config);
-        Assert.Equal("Name: pkg", cfgRt.Content);
 
         var mutationWithCount = new SourceConfigMutationResponse("Saved", 5);
         var mwcRt = RoundTrip(mutationWithCount);

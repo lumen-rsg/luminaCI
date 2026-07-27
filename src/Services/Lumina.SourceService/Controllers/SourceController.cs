@@ -235,22 +235,11 @@ public class SourceController : ControllerBase
     }
 
     /// <summary>
-    /// Get the raw conf.ini content
-    /// </summary>
-    [HttpGet("config")]
-    public ActionResult<ApiResponse<SourceConfigResponse>> GetConfig()
-    {
-        var content = _configParser.GetRawContent();
-        return Ok(new ApiResponse<SourceConfigResponse>(true, new SourceConfigResponse(content), null, null));
-    }
-
-    /// <summary>
     /// Reload configuration from conf.ini
     /// </summary>
     [HttpPost("reload-config")]
     public ActionResult<ApiResponse<SourceConfigMutationResponse>> ReloadConfig()
     {
-        _configParser.ParsePackages(); // Forces re-read
         var packages = _configParser.ParsePackages();
         return Ok(new ApiResponse<SourceConfigMutationResponse>(
             true,

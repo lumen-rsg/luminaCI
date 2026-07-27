@@ -82,12 +82,7 @@ public record SourceFetchResponse(Guid JobId, string PackageName, SourceStatus S
 // used to return, so every source JSON response shares the ApiResponse<T> envelope.
 public record SourceDownloadResponse(string Url, string PackageName, long? FileSize, string? HashSha256);
 
-// Raw conf.ini content. Replaces the ad-hoc `new { content }` shape so the
-// config GET/PUT also flows through ApiResponse<T>.
-public record SourceConfigResponse(string Content);
-
-// Acknowledgement for conf.ini mutations (save / add / remove / reload).
-// `Count` is null when the operation does not produce a package count.
+// Acknowledgement for validating and reloading the read-only legacy manifest.
 public record SourceConfigMutationResponse(string Message, int? Count = null);
 
 // Uploaded Extra Source Responses (pipeline-level & build-level)

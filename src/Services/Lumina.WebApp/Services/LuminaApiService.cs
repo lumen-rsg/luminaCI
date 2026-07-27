@@ -274,11 +274,6 @@ public class LuminaApiService
         return await resp.Content.ReadFromJsonAsync<ApiResponse<SourceFetchResponse>>();
     }
 
-    public async Task<ApiResponse<SourceConfigResponse>?> GetConfigAsync()
-    {
-        return await _http.GetFromJsonAsync<ApiResponse<SourceConfigResponse>>("/api/sources/config");
-    }
-
     // === Extra Sources (pipeline & build level) ===
     public async Task<ApiResponse<List<UploadedSourceResponse>>?> GetPipelineSourcesAsync(Guid pipelineId)
     {

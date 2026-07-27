@@ -542,11 +542,7 @@ curl -skb cookies.txt https://localhost/api/auth/me
 |---|---|---|
 | `GET` | `/api/sources` | List configured sources |
 | `GET` | `/api/sources/{name}` | Get a source by name |
-| `GET` | `/api/sources/config` | Get the live `conf.ini` |
-| `PUT` | `/api/sources/config` | Replace the live `conf.ini` |
-| `POST` | `/api/sources/config/package` | Add a package to the config |
-| `DELETE` | `/api/sources/config/{name}` | Remove a package from the config |
-| `POST` | `/api/sources/reload-config` | Reload config from disk |
+| `POST` | `/api/sources/reload-config` | Validate and reload the read-only legacy config |
 | `POST` | `/api/sources/{name}/fetch` | Fetch one source |
 | `POST` | `/api/sources/fetch-all` | Fetch all sources |
 | `POST` | `/api/sources/{name}/build` | Build a source |
