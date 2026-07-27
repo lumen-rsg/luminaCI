@@ -70,12 +70,12 @@ public static class HealthCheckExtensions
 
         // These routes become available only after migrations and startup
         // reconciliation complete, so startup probes cannot pass prematurely.
-        endpoints.MapHealthChecks("/health/startup", processOnly);
-        endpoints.MapHealthChecks("/health/live", processOnly);
-        endpoints.MapHealthChecks("/health/ready", CreateReadinessOptions());
+        endpoints.MapHealthChecks("/health/startup", processOnly).AllowAnonymous();
+        endpoints.MapHealthChecks("/health/live", processOnly).AllowAnonymous();
+        endpoints.MapHealthChecks("/health/ready", CreateReadinessOptions()).AllowAnonymous();
 
         // Keep the original route as a readiness alias for existing probes.
-        endpoints.MapHealthChecks("/health", CreateReadinessOptions());
+        endpoints.MapHealthChecks("/health", CreateReadinessOptions()).AllowAnonymous();
     }
 
     private static HealthCheckOptions CreateReadinessOptions() => new()
