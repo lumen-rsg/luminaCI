@@ -83,12 +83,11 @@ try
 
         // Auto-generate a default PGP key if none exists
         var pgpService = scope.ServiceProvider.GetRequiredService<PgpSigningService>();
+        await pgpService.ReconcileLegacyKeyFingerprintsAsync();
         var keys = await pgpService.ListKeysAsync();
-        if (keys.Count == 0)
+        if (keys.All(k => !k.IsActive))
         {
-            var passphrase = builder.Configuration["Gpg:Passphrase"]
-                ?? throw new InvalidOperationException("Gpg:Passphrase is not configured. Set GPG_PASSPHRASE in the environment.");
-            await pgpService.GenerateKeyAsync("Lumina CI", "lumina@ci.local", passphrase, "system");
+            await pgpService.GenerateKeyAsync("Lumina CI", "lumina@ci.local", "system");
             Log.Information("Auto-generated default PGP key (Lumina CI / lumina@ci.local)");
         }
         else

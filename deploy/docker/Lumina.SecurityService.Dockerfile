@@ -19,8 +19,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 EXPOSE 5002
 
-# Install GnuPG for PGP signing
-RUN apt-get update && apt-get install -y gnupg2 pinentry-tty && rm -rf /var/lib/apt/lists/*
+# GnuPG owns the private key; rpm/rpmsign embeds and verifies package signatures.
+RUN apt-get update && apt-get install -y gnupg2 pinentry-tty rpm && rm -rf /var/lib/apt/lists/*
 
 COPY --from=publish /app/publish .
 RUN mkdir -p /app/keys /app/.gnupg && chmod 700 /app/.gnupg

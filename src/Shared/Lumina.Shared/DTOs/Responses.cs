@@ -18,7 +18,7 @@ public record PipelineSummaryResponse(Guid Id, string Name, string Description, 
 // Build Responses
 public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null);
 
-public record BuildArtifactResponse(Guid Id, string FileName, long FileSize, string? HashSha256, string? HashMd5, string? PgpSignature, ScanStatus CveScanStatus);
+public record BuildArtifactResponse(Guid Id, string FileName, long FileSize, string? HashSha256, string? HashMd5, string? SigningKeyFingerprint, DateTime? SignedAt, ScanStatus CveScanStatus);
 
 public record BuildListResponse(List<BuildJobSummaryResponse> Builds, int TotalCount, int Page, int PageSize);
 public record BuildStatsResponse(int TotalCount, int SuccessfulCount, int FailedCount);
@@ -27,8 +27,6 @@ public record BuildJobSummaryResponse(Guid Id, Guid PipelineId, BuildStatus Stat
 
 // Security Responses
 public record SecurityKeyResponse(Guid Id, string KeyId, string KeyName, string PublicKey, bool IsActive, DateTime CreatedAt, DateTime? ExpiresAt, string CreatedBy);
-
-public record SignPackageResponse(Guid ArtifactId, string PgpSignature, DateTime SignedAt);
 
 public record VerifySignatureResponse(Guid ArtifactId, bool IsValid, DateTime VerifiedAt);
 
@@ -46,7 +44,7 @@ public record ScanPaginatedResponse(List<ScanSummaryResponse> Scans, int TotalCo
 // Repository Responses
 public record RepositoryResponse(Guid Id, string Name, string DisplayName, string BasePath, string Arch, string Distribution, bool IsActive, DateTime CreatedAt, int PackageCount);
 
-public record PackageResponse(Guid Id, Guid RepositoryId, string Name, string Version, string Release, string Arch, string FileName, long FileSize, string? HashSha256, ScanStatus CveScanStatus, DateTime PublishedAt, string PublishedBy, string? PgpSignature = null)
+public record PackageResponse(Guid Id, Guid RepositoryId, string Name, string Version, string Release, string Arch, string FileName, long FileSize, string? HashSha256, ScanStatus CveScanStatus, DateTime PublishedAt, string PublishedBy, string? PgpSignature = null, string? SigningKeyFingerprint = null)
 {
     /// <summary>
     /// Maps a <see cref="Package"/> entity to this response DTO. Centralizing the
@@ -56,7 +54,7 @@ public record PackageResponse(Guid Id, Guid RepositoryId, string Name, string Ve
     /// </summary>
     public static PackageResponse From(Package p) => new(
         p.Id, p.RepositoryId, p.Name, p.Version, p.Release, p.Arch, p.FileName,
-        p.FileSize, p.HashSha256, p.CveScanStatus, p.PublishedAt, p.PublishedBy, p.PgpSignature);
+        p.FileSize, p.HashSha256, p.CveScanStatus, p.PublishedAt, p.PublishedBy, p.PgpSignature, p.SigningKeyFingerprint);
 }
 
 public record RepositoryListResponse(List<RepositoryResponse> Repositories, int TotalCount, int Page, int PageSize);

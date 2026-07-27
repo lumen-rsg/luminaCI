@@ -7,7 +7,8 @@ namespace Lumina.BuildService.Consumers;
 
 /// <summary>
 /// Consumes PackageSigned events from SecurityService.
-/// Updates the build artifact with the PGP signature.
+/// Records metadata only after SecurityService embedded and verified the RPM
+/// signature, and replaces the pre-sign hash/size with the final file values.
 /// </summary>
 public class PackageSignedConsumer : IConsumer<PackageSigned>
 {
@@ -37,10 +38,15 @@ public class PackageSignedConsumer : IConsumer<PackageSigned>
         }
 
         var artifact = job.Artifacts.First(a => a.Id == msg.ArtifactId);
-        artifact.PgpSignature = msg.PgpSignature;
+        artifact.SigningKeyFingerprint = msg.KeyFingerprint;
+        artifact.SignedAt = msg.SignedAt;
+        artifact.HashSha256 = msg.SignedSha256;
+        artifact.FileSize = msg.SignedFileSize;
         _db.Update(artifact);
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Updated artifact {ArtifactId} with PGP signature", msg.ArtifactId);
+        _logger.LogInformation(
+            "Updated artifact {ArtifactId} with verified RPM signature metadata for {Fingerprint}",
+            msg.ArtifactId, msg.KeyFingerprint);
     }
 }

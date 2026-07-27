@@ -165,7 +165,7 @@ public class WebhooksController : ControllerBase
             var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName,
                 job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy,
                 job.Artifacts.Select(a => new BuildArtifactResponse(a.Id, a.FileName, a.FileSize,
-                    a.HashSha256, a.HashMd5, a.PgpSignature, a.CveScanStatus)).ToList(),
+                    a.HashSha256, a.HashMd5, a.SigningKeyFingerprint, a.SignedAt, a.CveScanStatus)).ToList(),
                 job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
 
             return Ok(new ApiResponse<BuildJobResponse?>(true, response, null, "Build triggered from webhook"));

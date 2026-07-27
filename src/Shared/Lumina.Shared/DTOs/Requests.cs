@@ -43,11 +43,7 @@ public record CancelBuildRequest(string Reason);
 // Security DTOs
 public record CreateKeyRequest(string KeyName, string PublicKey, string? PrivateKeyReference, DateTime? ExpiresAt, string CreatedBy);
 
-public record GenerateKeyRequest(string KeyName, string Email, string Passphrase);
-
-public record SignPackageRequest(Guid ArtifactId, Guid KeyId);
-
-public record SignArtifactRequest(Guid ArtifactId, string ArtifactPath, Guid KeyId);
+public record GenerateKeyRequest(string KeyName, string Email);
 
 public record VerifySignatureRequest(Guid ArtifactId, string Signature);
 

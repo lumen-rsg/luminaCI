@@ -25,8 +25,7 @@ public class GetActivePublicKeyConsumer : IConsumer<GetActivePublicKey>
 
     public async Task Consume(ConsumeContext<GetActivePublicKey> context)
     {
-        var keys = await _pgp.ListKeysAsync();
-        var active = keys.FirstOrDefault(k => k.IsActive);
+        var active = await _pgp.GetActiveKeyAsync();
 
         if (active is null)
         {

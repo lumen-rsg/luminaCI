@@ -70,37 +70,34 @@ public class MinioStorageService
     }
 
     /// <summary>
-    /// Fetches the stored PGP signature for an artifact from BuildService over
-    /// the message bus and rejects publication if none exists. RepositoryService
-    /// has no view of BuildDbContext, so it cannot read the signature directly.
-    /// A null/empty signature means the artifact was never signed (no active key,
-    /// signing failed, or the CVE scan skipped signing) and must not be
-    /// published — this is the authoritative fail-closed gate for the
-    /// artifact-to-repo path.
+    /// Fetches metadata recorded only after an embedded RPM signature was
+    /// verified. A missing fingerprint or final signed digest blocks publication.
     /// </summary>
-    private async Task<string> GetRequiredArtifactSignatureAsync(Guid artifactId)
+    private async Task<ArtifactSigningMetadata> GetRequiredArtifactSigningAsync(Guid artifactId)
     {
-        string? signature = null;
+        ArtifactSigningMetadata signing;
         try
         {
-            var response = await _bus.Request<GetArtifactSignature, ArtifactSignature>(
-                new GetArtifactSignature(artifactId), timeout: TimeSpan.FromSeconds(10));
-            signature = response.Message.PgpSignature;
+            var response = await _bus.Request<GetArtifactSigningMetadata, ArtifactSigningMetadata>(
+                new GetArtifactSigningMetadata(artifactId), timeout: TimeSpan.FromSeconds(10));
+            signing = response.Message;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch PGP signature for artifact {ArtifactId} from BuildService via bus", artifactId);
+            _logger.LogError(ex, "Failed to fetch RPM signing metadata for artifact {ArtifactId}", artifactId);
             throw new ValidationException(
-                $"Could not confirm a PGP signature for artifact {artifactId} (BuildService unreachable). Unsigned packages cannot be published.");
+                $"Could not confirm an embedded RPM signature for artifact {artifactId}. Unsigned packages cannot be published.");
         }
 
-        if (string.IsNullOrWhiteSpace(signature))
+        if (string.IsNullOrWhiteSpace(signing.KeyFingerprint) ||
+            string.IsNullOrWhiteSpace(signing.SignedSha256) ||
+            signing.SignedAt is null)
         {
             throw new ValidationException(
-                $"Artifact {artifactId} is not PGP-signed. Unsigned packages cannot be published — generate an active PGP key and ensure the Sign stage completed before publishing.");
+                $"Artifact {artifactId} has no verified embedded RPM signature.");
         }
 
-        return signature;
+        return signing;
     }
 
     /// <summary>
@@ -119,7 +116,7 @@ public class MinioStorageService
         // that was never written anywhere in the pipeline, so it always fell
         // into the catch branch and published a zero-byte placeholder under a
         // fabricated name. The bus request is the established pattern — it
-        // mirrors GetArtifactSignature, the tiny sibling of this lookup.
+        // mirrors the signing-metadata request, the tiny sibling of this lookup.
         ArtifactContent artifact;
         try
         {
@@ -138,6 +135,13 @@ public class MinioStorageService
         {
             throw new ValidationException(
                 $"Artifact {artifactId} has no content to publish (empty payload from BuildService).");
+        }
+
+        var signing = await GetRequiredArtifactSigningAsync(artifactId);
+        if (!string.Equals(signing.SignedSha256, artifact.HashSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ValidationException(
+                $"Artifact {artifactId} signing metadata does not match its final signed digest.");
         }
 
         // FUNC-007: preserve the real NEVRA filename instead of fabricating
@@ -189,7 +193,7 @@ public class MinioStorageService
             HashSha256 = !string.IsNullOrWhiteSpace(artifact.HashSha256)
                 ? artifact.HashSha256
                 : _repoManager.ComputeSha256(savedPath),
-            PgpSignature = await GetRequiredArtifactSignatureAsync(artifactId),
+            SigningKeyFingerprint = signing.KeyFingerprint,
             PublishedAt = DateTime.UtcNow,
             PublishedBy = publishedBy
         };

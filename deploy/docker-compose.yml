@@ -290,8 +290,8 @@ services:
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
-      - Gpg__KeyStorePath=/app/keys
-      - Gpg__Passphrase=${GPG_PASSPHRASE:?GPG_PASSPHRASE must be set in .env (see deploy/.env.example)}
+      - Gpg__KeyDirectory=/app/keys
+      - Gpg__PassphraseFile=/run/secrets/lumina_gpg_passphrase
       - Services__BuildService=http://build-service:5001
       # Shared JWT config so security-service can re-validate bearer tokens
       # (defense-in-depth) — see SEC-04. Internal port 5002 is NOT published.
@@ -302,6 +302,8 @@ services:
       - gpg_keys:/app/keys
       - gpg_gnupghome:/app/.gnupg
       - /opt/lumina/builds:/app/builds:z
+    secrets:
+      - lumina_gpg_passphrase
     depends_on:
       volume-init:
         condition: service_completed_successfully
@@ -512,6 +514,10 @@ volumes:
   trivy_cache:
   repo_data:
   source_temp:
+
+secrets:
+  lumina_gpg_passphrase:
+    file: ${GPG_PASSPHRASE_FILE:?GPG_PASSPHRASE_FILE must point to the signing passphrase secret}
 
 networks:
   lumina-network:

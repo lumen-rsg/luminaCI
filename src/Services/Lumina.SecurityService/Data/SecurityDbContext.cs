@@ -20,14 +20,20 @@ public class SecurityDbContext : DbContext
             entity.Property(e => e.KeyName).IsRequired().HasMaxLength(200);
             entity.Property(e => e.PublicKey).IsRequired();
             entity.HasIndex(e => e.KeyId).IsUnique();
+            entity.HasIndex(e => e.IsActive)
+                .IsUnique()
+                .HasFilter("\"IsActive\" = TRUE");
         });
 
         modelBuilder.Entity<SigningRequest>(entity =>
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ArtifactPath).IsRequired();
-            entity.Property(e => e.SignaturePath).IsRequired();
+            entity.Property(e => e.KeyFingerprint).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.ExpectedSha256).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.SignedSha256).HasMaxLength(64);
             entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
+            entity.HasIndex(e => e.ArtifactId).IsUnique();
         });
 
         modelBuilder.Entity<HashRecord>(entity =>

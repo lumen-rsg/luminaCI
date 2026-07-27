@@ -33,10 +33,6 @@
                             <label class="form-label small">Email</label>
                             <input type="email" class="form-control form-control-sm" @bind="_keyEmail" placeholder="build@lumina-ci.local" />
                         </div>
-                        <div class="mb-2">
-                            <label class="form-label small">Passphrase</label>
-                            <input type="password" class="form-control form-control-sm" @bind="_keyPassphrase" placeholder="Optional" />
-                        </div>
                         <button class="btn btn-primary btn-sm" @onclick="GenerateKey" disabled="@(_generatingKey)">
                             @if (_generatingKey)
                             {
@@ -53,28 +49,10 @@
                     </div>
                 }
 
-                <p class="text-sm text-muted">Sign packages with PGP keys to ensure authenticity and integrity.</p>
-                <div class="mb-3">
-                    <label class="form-label">Artifact ID</label>
-                    <input type="text" class="form-control form-control-sm" @bind="_signArtifactId" placeholder="Enter artifact Guid" />
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Key ID</label>
-                    <input type="text" class="form-control form-control-sm" @bind="_signKeyId" placeholder="Enter key Guid" />
-                </div>
-                <button class="btn btn-warning btn-sm" @onclick="SignPackage" disabled="@(_signing)">
-                    @if (_signing)
-                    {
-                        <span class="spinner-border spinner-border-sm"></span>
-                    }
-                    Sign Package
-                </button>
-                @if (_signResult != null)
-                {
-                    <div class="alert @(string.IsNullOrEmpty(_signResult.Error) ? "alert-success" : "alert-danger") mt-3 animate-slide-in">
-                        @(string.IsNullOrEmpty(_signResult.Error) ? _signResult.Message ?? "Package signed successfully" : _signResult.Error)
-                    </div>
-                }
+                <p class="text-sm text-muted mb-0">
+                    The newest key is activated exclusively. Clean build artifacts are signed
+                    automatically with an embedded, verified RPM signature.
+                </p>
             </div>
         </div>
     </div>
@@ -206,17 +184,11 @@
     private const int SecurityPageSize = 20;
     private int _hashPage = 1;
     private int _scanPage = 1;
-    private ApiResponse<object>? _signResult;
-    private bool _signing = false;
-    private string _signArtifactId = "";
-    private string _signKeyId = "";
-
     // Key generation
     private bool _showGenerateKey = false;
     private bool _generatingKey = false;
     private string _keyName = "lumina-build";
     private string _keyEmail = "build@lumina-ci.local";
-    private string _keyPassphrase = "";
     private ApiResponse<object>? _keyResult;
 
     protected override async Task OnInitializedAsync()
@@ -245,19 +217,6 @@
         await LoadScans();
     }
 
-    private async Task SignPackage()
-    {
-        if (!Guid.TryParse(_signArtifactId, out var artifactId) || !Guid.TryParse(_signKeyId, out var keyId)) return;
-        _signing = true;
-        try
-        {
-            _signResult = await Api.SignPackageAsync(new SignPackageRequest(artifactId, keyId));
-            await LoadHashes();
-        }
-        catch (Exception ex) { Logger.LogError(ex, "Failed to sign package"); }
-        finally { _signing = false; }
-    }
-
     private static string GetScanBadge(ScanSummaryResponse scan) => scan.Status switch
     {
         Lumina.Shared.Models.Enums.ScanStatus.Completed when scan.CriticalCount > 0 => "bg-danger",
@@ -276,13 +235,12 @@
         _keyResult = null;
         try
         {
-            _keyResult = await Api.GenerateKeyAsync(_keyName, _keyEmail, _keyPassphrase);
+            _keyResult = await Api.GenerateKeyAsync(_keyName, _keyEmail);
             if (_keyResult?.Success == true)
             {
                 _showGenerateKey = false;
                 _keyName = "lumina-build";
                 _keyEmail = "build@lumina-ci.local";
-                _keyPassphrase = "";
             }
         }
         catch (Exception ex) { Logger.LogError(ex, "Failed to generate key"); }

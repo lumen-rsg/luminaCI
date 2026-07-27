@@ -6,13 +6,13 @@ using Microsoft.EntityFrameworkCore;
 namespace Lumina.BuildService.Consumers;
 
 /// <summary>
-/// Answers <see cref="GetArtifactSignature"/> requests over the message bus so
+/// Answers <see cref="GetArtifactSigningMetadata"/> requests over the message bus so
 /// RepositoryService can enforce the "no unsigned publication" gate at publish
 /// time without a direct view of BuildDbContext. Returns the stored
-/// <see cref="BuildArtifact.PgpSignature"/> (null when the artifact was never
-/// signed); RepositoryService treats null/empty as "publish blocked".
+/// the publisher can fail closed unless SecurityService recorded a verified
+/// embedded RPM signature and final signed digest.
 /// </summary>
-public class GetArtifactSignatureConsumer : IConsumer<GetArtifactSignature>
+public class GetArtifactSignatureConsumer : IConsumer<GetArtifactSigningMetadata>
 {
     private readonly BuildDbContext _db;
     private readonly ILogger<GetArtifactSignatureConsumer> _logger;
@@ -23,19 +23,20 @@ public class GetArtifactSignatureConsumer : IConsumer<GetArtifactSignature>
         _logger = logger;
     }
 
-    public async Task Consume(ConsumeContext<GetArtifactSignature> context)
+    public async Task Consume(ConsumeContext<GetArtifactSigningMetadata> context)
     {
         var artifactId = context.Message.ArtifactId;
-        var signature = await _db.BuildArtifacts
+        var signing = await _db.BuildArtifacts
             .Where(a => a.Id == artifactId)
-            .Select(a => a.PgpSignature)
+            .Select(a => new { a.SigningKeyFingerprint, a.HashSha256, a.SignedAt })
             .FirstOrDefaultAsync();
 
-        if (signature is null)
+        if (signing?.SigningKeyFingerprint is null)
         {
-            _logger.LogWarning("GetArtifactSignature for {ArtifactId}: artifact has no stored PGP signature", artifactId);
+            _logger.LogWarning("Artifact {ArtifactId} has no verified embedded RPM signature", artifactId);
         }
 
-        await context.RespondAsync(new ArtifactSignature(signature));
+        await context.RespondAsync(new ArtifactSigningMetadata(
+            signing?.SigningKeyFingerprint, signing?.HashSha256, signing?.SignedAt));
     }
 }

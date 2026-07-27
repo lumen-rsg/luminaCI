@@ -30,6 +30,7 @@ public class RepositoryDbContext : DbContext
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Version).IsRequired().HasMaxLength(50);
             entity.Property(e => e.FileName).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.SigningKeyFingerprint).HasMaxLength(64);
             entity.HasIndex(e => new { e.RepositoryId, e.Name, e.Version, e.Arch });
         });
     }

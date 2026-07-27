@@ -23,8 +23,7 @@ public class GetActiveSigningKeyConsumer : IConsumer<GetActiveSigningKey>
 
     public async Task Consume(ConsumeContext<GetActiveSigningKey> context)
     {
-        var keys = await _pgp.ListKeysAsync();
-        var active = keys.FirstOrDefault(k => k.IsActive);
+        var active = await _pgp.GetActiveKeyAsync();
 
         if (active is null)
         {

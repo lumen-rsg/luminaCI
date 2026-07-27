@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using Lumina.SecurityService.Data;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
@@ -8,225 +10,376 @@ namespace Lumina.SecurityService.Services;
 
 public class PgpSigningService
 {
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> ArtifactLocks = new();
+
     private readonly SecurityDbContext _db;
     private readonly ILogger<PgpSigningService> _logger;
-    private readonly IConfiguration _config;
-    private readonly RedisCacheService _cache;
     private readonly string _artifactsRoot;
+    private readonly string _keyDirectory;
+    private readonly string _passphraseFile;
 
-    public PgpSigningService(SecurityDbContext db, ILogger<PgpSigningService> logger, IConfiguration config, RedisCacheService cache)
+    public PgpSigningService(
+        SecurityDbContext db,
+        ILogger<PgpSigningService> logger,
+        IConfiguration config)
     {
         _db = db;
         _logger = logger;
-        _config = config;
-        _cache = cache;
-        // Artifacts are shared from the host at /opt/lumina/builds and mounted
-        // into the service at /app/builds. Only files under this root may be
-        // signed — never hand a client-supplied absolute path to gpg.
         _artifactsRoot = config["Builds:ArtifactsRoot"] ?? "/app/builds";
+        _keyDirectory = config["Gpg:KeyDirectory"] ?? "/app/keys";
+        _passphraseFile = config["Gpg:PassphraseFile"]
+            ?? throw new InvalidOperationException(
+                "Gpg:PassphraseFile is not configured. Mount the RPM signing passphrase as a secret file.");
     }
 
-    public async Task<SecurityKey> GenerateKeyAsync(string keyName, string email, string passphrase, string createdBy)
+    public async Task<SecurityKey> GenerateKeyAsync(string keyName, string email, string createdBy)
     {
-        // SECURITY: Validate all user inputs against strict allowlists to prevent
-        // GPG batch script injection. The old SanitizeGpgField used a shell-metachar
-        // denylist that wrongly rejected legitimate names (parentheses, accents);
-        // the per-field validators below define the exact character set each field
-        // may contain, so there is nothing to bypass.
         var safeKeyName = ProcessArgumentSanitizer.ValidateKeyName(keyName);
         var safeEmail = ProcessArgumentSanitizer.ValidateEmail(email);
-        var safePassphrase = ProcessArgumentSanitizer.ValidateGpgPassphrase(passphrase);
+        EnsurePassphraseFile();
+        Directory.CreateDirectory(_keyDirectory);
 
-        var keyId = Guid.NewGuid().ToString("N")[..16];
-        var keyDir = _config["Gpg:KeyDirectory"] ?? "/app/keys";
-        Directory.CreateDirectory(keyDir);
-
-        var keyFilePath = Path.Combine(keyDir, $"lumina-{keyId}");
-
-        // GPG batch script — sanitized inputs prevent injection
-        var batchScript = $@"
-%echo Generating PGP key for Lumina CI
-Key-Type: RSA
-Key-Length: 4096
-Subkey-Type: RSA
-Subkey-Length: 2048
-Name-Real: {safeKeyName}
-Name-Email: {safeEmail}
-Expire-Date: 0
-Passphrase: {safePassphrase}
-%commit
-%echo Done
-";
-        var batchFile = Path.Combine(keyDir, $"batch-{keyId}");
-        await File.WriteAllTextAsync(batchFile, batchScript);
-
-        try
+        var uid = $"{safeKeyName} <{safeEmail}>";
+        var existingFingerprints = (await ListSecretKeyFingerprintsAsync(uid))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var generate = await RunProcessAsync("gpg", args =>
         {
-            // SECURITY: Use ArgumentList instead of string concatenation
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "gpg",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            startInfo.ArgumentList.Add("--batch");
-            startInfo.ArgumentList.Add("--pinentry-mode");
-            startInfo.ArgumentList.Add("loopback");
-            startInfo.ArgumentList.Add("--generate-key");
-            startInfo.ArgumentList.Add(batchFile);
+            args.Add("--batch");
+            args.Add("--pinentry-mode");
+            args.Add("loopback");
+            args.Add("--passphrase-file");
+            args.Add(_passphraseFile);
+            args.Add("--quick-generate-key");
+            args.Add(uid);
+            args.Add("rsa4096");
+            args.Add("sign");
+            args.Add("0");
+        });
+        EnsureSuccess(generate, "GPG key generation");
 
-            using var process = Process.Start(startInfo);
-            if (process == null) throw new InvalidOperationException("Failed to start gpg process");
-            await process.WaitForExitAsync();
+        var fingerprint = (await ListSecretKeyFingerprintsAsync(uid))
+            .SingleOrDefault(candidate => !existingFingerprints.Contains(candidate))
+            ?? throw new InvalidOperationException("GPG did not expose the newly generated key fingerprint.");
+        var export = await RunProcessAsync("gpg", args =>
+        {
+            args.Add("--batch");
+            args.Add("--armor");
+            args.Add("--export");
+            args.Add(fingerprint);
+        });
+        EnsureSuccess(export, "GPG public-key export");
+        if (string.IsNullOrWhiteSpace(export.StandardOutput))
+            throw new InvalidOperationException("GPG public-key export returned no key data.");
 
-            if (process.ExitCode != 0)
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        await _db.SecurityKeys
+            .Where(k => k.IsActive)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(k => k.IsActive, false));
+
+        var key = new SecurityKey
+        {
+            Id = Guid.NewGuid(),
+            KeyId = fingerprint,
+            KeyName = safeKeyName,
+            PublicKey = export.StandardOutput,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow,
+            CreatedBy = createdBy
+        };
+        _db.SecurityKeys.Add(key);
+        await _db.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        _logger.LogInformation("RPM signing key {Fingerprint} generated and activated for {KeyName}", fingerprint, safeKeyName);
+        return key;
+    }
+
+    public async Task ReconcileLegacyKeyFingerprintsAsync()
+    {
+        var keys = await _db.SecurityKeys.ToListAsync();
+        foreach (var key in keys.Where(k => !IsFingerprint(k.KeyId)))
+        {
+            var keyFile = Path.Combine(_keyDirectory, $"reconcile-{Guid.NewGuid():N}.asc");
+            Directory.CreateDirectory(_keyDirectory);
+            await File.WriteAllTextAsync(keyFile, key.PublicKey);
+            try
             {
-                var error = await process.StandardError.ReadToEndAsync();
-                throw new InvalidOperationException($"GPG key generation failed: {error}");
+                var inspect = await RunProcessAsync("gpg", args =>
+                {
+                    args.Add("--batch");
+                    args.Add("--with-colons");
+                    args.Add("--import-options");
+                    args.Add("show-only");
+                    args.Add("--import");
+                    args.Add(keyFile);
+                });
+                EnsureSuccess(inspect, "legacy GPG fingerprint inspection");
+                key.KeyId = ExtractFingerprint(inspect.StandardOutput);
             }
-
-            // Export public key
-            var exportPubInfo = new ProcessStartInfo
+            finally
             {
-                FileName = "gpg",
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            exportPubInfo.ArgumentList.Add("--armor");
-            exportPubInfo.ArgumentList.Add("--export");
-            exportPubInfo.ArgumentList.Add(safeEmail);
-
-            using var exportProcess = Process.Start(exportPubInfo);
-            if (exportProcess == null) throw new InvalidOperationException("Failed to export public key");
-            var publicKey = await exportProcess.StandardOutput.ReadToEndAsync();
-            await exportProcess.WaitForExitAsync();
-
-            var key = new SecurityKey
-            {
-                Id = Guid.NewGuid(),
-                KeyId = keyId,
-                KeyName = safeKeyName,
-                PublicKey = publicKey,
-                IsActive = true,
-                CreatedAt = DateTime.UtcNow,
-                CreatedBy = createdBy
-            };
-
-            _db.SecurityKeys.Add(key);
-            await _db.SaveChangesAsync();
-
-            _logger.LogInformation("PGP key {KeyId} generated for {KeyName}", keyId, safeKeyName);
-            await _cache.RemoveAsync(CacheKeys.SecurityKeysList);
-            return key;
+                File.Delete(keyFile);
+            }
         }
-        finally
+
+        if (_db.ChangeTracker.HasChanges())
         {
-            if (File.Exists(batchFile)) File.Delete(batchFile);
+            await _db.SaveChangesAsync();
         }
     }
 
-    public async Task<SigningRequest> SignArtifactAsync(Guid artifactId, string artifactPath, Guid keyId)
+    public async Task<SigningRequest> SignArtifactAsync(
+        Guid artifactId,
+        string artifactPath,
+        string expectedSha256,
+        Guid keyId)
     {
-        var key = await _db.SecurityKeys.FindAsync(keyId);
-        if (key == null) throw new InvalidOperationException($"Key {keyId} not found");
-        if (!key.IsActive) throw new InvalidOperationException($"Key {keyId} is not active");
-
-        // SECURITY: confine the client-supplied path to the trusted artifacts
-        // root so the endpoint cannot sign (and thereby read) arbitrary files.
-        // The previous SanitizeFilePath result was never applied to the gpg
-        // invocation, and it returns a shell-quoted form unsuitable for
-        // ArgumentList; ResolveConfinedPath returns a canonical path instead.
-        var safeArtifactPath = ProcessArgumentSanitizer.ResolveConfinedPath(artifactPath, _artifactsRoot);
-        var signaturePath = safeArtifactPath + ".asc";
-
-        var request = new SigningRequest
-        {
-            Id = Guid.NewGuid(),
-            ArtifactId = artifactId,
-            ArtifactPath = safeArtifactPath,
-            SignaturePath = signaturePath,
-            KeyId = keyId,
-            Status = "Pending",
-            CreatedAt = DateTime.UtcNow
-        };
+        ValidateSha256(expectedSha256);
+        var gate = ArtifactLocks.GetOrAdd(artifactId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync();
 
         try
         {
-            // SECURITY: Use ArgumentList instead of string concatenation
-            var passphrase = _config["Gpg:Passphrase"]
-                ?? throw new InvalidOperationException("Gpg:Passphrase is not configured. Set GPG_PASSPHRASE in the environment.");
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "gpg",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            startInfo.ArgumentList.Add("--batch");
-            startInfo.ArgumentList.Add("--yes");
-            startInfo.ArgumentList.Add("--pinentry-mode");
-            startInfo.ArgumentList.Add("loopback");
-            startInfo.ArgumentList.Add("--passphrase");
-            startInfo.ArgumentList.Add(passphrase);
-            startInfo.ArgumentList.Add("--detach-sign");
-            startInfo.ArgumentList.Add("--armor");
-            startInfo.ArgumentList.Add("--output");
-            startInfo.ArgumentList.Add(signaturePath);
-            startInfo.ArgumentList.Add(safeArtifactPath);
+            var safeArtifactPath = ProcessArgumentSanitizer.ResolveConfinedPath(artifactPath, _artifactsRoot);
+            if (!string.Equals(Path.GetExtension(safeArtifactPath), ".rpm", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Only RPM artifacts can be signed.");
+            if (!File.Exists(safeArtifactPath))
+                throw new FileNotFoundException("RPM artifact not found.", safeArtifactPath);
 
-            using var process = Process.Start(startInfo);
-            if (process == null) throw new InvalidOperationException("Failed to start gpg process");
-            await process.WaitForExitAsync();
+            var key = await _db.SecurityKeys.SingleOrDefaultAsync(k => k.Id == keyId)
+                ?? throw new InvalidOperationException($"Key {keyId} not found.");
+            if (!key.IsActive)
+                throw new InvalidOperationException($"Key {keyId} is not active.");
 
-            if (process.ExitCode != 0)
+            var request = await _db.SigningRequests.SingleOrDefaultAsync(r => r.ArtifactId == artifactId);
+            if (request?.Status == "Signed")
             {
-                var error = await process.StandardError.ReadToEndAsync();
-                request.Status = "Failed";
-                request.Error = error;
-                request.CompletedAt = DateTime.UtcNow;
-                _db.SigningRequests.Add(request);
-                await _db.SaveChangesAsync();
-                throw new InvalidOperationException($"Signing failed: {error}");
+                if (!string.Equals(request.ExpectedSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("The signing request digest does not match the completed signing record.");
+
+                var currentHash = await ComputeSha256Async(safeArtifactPath);
+                if (!string.Equals(currentHash, request.SignedSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("The signed RPM changed after signing.");
+                return request;
             }
 
-            // Read the signature content
-            var signatureContent = await File.ReadAllTextAsync(signaturePath);
-
-            request.Status = "Signed";
-            request.CompletedAt = DateTime.UtcNow;
-            _db.SigningRequests.Add(request);
+            request ??= new SigningRequest
+            {
+                Id = Guid.NewGuid(),
+                ArtifactId = artifactId,
+                ArtifactPath = safeArtifactPath,
+                KeyId = key.Id,
+                KeyFingerprint = key.KeyId,
+                ExpectedSha256 = expectedSha256,
+                CreatedAt = DateTime.UtcNow
+            };
+            request.ArtifactPath = safeArtifactPath;
+            request.KeyId = key.Id;
+            request.KeyFingerprint = key.KeyId;
+            request.ExpectedSha256 = expectedSha256;
+            request.Status = "Pending";
+            request.Error = null;
+            request.CompletedAt = null;
+            request.SignedSha256 = null;
+            request.SignedFileSize = null;
+            if (_db.Entry(request).State == EntityState.Detached)
+                _db.SigningRequests.Add(request);
             await _db.SaveChangesAsync();
 
-            request.SignatureContent = signatureContent;
+            var actualSha256 = await ComputeSha256Async(safeArtifactPath);
+            if (!string.Equals(actualSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"Artifact digest mismatch before signing: expected {expectedSha256}, got {actualSha256}.");
 
-            _logger.LogInformation("Artifact {ArtifactPath} signed with key {KeyId}", safeArtifactPath, keyId);
+            EnsurePassphraseFile();
+            var tempPath = Path.Combine(
+                Path.GetDirectoryName(safeArtifactPath)!,
+                $".{Path.GetFileNameWithoutExtension(safeArtifactPath)}.{Guid.NewGuid():N}.rpm");
+            var verificationDirectory = Path.Combine(_keyDirectory, $"verify-{Guid.NewGuid():N}");
 
-            return request;
+            try
+            {
+                File.Copy(safeArtifactPath, tempPath, overwrite: false);
+
+                var sign = await RunProcessAsync("rpmsign", args =>
+                {
+                    args.Add("--define");
+                    args.Add($"_gpg_path {Environment.GetEnvironmentVariable("GNUPGHOME") ?? "/app/.gnupg"}");
+                    args.Add("--define");
+                    args.Add($"_gpg_name {key.KeyId}");
+                    args.Add("--define");
+                    args.Add($"_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback --passphrase-file {_passphraseFile}");
+                    args.Add("--resign");
+                    args.Add(tempPath);
+                });
+                EnsureSuccess(sign, "RPM signing");
+
+                await VerifyEmbeddedSignatureAsync(tempPath, key.PublicKey, verificationDirectory);
+
+                request.SignedSha256 = await ComputeSha256Async(tempPath);
+                request.SignedFileSize = new FileInfo(tempPath).Length;
+                File.Move(tempPath, safeArtifactPath, overwrite: true);
+
+                request.Status = "Signed";
+                request.CompletedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+
+                _logger.LogInformation(
+                    "RPM artifact {ArtifactId} signed and verified with key {Fingerprint}",
+                    artifactId, key.KeyId);
+                return request;
+            }
+            finally
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
+                if (Directory.Exists(verificationDirectory))
+                    Directory.Delete(verificationDirectory, recursive: true);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to sign artifact {ArtifactPath}", safeArtifactPath);
+            var request = await _db.SigningRequests.SingleOrDefaultAsync(r => r.ArtifactId == artifactId);
+            if (request is not null && request.Status != "Signed")
+            {
+                request.Status = "Failed";
+                request.Error = ex.Message;
+                request.CompletedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+            }
+
+            _logger.LogError(ex, "Failed to sign RPM artifact {ArtifactId}", artifactId);
             throw;
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 
-    public async Task<List<SecurityKey>> ListKeysAsync()
+    public async Task<SecurityKey?> GetActiveKeyAsync() =>
+        await _db.SecurityKeys.SingleOrDefaultAsync(k => k.IsActive);
+
+    public async Task<List<SecurityKey>> ListKeysAsync() =>
+        await _db.SecurityKeys.OrderByDescending(k => k.CreatedAt).ToListAsync();
+
+    public async Task<List<SigningRequest>> GetRecentSigningsAsync(int count = 50) =>
+        await _db.SigningRequests.OrderByDescending(s => s.CreatedAt).Take(count).ToListAsync();
+
+    private async Task VerifyEmbeddedSignatureAsync(string rpmPath, string publicKey, string verificationDirectory)
     {
-        return await _cache.GetOrSetAsync(
-            CacheKeys.SecurityKeysList,
-            async () => await _db.SecurityKeys.OrderByDescending(k => k.CreatedAt).ToListAsync(),
-            TimeSpan.FromMinutes(10));
+        Directory.CreateDirectory(verificationDirectory);
+        var publicKeyPath = Path.Combine(verificationDirectory, "signing-key.asc");
+        await File.WriteAllTextAsync(publicKeyPath, publicKey);
+
+        var import = await RunProcessAsync("rpmkeys", args =>
+        {
+            args.Add("--dbpath");
+            args.Add(verificationDirectory);
+            args.Add("--import");
+            args.Add(publicKeyPath);
+        });
+        EnsureSuccess(import, "RPM verification-key import");
+
+        var verify = await RunProcessAsync("rpmkeys", args =>
+        {
+            args.Add("--dbpath");
+            args.Add(verificationDirectory);
+            args.Add("--checksig");
+            args.Add(rpmPath);
+        });
+        EnsureSuccess(verify, "RPM signature verification");
+        var output = $"{verify.StandardOutput}\n{verify.StandardError}";
+        if (!output.Contains("signatures OK", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"RPM signature verification did not report a valid signature: {output.Trim()}");
     }
 
-    public async Task<List<SigningRequest>> GetRecentSigningsAsync(int count = 50)
+    private async Task<List<string>> ListSecretKeyFingerprintsAsync(string selector)
     {
-        return await _cache.GetOrSetAsync(
-            CacheKeys.SigningHistory(count),
-            async () => await _db.SigningRequests.OrderByDescending(s => s.CreatedAt).Take(count).ToListAsync(),
-            TimeSpan.FromMinutes(5));
+        var result = await RunProcessAsync("gpg", args =>
+        {
+            args.Add("--batch");
+            args.Add("--with-colons");
+            args.Add("--fingerprint");
+            args.Add("--list-secret-keys");
+            args.Add(selector);
+        });
+        EnsureSuccess(result, "GPG fingerprint lookup");
+
+        return ExtractFingerprints(result.StandardOutput);
     }
+
+    private static string ExtractFingerprint(string colonOutput)
+    {
+        var fingerprint = ExtractFingerprints(colonOutput).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(fingerprint))
+            throw new InvalidOperationException("GPG did not return a full fingerprint.");
+        return fingerprint;
+    }
+
+    private static List<string> ExtractFingerprints(string colonOutput)
+    {
+        return colonOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Split(':'))
+            .Where(fields => fields.Length > 9 && fields[0] == "fpr")
+            .Select(fields => fields[9])
+            .Where(fingerprint => !string.IsNullOrWhiteSpace(fingerprint))
+            .Select(fingerprint => fingerprint.ToUpperInvariant())
+            .ToList();
+    }
+
+    private static bool IsFingerprint(string value) =>
+        value.Length is 40 or 64 && value.All(Uri.IsHexDigit);
+
+    private void EnsurePassphraseFile()
+    {
+        if (!Path.IsPathFullyQualified(_passphraseFile) || !File.Exists(_passphraseFile))
+            throw new InvalidOperationException("The configured GPG passphrase secret file is missing.");
+        if (new FileInfo(_passphraseFile).Length == 0)
+            throw new InvalidOperationException("The configured GPG passphrase secret file is empty.");
+    }
+
+    private static void ValidateSha256(string value)
+    {
+        if (value.Length != 64 || value.Any(c => !Uri.IsHexDigit(c)))
+            throw new ArgumentException("ExpectedSha256 must be a 64-character hexadecimal SHA-256 digest.", nameof(value));
+    }
+
+    private static async Task<string> ComputeSha256Async(string path)
+    {
+        await using var stream = File.OpenRead(path);
+        return Convert.ToHexString(await SHA256.HashDataAsync(stream)).ToLowerInvariant();
+    }
+
+    private static async Task<ProcessResult> RunProcessAsync(string fileName, Action<List<string>> configure)
+    {
+        var arguments = new List<string>();
+        configure(arguments);
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Failed to start {fileName}.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return new ProcessResult(process.ExitCode, await stdout, await stderr);
+    }
+
+    private static void EnsureSuccess(ProcessResult result, string operation)
+    {
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"{operation} failed (exit {result.ExitCode}): {result.StandardError.Trim()}");
+    }
+
+    private sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError);
 }

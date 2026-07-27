@@ -82,8 +82,14 @@ public class CveScanCompletedConsumer : IConsumer<CveScanCompleted>
                 var activeKeyId = await GetActivePgpKeyIdAsync();
                 if (activeKeyId.HasValue)
                 {
+                    if (string.IsNullOrWhiteSpace(artifact.HashSha256))
+                    {
+                        throw new InvalidOperationException(
+                            $"Artifact {msg.ArtifactId} has no SHA-256 digest to bind to the signing request.");
+                    }
                     await context.Publish(new PackageSigningRequested(
-                        msg.ArtifactId, artifact.FilePath ?? "", artifact.FileName, activeKeyId.Value, DateTime.UtcNow));
+                        msg.ArtifactId, artifact.FilePath ?? "", artifact.FileName,
+                        artifact.HashSha256, activeKeyId.Value, DateTime.UtcNow));
                     _logger.LogInformation("Published PackageSigningRequested for artifact {ArtifactId} with key {KeyId}", msg.ArtifactId, activeKeyId.Value);
                 }
                 else

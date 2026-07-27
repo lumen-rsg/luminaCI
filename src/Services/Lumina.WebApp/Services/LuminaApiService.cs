@@ -216,15 +216,9 @@ public class LuminaApiService
             $"/api/security/hashes?page={page}&pageSize={pageSize}", nameof(GetHashRecordsAsync));
     }
 
-    public async Task<ApiResponse<object>?> SignPackageAsync(SignPackageRequest request)
+    public async Task<ApiResponse<object>?> GenerateKeyAsync(string keyName, string email)
     {
-        var resp = await _http.PostAsJsonAsync("/api/security/sign", request);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
-    }
-
-    public async Task<ApiResponse<object>?> GenerateKeyAsync(string keyName, string email, string passphrase)
-    {
-        var resp = await _http.PostAsJsonAsync("/api/security/keys/generate", new GenerateKeyRequest(keyName, email, passphrase));
+        var resp = await _http.PostAsJsonAsync("/api/security/keys/generate", new GenerateKeyRequest(keyName, email));
         return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
     }
 

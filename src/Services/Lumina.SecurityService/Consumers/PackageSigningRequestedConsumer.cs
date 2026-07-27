@@ -22,8 +22,16 @@ public class PackageSigningRequestedConsumer : IConsumer<PackageSigningRequested
 
         try
         {
-            var signingRequest = await _signingService.SignArtifactAsync(msg.ArtifactId, msg.ArtifactPath, msg.KeyId);
-            await context.Publish(new PackageSigned(msg.ArtifactId, signingRequest.SignatureContent ?? "", DateTime.UtcNow));
+            var signingRequest = await _signingService.SignArtifactAsync(
+                msg.ArtifactId, msg.ArtifactPath, msg.ExpectedSha256, msg.KeyId);
+            await context.Publish(new PackageSigned(
+                msg.ArtifactId,
+                signingRequest.KeyFingerprint,
+                signingRequest.SignedSha256
+                    ?? throw new InvalidOperationException("Signing completed without a signed artifact digest."),
+                signingRequest.SignedFileSize
+                    ?? throw new InvalidOperationException("Signing completed without a signed artifact size."),
+                signingRequest.CompletedAt ?? DateTime.UtcNow));
             _logger.LogInformation("Artifact {ArtifactId} signed successfully", msg.ArtifactId);
         }
         catch (Exception ex)

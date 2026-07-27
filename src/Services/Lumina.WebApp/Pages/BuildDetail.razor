@@ -254,7 +254,7 @@ else
                                     }
                                 </td>
                                 <td>
-                                    @if (!string.IsNullOrEmpty(artifact.PgpSignature))
+                                    @if (!string.IsNullOrEmpty(artifact.SigningKeyFingerprint))
                                     {
                                         <span class="badge bg-success">SIGNED</span>
                                     }
@@ -470,7 +470,7 @@ else
         _selectedArtifactId.HasValue
         && _build?.Data?.Artifacts != null
         && _build.Data.Artifacts.FirstOrDefault(a => a.Id == _selectedArtifactId.Value) is { } sel
-        && string.IsNullOrEmpty(sel.PgpSignature);
+        && string.IsNullOrEmpty(sel.SigningKeyFingerprint);
 
     protected override async Task OnInitializedAsync()
     {
@@ -709,7 +709,7 @@ else
         ));
 
         // Sign stage
-        var signed = hasArtifacts && build.Artifacts.All(a => !string.IsNullOrEmpty(a.PgpSignature));
+        var signed = hasArtifacts && build.Artifacts.All(a => !string.IsNullOrEmpty(a.SigningKeyFingerprint));
         stages.Add(new StageInfo(
             "PGP Sign",
             signed ? "status-dot success" : "status-dot pending",

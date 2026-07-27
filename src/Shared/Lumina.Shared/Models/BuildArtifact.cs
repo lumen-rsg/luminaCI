@@ -12,7 +12,8 @@ public class BuildArtifact
     public string? HashSha256 { get; set; }
     public string? HashSha512 { get; set; }
     public string? HashMd5 { get; set; }
-    public string? PgpSignature { get; set; }
+    public string? SigningKeyFingerprint { get; set; }
+    public DateTime? SignedAt { get; set; }
     public ScanStatus CveScanStatus { get; set; } = ScanStatus.Pending;
     public string StoragePath { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

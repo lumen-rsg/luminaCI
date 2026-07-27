@@ -37,25 +37,8 @@ public class SecurityController : ControllerBase
     [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<SecurityKey>>> GenerateKey([FromBody] GenerateKeyRequest request)
     {
-        var key = await _pgp.GenerateKeyAsync(request.KeyName, request.Email, request.Passphrase, "system");
+        var key = await _pgp.GenerateKeyAsync(request.KeyName, request.Email, "system");
         return CreatedAtAction(nameof(ListKeys), new ApiResponse<SecurityKey>(true, key, null, "Key generated"));
-    }
-
-    // === Signing ===
-
-    [HttpPost("sign")]
-    [Authorize(Policy = AuthPolicies.Admin)]
-    public async Task<ActionResult<ApiResponse<SigningRequest>>> SignArtifact([FromBody] SignArtifactRequest request)
-    {
-        try
-        {
-            var result = await _pgp.SignArtifactAsync(request.ArtifactId, request.ArtifactPath, request.KeyId);
-            return Ok(new ApiResponse<SigningRequest>(true, result, null, "Artifact signed"));
-        }
-        catch (Exception ex)
-        {
-            return BadRequest(new ApiResponse<SigningRequest>(false, null, ex.Message, null));
-        }
     }
 
     [HttpGet("signing/history")]

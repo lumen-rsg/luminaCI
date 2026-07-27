@@ -39,13 +39,24 @@ public record HashStoreRequested(Guid ArtifactId, string FileName, string Sha256
 /// Sent by BuildService to request PGP signing of an artifact.
 /// Consumed by SecurityService.
 /// </summary>
-public record PackageSigningRequested(Guid ArtifactId, string ArtifactPath, string FileName, Guid KeyId, DateTime RequestedAt);
+public record PackageSigningRequested(
+    Guid ArtifactId,
+    string ArtifactPath,
+    string FileName,
+    string ExpectedSha256,
+    Guid KeyId,
+    DateTime RequestedAt);
 
 /// <summary>
 /// Sent by SecurityService when PGP signing completes.
 /// Consumed by BuildService to update artifact signature.
 /// </summary>
-public record PackageSigned(Guid ArtifactId, string PgpSignature, DateTime SignedAt);
+public record PackageSigned(
+    Guid ArtifactId,
+    string KeyFingerprint,
+    string SignedSha256,
+    long SignedFileSize,
+    DateTime SignedAt);
 
 /// <summary>
 /// Request the currently-active PGP key from SecurityService over the message
@@ -68,21 +79,20 @@ public record ActiveSigningKey(Guid? KeyId);
 /// uses this at publish time to enforce the "no unsigned publication" gate —
 /// it has no view of BuildDbContext, so it asks BuildService over the bus.
 /// </summary>
-public record GetArtifactSignature(Guid ArtifactId);
+public record GetArtifactSigningMetadata(Guid ArtifactId);
 
 /// <summary>
-/// Response to <see cref="GetArtifactSignature"/>. <c>PgpSignature</c> is null
-/// when the artifact has not been signed (no active key, signing failed, or the
-/// CVE scan skipped signing due to vulnerabilities).
+/// Response to <see cref="GetArtifactSigningMetadata"/>. The fingerprint is null
+/// when the artifact has not received a verified embedded RPM signature.
 /// </summary>
-public record ArtifactSignature(string? PgpSignature);
+public record ArtifactSigningMetadata(string? KeyFingerprint, string? SignedSha256, DateTime? SignedAt);
 
 /// <summary>
 /// Request the content + real NEVRA metadata of a build artifact over the
 /// message bus. RepositoryService uses this at publish time to obtain the RPM
 /// bytes and the real filename/arch — it has no view of BuildDbContext and no
 /// shared filesystem with BuildService, so the artifact must travel over the
-/// bus. <see cref="GetArtifactSignature"/> is the tiny sibling of this request.
+/// bus. <see cref="GetArtifactSigningMetadata"/> is the tiny sibling of this request.
 /// </summary>
 public record GetArtifactContent(Guid ArtifactId);
 

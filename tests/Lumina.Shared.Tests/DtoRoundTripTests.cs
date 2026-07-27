@@ -105,9 +105,7 @@ public class DtoRoundTripTests
     public void Security_Dtos_RoundTrip()
     {
         RoundTrip(new CreateKeyRequest("k", "pub", "priv-ref", DateTime.UtcNow, "ops"));
-        RoundTrip(new GenerateKeyRequest("k", "e@x.com", "pass"));
-        RoundTrip(new SignPackageRequest(Guid.NewGuid(), Guid.NewGuid()));
-        RoundTrip(new SignArtifactRequest(Guid.NewGuid(), "/path", Guid.NewGuid()));
+        RoundTrip(new GenerateKeyRequest("k", "e@x.com"));
         RoundTrip(new VerifySignatureRequest(Guid.NewGuid(), "sig"));
         RoundTrip(new ComputeHashRequest(Guid.NewGuid(), "/file"));
         RoundTrip(new StoreHashRequest(Guid.NewGuid(), "f.rpm", "sha", "md5", 123L));
@@ -153,7 +151,7 @@ public class DtoRoundTripTests
             "cid", "logs", DateTime.UtcNow, null, null, "webhook",
             new List<BuildArtifactResponse>
             {
-                new(Guid.NewGuid(), "a.rpm", 1024, "sha", "md5", "pgp", ScanStatus.Pending)
+                new(Guid.NewGuid(), "a.rpm", 1024, "sha", "md5", "fingerprint", DateTime.UtcNow, ScanStatus.Pending)
             },
             "git://src", "sha1", "main", "msg", "jane");
         var rt = RoundTrip(resp);

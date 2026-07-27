@@ -86,6 +86,7 @@ public class BuildDbContext : DbContext
             entity.ToTable("build_artifacts", "build");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.FileName).IsRequired().HasMaxLength(512);
+            entity.Property(e => e.SigningKeyFingerprint).HasMaxLength(64);
         });
     }
 }

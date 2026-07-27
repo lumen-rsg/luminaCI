@@ -16,6 +16,7 @@ public class Package
     public long FileSize { get; set; }
     public string? HashSha256 { get; set; }
     public string? PgpSignature { get; set; }
+    public string? SigningKeyFingerprint { get; set; }
     public ScanStatus CveScanStatus { get; set; } = ScanStatus.Pending;
     public DateTime PublishedAt { get; set; } = DateTime.UtcNow;
     public string PublishedBy { get; set; } = string.Empty;

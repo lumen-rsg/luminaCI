@@ -173,8 +173,17 @@ MINIO_USER=…               # MinIO (S3) username
 MINIO_PASSWORD=…           # MinIO password
 JWT_SECRET=…               # >= 32 chars, signs access/refresh tokens
 SECRETS_MASTER_KEY=…       # >= 32 chars, encrypts pipeline secrets at rest
-GPG_PASSPHRASE=…           # passphrase for the PGP signing key
+GPG_PASSPHRASE_FILE=…      # path to the RPM signing secret file
 ADMIN_PASSWORD=…           # initial admin password (seeded on first boot)
+```
+
+Create the signing secret file referenced by `GPG_PASSPHRASE_FILE` before
+starting Compose. For the example value in `.env.example`:
+
+```bash
+mkdir -p secrets
+openssl rand -base64 48 > secrets/gpg-passphrase
+chmod 0400 secrets/gpg-passphrase
 ```
 
 ### 3. Provide a TLS certificate (required)
@@ -232,7 +241,7 @@ All runtime configuration flows through `deploy/.env` (see
 | `JWT_REFRESH_HOURS` | no | Refresh-token lifetime / session length (default `8`) |
 | `JWT_COOKIE_SECURE` | no | Set `false` **only** for plain-HTTP local dev (default `true`) |
 | `SECRETS_MASTER_KEY` | yes | AES-256-GCM master key for at-rest encryption of pipeline secrets (`WebhookSecret`, `GitToken`). **Never change it after secrets are written** — they become undecryptable. |
-| `GPG_PASSPHRASE` | yes | Passphrase for the PGP signing key |
+| `GPG_PASSPHRASE_FILE` | yes | Host path to a file containing the RPM signing-key passphrase. Mounted into SecurityService as a Docker secret; never place the passphrase itself in `.env`. |
 | `ADMIN_USERNAME` | no | Initial admin username (default `admin`) |
 | `ADMIN_PASSWORD` | yes | Initial admin password (seeded once, when the users table is empty) |
 | `DEVELOPER_USERNAME` | no | Optional developer account username |
@@ -709,7 +718,7 @@ required secret in `deploy/.env` (copy `deploy/.env.example`):
 - `SECRETS_MASTER_KEY` — AES-256-GCM master key for pipeline-secret encryption
   at rest. Generate a strong random value (e.g. `openssl rand -base64 48`) and
   **never rotate it** after secrets are written.
-- `GPG_PASSPHRASE` — passphrase for the RPM signing key.
+- `GPG_PASSPHRASE_FILE` — path to the Docker-secret source file for the RPM signing key.
 - `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`, `MINIO_PASSWORD` (and `MINIO_USER`).
 
 User passwords are stored in the database as BCrypt hashes. If a required
