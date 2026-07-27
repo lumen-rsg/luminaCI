@@ -23,11 +23,12 @@ public class PipelinesController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<PipelineListResponse>>> List([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    public async Task<ActionResult<ApiResponse<PipelineListResponse>>> List(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
     {
         try
         {
-            var (pipelines, totalCount) = await _engine.ListPipelinesAsync(page, pageSize);
+            var (pipelines, totalCount) = await _engine.ListPipelinesAsync(page, pageSize, search);
             var response = new PipelineListResponse(
                 pipelines.Select(p => new PipelineSummaryResponse(p.Id, p.Name, p.Description, p.Status, p.CreatedBy, p.CreatedAt, p.Steps.Count, p.GitRepoUrl, p.GitBranch)).ToList(),
                 totalCount, page, pageSize);

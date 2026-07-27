@@ -114,11 +114,17 @@ public class LuminaApiService
     }
 
     // === Builds ===
-    public async Task<ApiResponse<BuildListResponse>?> GetBuildsAsync(int page = 1, int pageSize = 20)
+    public async Task<ApiResponse<BuildListResponse>?> GetBuildsAsync(
+        int page = 1, int pageSize = 20, Lumina.Shared.Models.Enums.BuildStatus? status = null)
     {
+        var statusQuery = status.HasValue ? $"&status={status.Value}" : "";
         return await GetJsonWithRetryAsync<ApiResponse<BuildListResponse>>(
-            $"/api/builds?page={page}&pageSize={pageSize}", nameof(GetBuildsAsync));
+            $"/api/builds?page={page}&pageSize={pageSize}{statusQuery}", nameof(GetBuildsAsync));
     }
+
+    public async Task<ApiResponse<BuildStatsResponse>?> GetBuildStatsAsync() =>
+        await GetJsonWithRetryAsync<ApiResponse<BuildStatsResponse>>(
+            "/api/builds/stats", nameof(GetBuildStatsAsync));
 
     public async Task<ApiResponse<object>?> CancelBuildAsync(Guid buildId)
     {
@@ -151,10 +157,14 @@ public class LuminaApiService
     }
 
     // === Pipelines ===
-    public async Task<ApiResponse<PipelineListResponse>?> GetPipelinesAsync(int page = 1, int pageSize = 20)
+    public async Task<ApiResponse<PipelineListResponse>?> GetPipelinesAsync(
+        int page = 1, int pageSize = 20, string? search = null)
     {
+        var searchQuery = string.IsNullOrWhiteSpace(search)
+            ? ""
+            : $"&search={Uri.EscapeDataString(search.Trim())}";
         return await GetJsonWithRetryAsync<ApiResponse<PipelineListResponse>>(
-            $"/api/pipelines?page={page}&pageSize={pageSize}", nameof(GetPipelinesAsync));
+            $"/api/pipelines?page={page}&pageSize={pageSize}{searchQuery}", nameof(GetPipelinesAsync));
     }
 
     public async Task<ApiResponse<PipelineResponse>?> GetPipelineAsync(Guid id)
@@ -200,9 +210,10 @@ public class LuminaApiService
     }
 
     // === Security ===
-    public async Task<ApiResponse<HashListResponse>?> GetHashRecordsAsync(int page = 1)
+    public async Task<ApiResponse<HashListResponse>?> GetHashRecordsAsync(int page = 1, int pageSize = 20)
     {
-        return await _http.GetFromJsonAsync<ApiResponse<HashListResponse>>($"/api/security/hashes?page={page}");
+        return await GetJsonWithRetryAsync<ApiResponse<HashListResponse>>(
+            $"/api/security/hashes?page={page}&pageSize={pageSize}", nameof(GetHashRecordsAsync));
     }
 
     public async Task<ApiResponse<object>?> SignPackageAsync(SignPackageRequest request)
@@ -227,10 +238,10 @@ public class LuminaApiService
     // ScanSummaryResponse). The DTO must match: previously this deserialised into
     // ScanListResponse/ScanResponse, which left fields like CreatedAt unbound and
     // rendered default(DateTime) in the UI.
-    public async Task<ApiResponse<ScanPaginatedResponse>?> GetScansAsync(int page = 1)
+    public async Task<ApiResponse<ScanPaginatedResponse>?> GetScansAsync(int page = 1, int pageSize = 20)
     {
         return await GetJsonWithRetryAsync<ApiResponse<ScanPaginatedResponse>>(
-            $"/api/scanner/scans?page={page}", nameof(GetScansAsync));
+            $"/api/scanner/scans?page={page}&pageSize={pageSize}", nameof(GetScansAsync));
     }
 
     // === Repositories ===

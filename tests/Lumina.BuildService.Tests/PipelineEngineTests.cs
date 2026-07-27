@@ -353,6 +353,46 @@ public class PipelineEngineTests
         Assert.StartsWith("git://example.com/repo.git", launcher.LastSourceUrl!);
     }
 
+    [Fact]
+    public async Task ListBuildJobsAsync_FiltersBeforePagination_AndStatsAreGlobal()
+    {
+        await using var sp = BuildServiceProvider(nameof(ListBuildJobsAsync_FiltersBeforePagination_AndStatsAreGlobal));
+        var engine = await NewEngineAsync(sp);
+        var db = sp.GetRequiredService<BuildDbContext>();
+        var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
+        db.BuildJobs.AddRange(
+            new BuildJob { Id = Guid.NewGuid(), PipelineId = pipeline.Id, SpecName = "ok", Status = BuildStatus.Success },
+            new BuildJob { Id = Guid.NewGuid(), PipelineId = pipeline.Id, SpecName = "bad", Status = BuildStatus.Failed },
+            new BuildJob { Id = Guid.NewGuid(), PipelineId = pipeline.Id, SpecName = "queued", Status = BuildStatus.Queued });
+        await db.SaveChangesAsync();
+
+        var (items, total) = await engine.ListBuildJobsAsync(1, 1, BuildStatus.Failed);
+        var stats = await engine.GetBuildStatsAsync();
+
+        Assert.Single(items);
+        Assert.Equal(BuildStatus.Failed, items[0].Status);
+        Assert.Equal(1, total);
+        Assert.Equal((3, 1, 1), stats);
+    }
+
+    [Fact]
+    public async Task ListPipelinesAsync_SearchesBeforePagination()
+    {
+        await using var sp = BuildServiceProvider(nameof(ListPipelinesAsync_SearchesBeforePagination));
+        var engine = await NewEngineAsync(sp);
+        var db = sp.GetRequiredService<BuildDbContext>();
+        db.Pipelines.AddRange(
+            new Pipeline { Id = Guid.NewGuid(), Name = "kernel", Description = "stable", CreatedBy = "ops" },
+            new Pipeline { Id = Guid.NewGuid(), Name = "tools", Description = "nightly utilities", CreatedBy = "ops" });
+        await db.SaveChangesAsync();
+
+        var (items, total) = await engine.ListPipelinesAsync(1, 20, "nightly");
+
+        Assert.Single(items);
+        Assert.Equal("tools", items[0].Name);
+        Assert.Equal(1, total);
+    }
+
     // ─── Test doubles ────────────────────────────────────────────────────
 
     /// <summary>

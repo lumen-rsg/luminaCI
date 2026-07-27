@@ -21,6 +21,7 @@ public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, str
 public record BuildArtifactResponse(Guid Id, string FileName, long FileSize, string? HashSha256, string? HashMd5, string? PgpSignature, ScanStatus CveScanStatus);
 
 public record BuildListResponse(List<BuildJobSummaryResponse> Builds, int TotalCount, int Page, int PageSize);
+public record BuildStatsResponse(int TotalCount, int SuccessfulCount, int FailedCount);
 
 public record BuildJobSummaryResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, DateTime CreatedAt, string TriggeredBy, string? CommitSha = null, string? Branch = null);
 

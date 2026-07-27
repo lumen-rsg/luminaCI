@@ -22,7 +22,7 @@
         <div class="filter-bar">
             <span class="text-xs text-muted" style="margin-right:4px;">Filter:</span>
             <button class="filter-btn @_allActive" @onclick="FilterAll">
-                All <span class="filter-count">@(_builds?.Data?.TotalCount ?? 0)</span>
+                All
             </button>
             <button class="filter-btn @_successActive" @onclick="FilterSuccess">
                 <span class="badge-dot green"></span> Success
@@ -62,7 +62,7 @@
         </div>
     </div>
 }
-else if (FilteredBuilds.Any())
+else if (CurrentBuilds.Any())
 {
     <div class="card animate-slide-in">
         <div class="table-responsive">
@@ -81,7 +81,7 @@ else if (FilteredBuilds.Any())
                         </tr>
                 </thead>
                 <tbody>
-                    @foreach (var build in FilteredBuilds)
+                    @foreach (var build in CurrentBuilds)
                     {
                         var statusColor = build.Status switch
                         {
@@ -181,7 +181,7 @@ else if (FilteredBuilds.Any())
 
     <div class="d-flex justify-content-between align-items-center mt-3">
         <span class="text-sm text-muted">
-            Showing @FilteredBuilds.Count() of @(_builds?.Data?.TotalCount ?? 0) builds
+            Showing @CurrentBuilds.Count() of @(_builds?.Data?.TotalCount ?? 0) matching builds
         </span>
         <div class="btn-group">
             <button class="btn btn-outline-secondary btn-sm" disabled="@(_page <= 1)" @onclick="() => ChangePage(-1)"><Icon Name="chevron-left" /> Prev</button>
@@ -205,21 +205,8 @@ else
     private int _page = 1;
     private string _filter = "all";
 
-    private IEnumerable<BuildJobSummaryResponse> FilteredBuilds
-    {
-        get
-        {
-            if (_builds?.Data?.Builds == null) return Enumerable.Empty<BuildJobSummaryResponse>();
-            return _filter switch
-            {
-                "success" => _builds.Data.Builds.Where(b => b.Status == BuildStatus.Success),
-                "failed" => _builds.Data.Builds.Where(b => b.Status == BuildStatus.Failed),
-                "building" => _builds.Data.Builds.Where(b => b.Status == BuildStatus.Building),
-                "queued" => _builds.Data.Builds.Where(b => b.Status == BuildStatus.Queued),
-                _ => _builds.Data.Builds
-            };
-        }
-    }
+    private IEnumerable<BuildJobSummaryResponse> CurrentBuilds =>
+        _builds?.Data?.Builds ?? Enumerable.Empty<BuildJobSummaryResponse>();
 
     protected override async Task OnInitializedAsync()
     {
@@ -231,7 +218,7 @@ else
         _loading = true;
         _error = false;
         StateHasChanged();
-        try { _builds = await Api.GetBuildsAsync(_page, 20); }
+        try { _builds = await Api.GetBuildsAsync(_page, 20, SelectedStatus); }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to load builds");
@@ -246,17 +233,27 @@ else
     private string _buildingActive => _filter == "building" ? "active" : "";
     private string _queuedActive => _filter == "queued" ? "active" : "";
 
-    private void SetFilter(string filter)
+    private BuildStatus? SelectedStatus => _filter switch
+    {
+        "success" => BuildStatus.Success,
+        "failed" => BuildStatus.Failed,
+        "building" => BuildStatus.Building,
+        "queued" => BuildStatus.Queued,
+        _ => null
+    };
+
+    private async Task SetFilter(string filter)
     {
         _filter = filter;
-        StateHasChanged();
+        _page = 1;
+        await LoadBuilds();
     }
 
-    private void FilterAll() => SetFilter("all");
-    private void FilterSuccess() => SetFilter("success");
-    private void FilterFailed() => SetFilter("failed");
-    private void FilterBuilding() => SetFilter("building");
-    private void FilterQueued() => SetFilter("queued");
+    private Task FilterAll() => SetFilter("all");
+    private Task FilterSuccess() => SetFilter("success");
+    private Task FilterFailed() => SetFilter("failed");
+    private Task FilterBuilding() => SetFilter("building");
+    private Task FilterQueued() => SetFilter("queued");
 
     private async Task CancelBuild(Guid buildId)
     {

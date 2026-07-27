@@ -97,7 +97,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var hash in _hashes.Data.Hashes.Take(20))
+                            @foreach (var hash in _hashes.Data.Hashes)
                             {
                                 <tr>
                                     <td><code>@hash.ArtifactId.ToString()[..8]</code></td>
@@ -111,6 +111,16 @@
                             }
                         </tbody>
                     </table>
+                    <div class="d-flex justify-content-between align-items-center p-2">
+                        <span class="text-xs text-muted">Page @_hashPage · @_hashes.Data.TotalCount records</span>
+                        <div class="btn-group">
+                            <button class="btn btn-outline-secondary btn-sm" disabled="@(_hashPage <= 1)"
+                                    @onclick="() => ChangeHashPage(-1)">Prev</button>
+                            <button class="btn btn-outline-secondary btn-sm"
+                                    disabled="@(_hashPage * SecurityPageSize >= _hashes.Data.TotalCount)"
+                                    @onclick="() => ChangeHashPage(1)">Next</button>
+                        </div>
+                    </div>
                 }
                 else
                 {
@@ -168,6 +178,16 @@
                     }
                 </tbody>
             </table>
+            <div class="d-flex justify-content-between align-items-center p-2">
+                <span class="text-xs text-muted">Page @_scanPage · @_scans.Data.TotalCount scans</span>
+                <div class="btn-group">
+                    <button class="btn btn-outline-secondary btn-sm" disabled="@(_scanPage <= 1)"
+                            @onclick="() => ChangeScanPage(-1)">Prev</button>
+                    <button class="btn btn-outline-secondary btn-sm"
+                            disabled="@(_scanPage * SecurityPageSize >= _scans.Data.TotalCount)"
+                            @onclick="() => ChangeScanPage(1)">Next</button>
+                </div>
+            </div>
         }
         else
         {
@@ -183,6 +203,9 @@
 @code {
     private ApiResponse<HashListResponse>? _hashes;
     private ApiResponse<ScanPaginatedResponse>? _scans;
+    private const int SecurityPageSize = 20;
+    private int _hashPage = 1;
+    private int _scanPage = 1;
     private ApiResponse<object>? _signResult;
     private bool _signing = false;
     private string _signArtifactId = "";
@@ -207,8 +230,20 @@
         catch (Exception ex) { Logger.LogError(ex, "Failed to load security data"); }
     }
 
-    private async Task LoadHashes() => _hashes = await Api.GetHashRecordsAsync(1);
-    private async Task LoadScans() => _scans = await Api.GetScansAsync(1);
+    private async Task LoadHashes() => _hashes = await Api.GetHashRecordsAsync(_hashPage, SecurityPageSize);
+    private async Task LoadScans() => _scans = await Api.GetScansAsync(_scanPage, SecurityPageSize);
+
+    private async Task ChangeHashPage(int delta)
+    {
+        _hashPage = Math.Max(1, _hashPage + delta);
+        await LoadHashes();
+    }
+
+    private async Task ChangeScanPage(int delta)
+    {
+        _scanPage = Math.Max(1, _scanPage + delta);
+        await LoadScans();
+    }
 
     private async Task SignPackage()
     {

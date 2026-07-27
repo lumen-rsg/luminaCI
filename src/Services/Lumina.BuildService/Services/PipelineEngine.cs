@@ -209,14 +209,21 @@ public class PipelineEngine
         return await TriggerBuildAsync(pipelineId, request);
     }
 
-    public async Task<(List<Pipeline> Items, int TotalCount)> ListPipelinesAsync(int page = 1, int pageSize = 20)
+    public async Task<(List<Pipeline> Items, int TotalCount)> ListPipelinesAsync(int page = 1, int pageSize = 20, string? search = null)
     {
         // Not cached: this returns EF Core entities with navigation properties
         // (Pipeline.Steps), which System.Text.Json cannot round-trip. The
         // RedisCacheService contract is "DTOs only" and now rejects non-round-
         // trippable values; to cache lists here, project to a DTO first.
-        var totalCount = await _db.Pipelines.CountAsync();
-        var items = await _db.Pipelines
+        var query = _db.Pipelines.AsQueryable();
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToLower();
+            query = query.Where(p => p.Name.ToLower().Contains(term) ||
+                                     p.Description.ToLower().Contains(term));
+        }
+        var totalCount = await query.CountAsync();
+        var items = await query
             .Include(p => p.Steps)
             .OrderByDescending(p => p.CreatedAt)
             .Skip((page - 1) * pageSize)
@@ -242,16 +249,34 @@ public class PipelineEngine
             .FirstOrDefaultAsync(b => b.Id == id);
     }
 
-    public async Task<(List<BuildJob> Items, int TotalCount)> ListBuildJobsAsync(int page = 1, int pageSize = 20)
+    public async Task<(List<BuildJob> Items, int TotalCount)> ListBuildJobsAsync(
+        int page = 1, int pageSize = 20, BuildStatus? status = null)
     {
         // Not cached: EF entities — see ListPipelinesAsync / RedisCacheService contract.
-        var totalCount = await _db.BuildJobs.CountAsync();
-        var items = await _db.BuildJobs
+        var query = _db.BuildJobs.AsQueryable();
+        if (status.HasValue)
+            query = query.Where(b => b.Status == status.Value);
+        var totalCount = await query.CountAsync();
+        var items = await query
             .OrderByDescending(b => b.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
         return (items, totalCount);
+    }
+
+    public async Task<(int Total, int Successful, int Failed)> GetBuildStatsAsync()
+    {
+        var counts = await _db.BuildJobs
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Total = g.Count(),
+                Successful = g.Count(b => b.Status == BuildStatus.Success),
+                Failed = g.Count(b => b.Status == BuildStatus.Failed)
+            })
+            .SingleOrDefaultAsync();
+        return counts is null ? (0, 0, 0) : (counts.Total, counts.Successful, counts.Failed);
     }
 
     public async Task<List<BuildJob>> GetActiveBuildsAsync()

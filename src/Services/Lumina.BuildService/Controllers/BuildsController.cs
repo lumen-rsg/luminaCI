@@ -25,11 +25,12 @@ public class BuildsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<BuildListResponse>>> List([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    public async Task<ActionResult<ApiResponse<BuildListResponse>>> List(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] BuildStatus? status = null)
     {
         try
         {
-            var (builds, totalCount) = await _engine.ListBuildJobsAsync(page, pageSize);
+            var (builds, totalCount) = await _engine.ListBuildJobsAsync(page, pageSize, status);
             var response = new BuildListResponse(
                 builds.Select(b => new BuildJobSummaryResponse(b.Id, b.PipelineId, b.Status, b.SpecName, b.CreatedAt, b.TriggeredBy, b.CommitSha, b.Branch)).ToList(),
                 totalCount, page, pageSize);
@@ -41,6 +42,14 @@ public class BuildsController : ControllerBase
             // return a fixed message (SEC-022).
             return ApiResults.FromException<BuildListResponse>(ex, _logger, "Builds.List", page, pageSize);
         }
+    }
+
+    [HttpGet("stats")]
+    public async Task<ActionResult<ApiResponse<BuildStatsResponse>>> Stats()
+    {
+        var (total, successful, failed) = await _engine.GetBuildStatsAsync();
+        return Ok(new ApiResponse<BuildStatsResponse>(
+            true, new BuildStatsResponse(total, successful, failed), null, null));
     }
 
     [HttpGet("{id:guid}")]
