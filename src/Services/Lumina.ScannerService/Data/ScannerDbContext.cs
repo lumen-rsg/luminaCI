@@ -1,4 +1,5 @@
 using Lumina.Shared.Models;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.ScannerService.Data;
@@ -12,10 +13,15 @@ public class ScannerDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.AddInboxStateEntity(entity => entity.ToTable("inbox_state", "scanner"));
+        modelBuilder.AddOutboxMessageEntity(entity => entity.ToTable("outbox_message", "scanner"));
+        modelBuilder.AddOutboxStateEntity(entity => entity.ToTable("outbox_state", "scanner"));
+
         modelBuilder.Entity<CveReport>(entity =>
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ScannerType).IsRequired().HasMaxLength(20);
+            entity.HasIndex(e => e.ArtifactId).IsUnique();
             entity.Ignore(e => e.Artifact); // Artifact lives in build-service DB, no FK here
             entity.HasMany(e => e.Vulnerabilities)
                 .WithOne()

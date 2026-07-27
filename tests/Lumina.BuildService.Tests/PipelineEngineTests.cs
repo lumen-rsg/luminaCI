@@ -373,6 +373,22 @@ public class PipelineEngineTests
     }
 
     [Fact]
+    public async Task TriggerBuildAsync_ReturnsExistingJob_ForRepeatedIdempotencyKey()
+    {
+        await using var sp = BuildServiceProvider(nameof(TriggerBuildAsync_ReturnsExistingJob_ForRepeatedIdempotencyKey));
+        var engine = await NewEngineAsync(sp);
+        var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
+        var request = new TriggerBuildRequest(
+            "pkg.spec", "", null, "webhook", IdempotencyKey: "webhook:delivery-42");
+
+        var first = await engine.TriggerBuildAsync(pipeline.Id, request);
+        var second = await engine.TriggerBuildAsync(pipeline.Id, request);
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Equal(1, sp.GetRequiredService<FakeBuildLauncher>().LaunchCount);
+    }
+
+    [Fact]
     public async Task TriggerBuildAsync_AutoSynthesizesSourceUrl_FromGitConfig()
     {
         // When SourceUrl is omitted but the pipeline has a GitRepoUrl, the
@@ -509,6 +525,7 @@ public class PipelineEngineTests
     public sealed class FakeBuildLauncher : IBuildLauncher
     {
         public bool WasLaunched { get; private set; }
+        public int LaunchCount { get; private set; }
         public string? LastSourceUrl { get; private set; }
         public Exception? ThrowOnNextLaunch { get; set; }
 
@@ -517,6 +534,7 @@ public class PipelineEngineTests
             string? extraSourcesPipelineDir = null)
         {
             WasLaunched = true;
+            LaunchCount++;
             LastSourceUrl = sourceUrl;
             var toThrow = ThrowOnNextLaunch;
             ThrowOnNextLaunch = null;
@@ -524,7 +542,7 @@ public class PipelineEngineTests
             return Task.FromResult(job);
         }
 
-        public void Reset() { WasLaunched = false; LastSourceUrl = null; ThrowOnNextLaunch = null; }
+        public void Reset() { WasLaunched = false; LaunchCount = 0; LastSourceUrl = null; ThrowOnNextLaunch = null; }
     }
 
     /// <summary>

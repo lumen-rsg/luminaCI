@@ -16,7 +16,12 @@ public class BuildJob
     public List<BuildStepRun> StepRuns { get; set; } = [];
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
+    public string? LeaseOwner { get; set; }
+    public DateTime? LeaseExpiresAt { get; set; }
+    public DateTime? LastHeartbeatAt { get; set; }
+    public DateTime? DeadlineAt { get; set; }
     public string TriggeredBy { get; set; } = string.Empty;
+    public string? IdempotencyKey { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Git integration — commit/branch info from webhook

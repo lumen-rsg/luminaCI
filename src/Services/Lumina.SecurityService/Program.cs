@@ -47,6 +47,12 @@ try
         x.AddConsumer<GetActiveSigningKeyConsumer>();
         x.AddConsumer<GetActivePublicKeyConsumer>();
         x.AddConsumer<GetPublicKeyConsumer>();
+        x.AddEntityFrameworkOutbox<SecurityDbContext>(outbox =>
+        {
+            outbox.UsePostgres();
+            outbox.UseBusOutbox();
+            outbox.DuplicateDetectionWindow = TimeSpan.FromDays(7);
+        });
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -58,6 +64,7 @@ try
 
             cfg.ReceiveEndpoint("lumina-security-service", e =>
             {
+                e.UseEntityFrameworkOutbox<SecurityDbContext>(ctx);
                 e.ConfigureConsumer<HashStoreRequestedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSigningRequestedConsumer>(ctx);
                 e.ConfigureConsumer<GetActiveSigningKeyConsumer>(ctx);

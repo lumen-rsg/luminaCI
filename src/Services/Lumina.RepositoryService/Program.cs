@@ -49,6 +49,12 @@ try
     {
         x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
         x.AddConsumer<PackagePublishRequestedConsumer>();
+        x.AddEntityFrameworkOutbox<RepositoryDbContext>(outbox =>
+        {
+            outbox.UsePostgres();
+            outbox.UseBusOutbox();
+            outbox.DuplicateDetectionWindow = TimeSpan.FromDays(7);
+        });
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -60,6 +66,7 @@ try
 
             cfg.ReceiveEndpoint("lumina-repository-service", endpoint =>
             {
+                endpoint.UseEntityFrameworkOutbox<RepositoryDbContext>(ctx);
                 endpoint.ConfigureConsumer<PackagePublishRequestedConsumer>(ctx);
             });
 

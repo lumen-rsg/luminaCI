@@ -1,6 +1,7 @@
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
 using Lumina.Shared.Security;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.BuildService.Data;
@@ -26,6 +27,10 @@ public class BuildDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.AddInboxStateEntity(entity => entity.ToTable("inbox_state", "build"));
+        modelBuilder.AddOutboxMessageEntity(entity => entity.ToTable("outbox_message", "build"));
+        modelBuilder.AddOutboxStateEntity(entity => entity.ToTable("outbox_state", "build"));
+
         var protector = _secretProtector;
 
         modelBuilder.Entity<Pipeline>(entity =>
@@ -79,6 +84,10 @@ public class BuildDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.SpecName).IsRequired().HasMaxLength(256);
             entity.Property(e => e.TriggeredBy).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.IdempotencyKey).HasMaxLength(256);
+            entity.HasIndex(e => new { e.PipelineId, e.IdempotencyKey })
+                .IsUnique()
+                .HasFilter("\"IdempotencyKey\" IS NOT NULL");
             entity.Property(e => e.CommitSha).HasMaxLength(64);
             entity.Property(e => e.Branch).HasMaxLength(256);
             entity.Property(e => e.CommitMessage).HasMaxLength(2048);
@@ -89,6 +98,8 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.BuildProfile).IsRequired().HasMaxLength(128);
             entity.Property(e => e.RunnerImageReference).HasMaxLength(512);
             entity.Property(e => e.RunnerImageDigest).HasMaxLength(512);
+            entity.Property(e => e.LeaseOwner).HasMaxLength(128);
+            entity.HasIndex(e => new { e.Status, e.LeaseExpiresAt });
             entity.HasMany(e => e.Artifacts).WithOne(e => e.BuildJob).HasForeignKey(e => e.BuildJobId).OnDelete(DeleteBehavior.Cascade);
             entity.HasMany(e => e.StepRuns).WithOne(e => e.BuildJob).HasForeignKey(e => e.BuildJobId).OnDelete(DeleteBehavior.Cascade);
         });

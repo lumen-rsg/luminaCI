@@ -1,4 +1,5 @@
 using Lumina.Shared.Models;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.SecurityService.Data;
@@ -13,6 +14,10 @@ public class SecurityDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.AddInboxStateEntity(entity => entity.ToTable("inbox_state", "security"));
+        modelBuilder.AddOutboxMessageEntity(entity => entity.ToTable("outbox_message", "security"));
+        modelBuilder.AddOutboxStateEntity(entity => entity.ToTable("outbox_state", "security"));
+
         modelBuilder.Entity<SecurityKey>(entity =>
         {
             entity.HasKey(e => e.Id);
@@ -42,7 +47,7 @@ public class SecurityDbContext : DbContext
             entity.Property(e => e.FileName).IsRequired().HasMaxLength(500);
             entity.Property(e => e.Sha256).IsRequired().HasMaxLength(128);
             entity.Property(e => e.Md5).HasMaxLength(64);
-            entity.HasIndex(e => e.FileName);
+            entity.HasIndex(e => e.ArtifactId).IsUnique();
         });
     }
 }

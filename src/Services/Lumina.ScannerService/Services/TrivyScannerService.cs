@@ -74,16 +74,38 @@ public class TrivyScannerService
 
         _logger.LogInformation("Starting CVE scan for artifact {ArtifactId} at {Path}", artifactId, safePath);
 
-        var report = new CveReport
+        var report = await _db.CveReports
+            .Include(item => item.Vulnerabilities)
+            .SingleOrDefaultAsync(item => item.ArtifactId == artifactId);
+        if (report is not null && report.Status is ScanStatus.Completed or ScanStatus.Failed)
         {
-            Id = Guid.NewGuid(),
-            ArtifactId = artifactId,
-            ScannerType = scannerType,
-            Status = ScanStatus.Running,
-            CreatedAt = DateTime.UtcNow
-        };
+            _logger.LogInformation(
+                "Returning existing terminal CVE report {ReportId} for artifact {ArtifactId}",
+                report.Id, artifactId);
+            return report;
+        }
 
-        _db.CveReports.Add(report);
+        if (report is null)
+        {
+            report = new CveReport
+            {
+                Id = Guid.NewGuid(),
+                ArtifactId = artifactId,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.CveReports.Add(report);
+        }
+        else
+        {
+            _db.Vulnerabilities.RemoveRange(report.Vulnerabilities);
+            report.Vulnerabilities.Clear();
+        }
+
+        report.ScannerType = scannerType;
+        report.Status = ScanStatus.Running;
+        report.CompletedAt = null;
+        report.Summary = null;
+        report.RawOutput = null;
         await _db.SaveChangesAsync();
 
         // IMPORTANT: await the scan so the consumer gets the completed report

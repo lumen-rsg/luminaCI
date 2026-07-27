@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Security.Cryptography;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
 using Lumina.Shared.Security;
@@ -146,6 +147,10 @@ public class WebhooksController : ControllerBase
             : $"{pipeline.Name}.spec";
 
         var effectiveBranch = branch ?? targetBranch;
+        var deliveryId = Request.Headers["X-GitHub-Delivery"].FirstOrDefault()
+            ?? Request.Headers["X-Gitlab-Event-UUID"].FirstOrDefault()
+            ?? Request.Headers["X-Gitea-Delivery"].FirstOrDefault()
+            ?? Convert.ToHexString(SHA256.HashData(rawBody));
 
         // Create build request — source will be cloned from git in the container
         var request = new TriggerBuildRequest(
@@ -156,7 +161,8 @@ public class WebhooksController : ControllerBase
             commit,
             effectiveBranch,
             ExtractCommitMessage(payload),
-            author
+            author,
+            $"webhook:{deliveryId}"
         );
 
         try

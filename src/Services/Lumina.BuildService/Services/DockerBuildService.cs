@@ -23,6 +23,7 @@ public class DockerBuildService : IBuildLauncher
     private readonly IConfiguration _config;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRpmArtifactValidator _rpmArtifactValidator;
+    private readonly BuildExecutionCoordinator _execution;
 
     /// <summary>
     /// Docker daemon endpoint (unix socket or HTTP proxy URL). When fronted by a
@@ -85,13 +86,15 @@ public class DockerBuildService : IBuildLauncher
         ILogger<DockerBuildService> logger,
         IConfiguration config,
         IServiceScopeFactory scopeFactory,
-        IRpmArtifactValidator rpmArtifactValidator)
+        IRpmArtifactValidator rpmArtifactValidator,
+        BuildExecutionCoordinator execution)
     {
         _db = db;
         _logger = logger;
         _config = config;
         _scopeFactory = scopeFactory;
         _rpmArtifactValidator = rpmArtifactValidator;
+        _execution = execution;
 
         // The Docker endpoint may be a raw unix socket (unix:///var/run/docker.sock),
         // a host:port, or an http(s):// URL fronting a docker-socket-proxy. The proxy
@@ -366,9 +369,13 @@ public class DockerBuildService : IBuildLauncher
     {
         var imageName = BuildImagePolicy.Resolve(_config, buildImage);
         _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName}) with image {Image}", job.Id, job.SpecName, imageName);
+        var ownsExecutionSlot = false;
 
         try
         {
+            await _execution.AcquireAsync(job.Id, recovered: false);
+            ownsExecutionSlot = true;
+
             // Ensure the build image exists locally — try to pull if missing
             var resolvedImage = await EnsureImageExistsAsync(imageName);
             job.RunnerImageReference = imageName;
@@ -382,10 +389,7 @@ public class DockerBuildService : IBuildLauncher
                     $"Runner '{imageName}' is {resolvedImage.Architecture}, but build {job.Id} targets {job.TargetArchitecture}.");
             }
 
-            job.Status = BuildStatus.Building;
-            job.StartedAt = DateTime.UtcNow;
-            _db.BuildJobs.Update(job);
-            await _db.SaveChangesAsync();
+            await AcquireDistributedBuildSlotAsync(job);
 
             // Container-internal path for artifact scanning (matches docker-compose volume mount)
             var artifactDir = $"/app/builds/{job.Id}";
@@ -537,7 +541,7 @@ public class DockerBuildService : IBuildLauncher
             _db.BuildJobs.Update(job);
             await _db.SaveChangesAsync();
 
-            _ = MonitorBuildAsync(job, container.ID);
+            _ = ObserveMonitorAsync(job, container.ID);
 
             return job;
         }
@@ -548,14 +552,66 @@ public class DockerBuildService : IBuildLauncher
             job.CompletedAt = DateTime.UtcNow;
             _db.BuildJobs.Update(job);
             await _db.SaveChangesAsync();
+            if (ownsExecutionSlot)
+                _execution.Release(job.Id);
             throw;
         }
     }
 
-    private async Task MonitorBuildAsync(BuildJob job, string containerId)
+    private async Task AcquireDistributedBuildSlotAsync(BuildJob job)
+    {
+        while (true)
+        {
+            await using var transaction = await _db.Database.BeginTransactionAsync();
+            // Serialize the count-and-claim across every BuildService replica.
+            // The fixed key is private to Lumina's build-slot allocation.
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(4867564)");
+
+            var now = DateTime.UtcNow;
+            var active = await _db.BuildJobs.CountAsync(item =>
+                item.Status == BuildStatus.Building
+                && item.LeaseExpiresAt != null
+                && item.LeaseExpiresAt > now);
+            if (active < _execution.MaxConcurrentBuilds)
+            {
+                job.Status = BuildStatus.Building;
+                job.StartedAt = now;
+                job.LeaseOwner = _execution.WorkerId;
+                job.LastHeartbeatAt = now;
+                job.LeaseExpiresAt = now + _execution.LeaseDuration;
+                job.DeadlineAt = now + _execution.MaxBuildDuration;
+                _db.BuildJobs.Update(job);
+                await _db.SaveChangesAsync();
+                await transaction.CommitAsync();
+                return;
+            }
+
+            await transaction.RollbackAsync();
+            await Task.Delay(_execution.HeartbeatInterval);
+        }
+    }
+
+    private async Task ObserveMonitorAsync(BuildJob job, string containerId)
+    {
+        try
+        {
+            await MonitorBuildAsync(job, containerId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "Build monitor task escaped for job {JobId}", job.Id);
+        }
+    }
+
+    public async Task MonitorBuildAsync(
+        BuildJob job,
+        string containerId,
+        CancellationToken stoppingToken = default)
     {
         var logBuilder = new System.Text.StringBuilder();
         var logLock = new object();
+        var timedOut = false;
+        var leaseLost = 0;
 
         // Initialize the in-memory log buffer for SSE subscribers
         _logBuffers[job.Id] = "";
@@ -563,8 +619,8 @@ public class DockerBuildService : IBuildLauncher
         try
         {
             // Stream logs in parallel with waiting for container completion
-            var waitTask = _docker.Containers.WaitContainerAsync(containerId);
-            var cts = new CancellationTokenSource();
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            var waitTask = _docker.Containers.WaitContainerAsync(containerId, cts.Token);
 
             // Background task: stream logs from Docker container in real-time
             var streamTask = Task.Run(async () =>
@@ -617,14 +673,14 @@ public class DockerBuildService : IBuildLauncher
             }, cts.Token);
 
             // Also run periodic DB flush for log persistence (every 5 seconds)
-            var dbFlushCts = new CancellationTokenSource();
+            using var dbFlushCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             var dbFlushTask = Task.Run(async () =>
             {
                 try
                 {
                     while (!dbFlushCts.Token.IsCancellationRequested)
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(5), dbFlushCts.Token);
+                        await Task.Delay(_execution.HeartbeatInterval, dbFlushCts.Token);
                         try
                         {
                             string currentLogs;
@@ -633,17 +689,24 @@ public class DockerBuildService : IBuildLauncher
                                 currentLogs = logBuilder.ToString();
                             }
 
-                            if (!string.IsNullOrEmpty(currentLogs))
+                            using var scope = _scopeFactory.CreateScope();
+                            var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
+                            var dbJob = await db.BuildJobs.FindAsync(job.Id);
+                            if (dbJob == null || dbJob.LeaseOwner != _execution.WorkerId)
                             {
-                                using var scope = _scopeFactory.CreateScope();
-                                var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
-                                var dbJob = await db.BuildJobs.FindAsync(job.Id);
-                                if (dbJob != null)
-                                {
+                                Interlocked.Exchange(ref leaseLost, 1);
+                                cts.Cancel();
+                                dbFlushCts.Cancel();
+                                return;
+                            }
+
+                            if (dbJob.Status == BuildStatus.Building)
+                            {
+                                if (!string.IsNullOrEmpty(currentLogs))
                                     dbJob.Logs = currentLogs;
-                                    db.BuildJobs.Update(dbJob);
-                                    await db.SaveChangesAsync();
-                                }
+                                dbJob.LastHeartbeatAt = DateTime.UtcNow;
+                                dbJob.LeaseExpiresAt = dbJob.LastHeartbeatAt + _execution.LeaseDuration;
+                                await db.SaveChangesAsync();
                             }
                         }
                         catch (OperationCanceledException) { }
@@ -657,7 +720,27 @@ public class DockerBuildService : IBuildLauncher
             }, dbFlushCts.Token);
 
             // Wait for the container to finish
-            var waitResult = await waitTask;
+            var deadline = job.DeadlineAt ?? job.StartedAt?.Add(_execution.MaxBuildDuration)
+                ?? DateTime.UtcNow.Add(_execution.MaxBuildDuration);
+            var remaining = deadline - DateTime.UtcNow;
+            ContainerWaitResponse waitResult;
+            try
+            {
+                if (remaining <= TimeSpan.Zero)
+                    throw new TimeoutException();
+                waitResult = await waitTask.WaitAsync(remaining, stoppingToken);
+            }
+            catch (TimeoutException)
+            {
+                timedOut = true;
+                _logger.LogError("Build {JobId} exceeded its wall-clock deadline {Deadline}", job.Id, deadline);
+                PublishLogLine(job.Id, $"[BUILD TIMED OUT after {_execution.MaxBuildDuration}]");
+                await _docker.Containers.StopContainerAsync(
+                    containerId,
+                    new ContainerStopParameters { WaitBeforeKillSeconds = 10 },
+                    stoppingToken);
+                waitResult = await waitTask.WaitAsync(TimeSpan.FromSeconds(30), stoppingToken);
+            }
 
             // Stop streaming — container is done
             cts.Cancel();
@@ -729,6 +812,9 @@ public class DockerBuildService : IBuildLauncher
 
             dbJob.Logs = logs;
             dbJob.ContainerId = containerId;
+            dbJob.LeaseOwner = null;
+            dbJob.LeaseExpiresAt = null;
+            dbJob.LastHeartbeatAt = DateTime.UtcNow;
 
             if (dbJob.Status == BuildStatus.Cancelled)
             {
@@ -737,7 +823,12 @@ public class DockerBuildService : IBuildLauncher
                 return;
             }
 
-            if (waitResult.StatusCode == 0)
+            if (timedOut)
+            {
+                dbJob.Status = BuildStatus.Failed;
+                SaveFailedBuildLog(job.Id, job.SpecName, logs);
+            }
+            else if (waitResult.StatusCode == 0)
             {
                 try
                 {
@@ -792,7 +883,9 @@ public class DockerBuildService : IBuildLauncher
                 await coordinator.FailStepAsync(
                     dbJob.Id,
                     StepType.Build,
-                    waitResult.StatusCode == 0
+                    timedOut
+                        ? $"The build exceeded its {_execution.MaxBuildDuration} wall-clock limit."
+                        : waitResult.StatusCode == 0
                         ? "The build produced no valid RPM artifacts."
                         : $"The build container exited with code {waitResult.StatusCode}.");
             }
@@ -806,6 +899,18 @@ public class DockerBuildService : IBuildLauncher
             {
                 _logger.LogWarning(ex, "Failed to remove container {ContainerId}", containerId);
             }
+        }
+        catch (OperationCanceledException) when (Volatile.Read(ref leaseLost) == 1)
+        {
+            _logger.LogWarning(
+                "Build monitor for job {JobId} lost its lease and relinquished the container",
+                job.Id);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            _logger.LogInformation(
+                "Build monitor for job {JobId} is stopping; its lease will be reclaimed after restart",
+                job.Id);
         }
         catch (Exception ex)
         {
@@ -851,6 +956,7 @@ public class DockerBuildService : IBuildLauncher
         }
         finally
         {
+            _execution.Release(job.Id);
             // Clean up in-memory streaming state (subscribers will get channel completion)
             CleanupLogStreaming(job.Id);
         }

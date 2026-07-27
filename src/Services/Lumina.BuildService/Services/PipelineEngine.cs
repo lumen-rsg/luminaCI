@@ -112,6 +112,23 @@ public class PipelineEngine
                 $"Pipeline {pipelineId} is {pipeline.Status} and cannot be triggered. Activate it first.");
         }
 
+        if (!string.IsNullOrWhiteSpace(request.IdempotencyKey))
+        {
+            var existingJob = await _db.BuildJobs
+                .Include(job => job.Artifacts)
+                .Include(job => job.StepRuns)
+                .SingleOrDefaultAsync(job =>
+                    job.PipelineId == pipelineId
+                    && job.IdempotencyKey == request.IdempotencyKey);
+            if (existingJob is not null)
+            {
+                _logger.LogInformation(
+                    "Returning existing build {JobId} for idempotency key {IdempotencyKey}",
+                    existingJob.Id, request.IdempotencyKey);
+                return existingJob;
+            }
+        }
+
         PipelineDefinitionValidator.Validate(pipeline.Steps);
         var target = BuildTargetPolicy.Resolve(
             pipeline.TargetDistribution,
@@ -165,6 +182,7 @@ public class PipelineEngine
             SpecContent = specContent ?? string.Empty,
             SourceUrl = sourceUrl ?? string.Empty,
             TriggeredBy = request.TriggeredBy,
+            IdempotencyKey = request.IdempotencyKey,
             CreatedAt = DateTime.UtcNow,
             // Git metadata from webhook or auto-build
             CommitSha = request.CommitSha,
@@ -194,7 +212,25 @@ public class PipelineEngine
         buildRun.StartedAt = DateTime.UtcNow;
 
         _db.BuildJobs.Add(job);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException) when (!string.IsNullOrWhiteSpace(request.IdempotencyKey))
+        {
+            // A concurrent delivery may have inserted the same webhook key after
+            // our pre-check. The unique index is authoritative; return its job.
+            _db.ChangeTracker.Clear();
+            var winner = await _db.BuildJobs
+                .Include(item => item.Artifacts)
+                .Include(item => item.StepRuns)
+                .SingleOrDefaultAsync(item =>
+                    item.PipelineId == pipelineId
+                    && item.IdempotencyKey == request.IdempotencyKey);
+            if (winner is not null)
+                return winner;
+            throw;
+        }
 
         _logger.LogInformation("Build job {JobId} queued for pipeline {PipelineId}", job.Id, pipelineId);
 

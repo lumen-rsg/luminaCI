@@ -35,6 +35,8 @@ try
     // service refuses to start without it so secrets are never stored in
     // plaintext by accident. See AesSecretProtector for the on-disk format.
     builder.Services.AddSingleton<ISecretProtector, AesSecretProtector>();
+    builder.Services.AddSingleton<BuildExecutionCoordinator>();
+    builder.Services.AddHostedService<BuildMonitorHostedService>();
 
     // Services. DockerBuildService is registered both concretely (BuildsController
     // depends on its LogSubscription / log-streaming surface) and as IBuildLauncher
@@ -75,6 +77,12 @@ try
         x.AddConsumer<PackagePublishFaultConsumer>();
         x.AddConsumer<GetArtifactSignatureConsumer>();
         x.AddConsumer<GetArtifactLocationConsumer>();
+        x.AddEntityFrameworkOutbox<BuildDbContext>(outbox =>
+        {
+            outbox.UsePostgres();
+            outbox.UseBusOutbox();
+            outbox.DuplicateDetectionWindow = TimeSpan.FromDays(7);
+        });
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -86,6 +94,7 @@ try
 
             cfg.ReceiveEndpoint("lumina-build-service", e =>
             {
+                e.UseEntityFrameworkOutbox<BuildDbContext>(ctx);
                 e.ConfigureConsumer<CveScanCompletedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSignedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSigningFaultConsumer>(ctx);

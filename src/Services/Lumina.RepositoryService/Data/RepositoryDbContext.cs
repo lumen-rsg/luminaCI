@@ -1,4 +1,5 @@
 using Lumina.Shared.Models;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.RepositoryService.Data;
@@ -12,6 +13,10 @@ public class RepositoryDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.AddInboxStateEntity(entity => entity.ToTable("inbox_state", "repository"));
+        modelBuilder.AddOutboxMessageEntity(entity => entity.ToTable("outbox_message", "repository"));
+        modelBuilder.AddOutboxStateEntity(entity => entity.ToTable("outbox_state", "repository"));
+
         modelBuilder.Entity<PackageRepository>(entity =>
         {
             entity.HasKey(e => e.Id);

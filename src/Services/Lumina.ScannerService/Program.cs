@@ -44,6 +44,12 @@ try
         x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
 
         x.AddConsumer<CveScanRequestedConsumer>();
+        x.AddEntityFrameworkOutbox<ScannerDbContext>(outbox =>
+        {
+            outbox.UsePostgres();
+            outbox.UseBusOutbox();
+            outbox.DuplicateDetectionWindow = TimeSpan.FromDays(7);
+        });
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -55,6 +61,7 @@ try
 
             cfg.ReceiveEndpoint("lumina-scanner-service", e =>
             {
+                e.UseEntityFrameworkOutbox<ScannerDbContext>(ctx);
                 e.ConfigureConsumer<CveScanRequestedConsumer>(ctx);
             });
 

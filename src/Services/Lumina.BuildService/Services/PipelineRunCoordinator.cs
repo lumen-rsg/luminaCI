@@ -15,15 +15,18 @@ namespace Lumina.BuildService.Services;
 public sealed class PipelineRunCoordinator
 {
     private readonly BuildDbContext _db;
+    private readonly IPublishEndpoint _publishEndpoint;
     private readonly IBus _bus;
     private readonly ILogger<PipelineRunCoordinator> _logger;
 
     public PipelineRunCoordinator(
         BuildDbContext db,
+        IPublishEndpoint publishEndpoint,
         IBus bus,
         ILogger<PipelineRunCoordinator> logger)
     {
         _db = db;
+        _publishEndpoint = publishEndpoint;
         _bus = bus;
         _logger = logger;
     }
@@ -33,7 +36,7 @@ public sealed class PipelineRunCoordinator
         var job = await LoadJobAsync(buildJobId, cancellationToken);
         foreach (var artifact in job.Artifacts)
         {
-            await _bus.Publish(new HashStoreRequested(
+            await _publishEndpoint.Publish(new HashStoreRequested(
                 artifact.Id,
                 artifact.FileName,
                 artifact.HashSha256
@@ -190,6 +193,10 @@ public sealed class PipelineRunCoordinator
         try
         {
             await DispatchStepAsync(job, next, cancellationToken);
+            // Flush publications captured by the transactional bus outbox in the
+            // same database commit as the running step. RabbitMQ delivery may
+            // happen later, but the work cannot be lost if the broker is down.
+            await _db.SaveChangesAsync(cancellationToken);
         }
         catch (Exception ex)
         {
@@ -207,7 +214,7 @@ public sealed class PipelineRunCoordinator
             case StepType.Scan:
                 foreach (var artifact in job.Artifacts)
                 {
-                    await _bus.Publish(new CveScanRequested(
+                    await _publishEndpoint.Publish(new CveScanRequested(
                         artifact.Id,
                         artifact.FilePath,
                         artifact.FileName,
@@ -226,7 +233,7 @@ public sealed class PipelineRunCoordinator
 
                 foreach (var artifact in job.Artifacts)
                 {
-                    await _bus.Publish(new PackageSigningRequested(
+                    await _publishEndpoint.Publish(new PackageSigningRequested(
                         artifact.Id,
                         artifact.FilePath,
                         artifact.FileName,
@@ -241,7 +248,7 @@ public sealed class PipelineRunCoordinator
                 var repositoryId = Guid.Parse(step.Configuration["repositoryId"]);
                 foreach (var artifact in job.Artifacts)
                 {
-                    await _bus.Publish(new PackagePublishRequested(
+                    await _publishEndpoint.Publish(new PackagePublishRequested(
                         artifact.Id,
                         repositoryId,
                         job.TriggeredBy,
