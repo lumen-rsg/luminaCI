@@ -729,6 +729,9 @@ required secret in `deploy/.env` (copy `deploy/.env.example`):
 - `SECRETS_MASTER_KEY` — AES-256-GCM master key for pipeline-secret encryption
   at rest. Generate a strong random value (e.g. `openssl rand -base64 48`) and
   **never rotate it** after secrets are written.
+- `SECRETS_MASTER_KEY_FINGERPRINT_FILE` — mode-0600 file containing the
+  SHA-256 fingerprint recorded before the first deployment. The production
+  preflight rejects accidental master-key rotation.
 - `GPG_PASSPHRASE_FILE` — path to the Docker-secret source file for the RPM signing key.
 - `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`, `MINIO_PASSWORD` (and `MINIO_USER`).
 
@@ -739,3 +742,15 @@ falling back to an insecure dev default.
 > ⚠️ **For production, rotate every password in `.env` and keep `.env` out of
 > version control.** TLS certificates under `deploy/nginx/certs/` must also be
 > real (e.g. Let's Encrypt), not the self-signed dev pair.
+
+Before every production deployment, run:
+
+```bash
+PRODUCTION_HOST=console.example.com \
+EXPECTED_PUBLIC_IP=203.0.113.10 \
+./scripts/production-preflight.sh
+```
+
+The preflight fails on weak or reused secrets, unsafe permissions, signing
+secret errors, secrets-master-key rotation, invalid TLS, DNS mismatch, or
+direct application-port publication.

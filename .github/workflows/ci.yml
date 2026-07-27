@@ -38,6 +38,9 @@ jobs:
       - name: Validate Compose and Dockerfiles
         run: tests/ci/validate-deployment.sh
 
+      - name: Test production preflight
+        run: tests/ci/production-preflight.sh
+
       - name: Scan deployment configuration
         run: |
           docker run --rm \
