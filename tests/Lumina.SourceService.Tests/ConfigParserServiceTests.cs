@@ -287,17 +287,7 @@ public class ConfigParserServiceTests : IDisposable
         Assert.Null(svc.GetPackage("does-not-exist"));
     }
 
-    // ─── SaveContent / GetRawContent ─────────────────────────────────────
-
-    [Fact]
-    public void SaveContent_OverwritesAndIsReadable()
-    {
-        var svc = NewService("initial", out var path);
-
-        svc.SaveContent("replacement content");
-        Assert.Equal("replacement content", File.ReadAllText(path));
-        Assert.Equal("replacement content", svc.GetRawContent());
-    }
+    // ─── GetRawContent ───────────────────────────────────────────────────
 
     [Fact]
     public void GetRawContent_ReturnsEmpty_WhenFileMissing()
@@ -311,84 +301,5 @@ public class ConfigParserServiceTests : IDisposable
         var svc = new ConfigParserService(NullLogger<ConfigParserService>.Instance, config);
 
         Assert.Equal(string.Empty, svc.GetRawContent());
-    }
-
-    // ─── AddPackage / RemovePackage round trip ───────────────────────────
-
-    [Fact]
-    public void AddPackage_AppendsValidSection()
-    {
-        var svc = NewService("", out _);
-
-        svc.AddPackage(new PackageSourceConfig
-        {
-            Name = "new-pkg",
-            Source = "https://example.com/repo.git",
-            SourceType = SourceType.Git,
-            SourceBranch = "main",
-            BuildImage = "fedora:40"
-        });
-
-        var p = Assert.Single(svc.ParsePackages());
-        Assert.Equal("new-pkg", p.Name);
-        Assert.Equal(SourceType.Git, p.SourceType);
-        Assert.Equal("main", p.SourceBranch);
-    }
-
-    [Fact]
-    public void AddPackage_PreservesExistingPackages()
-    {
-        var svc = NewService("""
-            [package]
-            name=existing
-            source=src
-            source_type=git
-            """, out _);
-
-        svc.AddPackage(new PackageSourceConfig
-        {
-            Name = "added",
-            Source = "src2",
-            SourceType = SourceType.Tar
-        });
-
-        var names = svc.ParsePackages().Select(p => p.Name).ToArray();
-        Assert.Equal(new[] { "existing", "added" }, names);
-    }
-
-    [Fact]
-    public void RemovePackage_RemovesByNameCaseInsensitive()
-    {
-        var svc = NewService("""
-            [package]
-            name=keep
-            source=src
-            source_type=git
-
-            [package]
-            name=drop
-            source=src
-            source_type=git
-            """, out _);
-
-        var removed = svc.RemovePackage("DROP");
-
-        Assert.True(removed);
-        var p = Assert.Single(svc.ParsePackages());
-        Assert.Equal("keep", p.Name);
-    }
-
-    [Fact]
-    public void RemovePackage_ReturnsFalse_WhenMissing()
-    {
-        var svc = NewService("""
-            [package]
-            name=keep
-            source=src
-            source_type=git
-            """, out _);
-
-        Assert.False(svc.RemovePackage("nope"));
-        Assert.Single(svc.ParsePackages());
     }
 }

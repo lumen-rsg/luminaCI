@@ -121,8 +121,6 @@ public class DtoRoundTripTests
         RoundTrip(new SyncRepositoryRequest(Guid.NewGuid()));
         RoundTrip(new FetchSourceRequest("pkg"));
         RoundTrip(new FetchAllSourcesRequest());
-        RoundTrip(new UpdateConfigRequest("content"));
-        RoundTrip(new AddPackageToConfigRequest("n", "src", "git", "main", "img", "spec"));
     }
 
     // ─── Response DTOs ───────────────────────────────────────────────────

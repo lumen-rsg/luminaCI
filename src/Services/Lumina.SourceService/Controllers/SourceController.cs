@@ -4,7 +4,6 @@ using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
 using Lumina.SourceService.Data;
 using Lumina.SourceService.Services;
-using Lumina.Web.Shared.Authorization;
 using Lumina.Web.Shared.Errors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -243,114 +242,6 @@ public class SourceController : ControllerBase
     {
         var content = _configParser.GetRawContent();
         return Ok(new ApiResponse<SourceConfigResponse>(true, new SourceConfigResponse(content), null, null));
-    }
-
-    /// <summary>
-    /// Save the full conf.ini content
-    /// </summary>
-    [HttpPut("config")]
-    [Authorize(Policy = AuthPolicies.Admin)]
-    public ActionResult<ApiResponse<SourceConfigMutationResponse>> SaveConfig([FromBody] UpdateConfigRequest request)
-    {
-        try
-        {
-            _configParser.SaveContent(request.Content);
-            var packages = _configParser.ParsePackages();
-            return Ok(new ApiResponse<SourceConfigMutationResponse>(
-                true,
-                new SourceConfigMutationResponse($"Saved config with {packages.Count} packages", packages.Count),
-                null,
-                null));
-        }
-        catch (Exception ex)
-        {
-            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
-            return ApiResults.FromException<SourceConfigMutationResponse>(ex, _logger, "Sources.SaveConfig");
-        }
-    }
-
-    /// <summary>
-    /// Add a new package to conf.ini
-    /// </summary>
-    [HttpPost("config/package")]
-    [Authorize(Policy = AuthPolicies.Admin)]
-    public async Task<ActionResult<ApiResponse<SourceConfigMutationResponse>>> AddPackageToConfig([FromBody] AddPackageToConfigRequest request)
-    {
-        try
-        {
-            // SECURITY: reject unsafe sources (SSRF / arbitrary-file-read) at
-            // registration time so they can never be persisted to conf.ini and
-            // later fetched. SourceFetchService still validates as a backstop.
-            var sourceType = Enum.TryParse<Shared.Models.Enums.SourceType>(request.SourceType, true, out var st)
-                ? st : Shared.Models.Enums.SourceType.Http;
-            await _uriValidator.ValidateAsync(request.Source, sourceType, request.SourceBranch);
-
-            var existing = _configParser.GetPackage(request.Name);
-            if (existing != null)
-                return BadRequest(new ApiResponse<SourceConfigMutationResponse>(false, null, $"Package '{request.Name}' already exists in configuration", null));
-
-            _configParser.AddPackage(new Services.PackageSourceConfig
-            {
-                Name = request.Name,
-                Source = request.Source,
-                SourceType = sourceType,
-                SourceBranch = request.SourceBranch,
-                BuildImage = request.BuildImage
-            });
-
-            // Save spec content to file if provided
-            if (!string.IsNullOrWhiteSpace(request.SpecContent))
-            {
-                var specDir = "/app/specs";
-                if (!System.IO.Directory.Exists(specDir))
-                    System.IO.Directory.CreateDirectory(specDir);
-                var specPath = System.IO.Path.Combine(specDir, $"{request.Name}.spec");
-                await System.IO.File.WriteAllTextAsync(specPath, request.SpecContent);
-                _logger.LogInformation("Saved spec file for {Name} to {Path}", request.Name, specPath);
-            }
-
-            return Ok(new ApiResponse<SourceConfigMutationResponse>(
-                true,
-                new SourceConfigMutationResponse($"Package '{request.Name}' added to configuration"),
-                null,
-                null));
-        }
-        catch (SourceValidationException ex)
-        {
-            // Domain-authored message — safe to surface as the Error field.
-            return BadRequest(new ApiResponse<SourceConfigMutationResponse>(false, null, ex.Message, null));
-        }
-        catch (Exception ex)
-        {
-            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
-            return ApiResults.FromException<SourceConfigMutationResponse>(ex, _logger, "Sources.AddPackageToConfig", request.Name);
-        }
-    }
-
-    /// <summary>
-    /// Remove a package from conf.ini
-    /// </summary>
-    [HttpDelete("config/{name}")]
-    [Authorize(Policy = AuthPolicies.Admin)]
-    public ActionResult<ApiResponse<SourceConfigMutationResponse>> RemovePackageFromConfig(string name)
-    {
-        try
-        {
-            var removed = _configParser.RemovePackage(name);
-            if (!removed)
-                return NotFound(new ApiResponse<SourceConfigMutationResponse>(false, null, $"Package '{name}' not found in configuration", null));
-
-            return Ok(new ApiResponse<SourceConfigMutationResponse>(
-                true,
-                new SourceConfigMutationResponse($"Package '{name}' removed from configuration"),
-                null,
-                null));
-        }
-        catch (Exception ex)
-        {
-            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
-            return ApiResults.FromException<SourceConfigMutationResponse>(ex, _logger, "Sources.RemovePackageFromConfig", name);
-        }
     }
 
     /// <summary>

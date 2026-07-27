@@ -12,79 +12,13 @@
         <button class="btn btn-outline-secondary btn-sm" @onclick="ReloadConfig">
             <Icon Name="refresh" /> Reload Config
         </button>
-        <button class="btn btn-outline-primary btn-sm" @onclick="ToggleConfigEditor">
-            <Icon Name="edit" /> Edit conf.ini
-        </button>
-        <button class="btn btn-primary btn-sm" @onclick="ShowAddPackage">
-            <Icon Name="plus" /> Add Package
-        </button>
     </div>
 </div>
 
-<!-- Config Editor -->
-@if (_showConfigEditor)
-{
-    <div class="card mb-4 border-primary">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <span><Icon Name="file-code" /> conf.ini</span>
-            <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-success" @onclick="SaveConfig"><Icon Name="save" /> Save</button>
-                <button class="btn btn-sm btn-outline-secondary" @onclick="ToggleConfigEditor"><Icon Name="x" /> Cancel</button>
-            </div>
-        </div>
-        <div class="card-body p-0">
-            <textarea class="form-control font-monospace border-0 rounded-0" rows="14" @bind="_configContent" style="font-size:0.82rem;resize:vertical;border:0;border-radius:0;"></textarea>
-        </div>
-    </div>
-}
-
-<!-- Add Package Dialog -->
-@if (_showAddPackage)
-{
-    <div class="card mb-4 border-success">
-        <div class="card-header">
-            <Icon Name="plus" /> Add Package
-        </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-4 mb-3">
-                    <label class="form-label">Package Name</label>
-                    <input type="text" class="form-control" @bind="_newPkgName" placeholder="my-package" />
-                </div>
-                <div class="col-md-4 mb-3">
-                    <label class="form-label">Source URL</label>
-                    <input type="text" class="form-control" @bind="_newPkgSource" placeholder="https://github.com/org/repo" />
-                </div>
-                <div class="col-md-2 mb-3">
-                    <label class="form-label">Source Type</label>
-                    <select class="form-select" @bind="_newPkgSourceType">
-                        <option value="git">Git</option>
-                        <option value="http">HTTP</option>
-                        <option value="tar">Tar</option>
-                        <option value="ftp">FTP</option>
-                        <option value="rsync">Rsync</option>
-                        <option value="svn">SVN</option>
-                        <option value="local">Local</option>
-                    </select>
-                </div>
-                <div class="col-md-2 mb-3">
-                    <label class="form-label">Branch</label>
-                    <input type="text" class="form-control" @bind="_newPkgBranch" placeholder="main" />
-                </div>
-            </div>
-            <div class="row">
-                <div class="col-12 mb-3">
-                    <label class="form-label">Spec File Content (optional)</label>
-                    <textarea class="form-control font-monospace" rows="8" @bind="_newPkgSpecContent" placeholder="Name:           my-package&#10;Version:        1.0.0&#10;Release:        1%{?dist}&#10;Summary:        My package&#10;&#10;Source0:        %{name}-%{version}.tar.gz&#10;&#10;%description&#10;My package description.&#10;&#10;%build&#10;%configure&#10;make %{?_smp_mflags}&#10;&#10;%install&#10;make install DESTDIR=%{buildroot}" style="font-size:0.82rem;resize:vertical;"></textarea>
-                </div>
-            </div>
-            <div class="d-flex justify-content-end">
-                <button class="btn btn-secondary btn-sm me-2" @onclick="CancelAddPackage">Cancel</button>
-                <button class="btn btn-success btn-sm" @onclick="AddPackage">Add</button>
-            </div>
-        </div>
-    </div>
-}
+<div class="alert alert-info" role="status">
+    Source definitions are managed as read-only deployment configuration. Update
+    <code>conf.ini</code> through the deployment workflow, then reload this page.
+</div>
 
 <!-- Package List -->
 @if (_loading)
@@ -142,12 +76,6 @@ else if (_packages.Any())
                                 <button class="btn btn-outline-primary" @onclick="() => FetchPackage(pkg.PackageName)" title="Fetch sources">
                                     <Icon Name="download" />
                                 </button>
-                                <button class="btn btn-outline-success" @onclick="() => BuildPackage(pkg.PackageName)" title="Build RPM">
-                                    <Icon Name="hammer" />
-                                </button>
-                                <button class="btn btn-outline-danger" @onclick="() => RemovePackage(pkg.PackageName)" title="Remove from config">
-                                    <Icon Name="trash" />
-                                </button>
                             </div>
                         </td>
                     </tr>
@@ -161,7 +89,7 @@ else
     <div class="empty-state">
         <div class="empty-state-icon" style="font-size:2rem;"><Icon Name="package" /></div>
         <h3>No packages configured</h3>
-        <p>Edit conf.ini or add a package to get started.</p>
+        <p>Add source definitions through the deployment configuration.</p>
     </div>
 }
 
@@ -185,18 +113,8 @@ else
 @code {
     private List<SourcePackageResponse> _packages = new();
     private bool _loading = true;
-    private bool _showConfigEditor = false;
-    private bool _showAddPackage = false;
-    private string _configContent = "";
     private string? _statusMessage;
     private string? _errorMessage;
-
-    // Add package form
-    private string _newPkgName = "";
-    private string _newPkgSource = "";
-    private string _newPkgSourceType = "git";
-    private string _newPkgBranch = "";
-    private string _newPkgSpecContent = "";
 
     protected override async Task OnInitializedAsync()
     {
@@ -219,90 +137,6 @@ else
         StateHasChanged();
     }
 
-    private async Task ToggleConfigEditor()
-    {
-        _showConfigEditor = !_showConfigEditor;
-        if (_showConfigEditor)
-        {
-            var result = await Api.GetConfigAsync();
-            _configContent = result?.Data?.Content ?? "";
-        }
-    }
-
-    private async Task SaveConfig()
-    {
-        try
-        {
-            var result = await Api.SaveConfigAsync(_configContent);
-            if (result?.Success == true)
-            {
-                _showConfigEditor = false;
-                _statusMessage = result.Data?.Message ?? "Configuration saved successfully";
-                await LoadPackages();
-            }
-            else
-            {
-                _errorMessage = result?.Error ?? "Failed to save config";
-            }
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Failed to save config: {ex.Message}";
-        }
-    }
-
-    private void ShowAddPackage() => _showAddPackage = true;
-    private void CancelAddPackage() => _showAddPackage = false;
-
-    private async Task AddPackage()
-    {
-        try
-        {
-            var request = new AddPackageToConfigRequest(_newPkgName, _newPkgSource, _newPkgSourceType, _newPkgBranch, SpecContent: string.IsNullOrWhiteSpace(_newPkgSpecContent) ? null : _newPkgSpecContent);
-            var result = await Api.AddPackageToConfigAsync(request);
-            if (result?.Success == true)
-            {
-                _showAddPackage = false;
-                _newPkgName = "";
-                _newPkgSource = "";
-                _newPkgSourceType = "git";
-                _newPkgBranch = "";
-                _newPkgSpecContent = "";
-                _statusMessage = $"Package added to configuration";
-                await LoadPackages();
-            }
-            else
-            {
-                _errorMessage = result?.Error ?? "Failed to add package";
-            }
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Failed to add package: {ex.Message}";
-        }
-    }
-
-    private async Task RemovePackage(string name)
-    {
-        try
-        {
-            var result = await Api.RemovePackageFromConfigAsync(name);
-            if (result?.Success == true)
-            {
-                _statusMessage = result.Data?.Message ?? $"Package '{name}' removed from configuration";
-                await LoadPackages();
-            }
-            else
-            {
-                _errorMessage = result?.Error ?? $"Failed to remove package '{name}'";
-            }
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Failed to remove package: {ex.Message}";
-        }
-    }
-
     private async Task FetchPackage(string name)
     {
         try
@@ -321,28 +155,6 @@ else
         catch (Exception ex)
         {
             _errorMessage = $"Failed to fetch: {ex.Message}";
-        }
-    }
-
-    private async Task BuildPackage(string name)
-    {
-        try
-        {
-            // SpecContent is not needed — the server looks for spec files in
-            // /app/specs/{name}.spec automatically.
-            var result = await Api.BuildSourceAsync(name);
-            if (result?.Success == true)
-            {
-                _statusMessage = $"Build triggered for '{name}'";
-            }
-            else
-            {
-                _errorMessage = result?.Error ?? $"Build failed for '{name}'";
-            }
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Failed to build: {ex.Message}";
         }
     }
 

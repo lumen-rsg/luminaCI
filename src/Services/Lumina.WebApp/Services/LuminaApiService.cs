@@ -279,37 +279,6 @@ public class LuminaApiService
         return await _http.GetFromJsonAsync<ApiResponse<SourceConfigResponse>>("/api/sources/config");
     }
 
-    public async Task<ApiResponse<SourceConfigMutationResponse>?> SaveConfigAsync(string content)
-    {
-        var resp = await _http.PutAsJsonAsync("/api/sources/config", new UpdateConfigRequest(content));
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<SourceConfigMutationResponse>>();
-    }
-
-    public async Task<ApiResponse<SourceConfigMutationResponse>?> RemovePackageFromConfigAsync(string name)
-    {
-        var resp = await _http.DeleteAsync($"/api/sources/config/{name}");
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<SourceConfigMutationResponse>>();
-    }
-
-    public async Task<ApiResponse<object>?> AddPackageToConfigAsync(AddPackageToConfigRequest request)
-    {
-        var resp = await _http.PostAsJsonAsync("/api/sources/config/package", request);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
-    }
-
-    public async Task<ApiResponse<object>?> BuildSourceAsync(string name, string? specContent = null)
-    {
-        var body = specContent != null ? new { SpecContent = specContent } : (object?)null;
-        var resp = await _http.PostAsJsonAsync($"/api/sources/{name}/build", body);
-        if (resp.IsSuccessStatusCode)
-        {
-            return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
-        }
-        var errorContent = await resp.Content.ReadAsStringAsync();
-        _logger.LogWarning("Build source failed for {Name}: {Status} {Error}", name, resp.StatusCode, errorContent);
-        return new ApiResponse<object>(false, null, $"Build failed ({resp.StatusCode}): {errorContent}", null);
-    }
-
     // === Extra Sources (pipeline & build level) ===
     public async Task<ApiResponse<List<UploadedSourceResponse>>?> GetPipelineSourcesAsync(Guid pipelineId)
     {
