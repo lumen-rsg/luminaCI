@@ -248,6 +248,9 @@ jobs:
       - name: Verify durable infrastructure
         run: tests/ci/infrastructure-durability.sh
 
+      - name: Verify infrastructure backup restoration
+        run: tests/ci/backup-restore.sh
+
   compose-smoke:
     name: complete Compose application smoke test
     runs-on: ubuntu-24.04-arm

@@ -32,7 +32,6 @@ Passing CI run:
 
 - [ ] A real source-to-build-to-scan-to-sign-to-publish canary succeeds in
       staging.
-- [ ] Backup and restore procedures are tested.
 - [ ] Rollback procedure is documented and rehearsed.
 - [ ] Monitoring and actionable alerts cover the application and its
       dependencies.

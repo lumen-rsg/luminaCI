@@ -631,6 +631,9 @@ With the stack running, exercise the full API surface:
 ./scripts/smoke-test.sh        # honors BUILD_URL, GATEWAY_URL, … env overrides
 ```
 
+Production backup, restore, and recovery procedures are in
+[`deploy/OPERATIONS.md`](deploy/OPERATIONS.md).
+
 ---
 
 ## Service management
