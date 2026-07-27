@@ -313,16 +313,42 @@ public class BuildsController : ControllerBase
         if (!job.Artifacts.Any())
             return NotFound(new ApiResponse<object>(false, null, "No artifacts available for this build", null));
 
-        // If only one artifact, serve it directly
-        if (job.Artifacts.Count == 1)
+        var files = job.Artifacts
+            .Where(artifact =>
+                !string.IsNullOrEmpty(artifact.FilePath) &&
+                System.IO.File.Exists(artifact.FilePath))
+            .Select(artifact => (Path: artifact.FilePath, Name: artifact.FileName))
+            .ToList();
+
+        // Provenance files have fixed server-authored names. Never enumerate the
+        // writable artifacts directory: an untrusted build could otherwise add a
+        // symlink or arbitrary payload and make the API expose it.
+        var artifactDirectory = $"/app/builds/{id}";
+        foreach (var provenanceName in new[]
+                 {
+                     "build-provenance.json",
+                     "build-inputs.sha256",
+                     "installed-packages.txt",
+                     "rpm-artifacts.sha256",
+                     "build.log"
+                 })
         {
-            var single = job.Artifacts.First();
-            if (!string.IsNullOrEmpty(single.FilePath) && System.IO.File.Exists(single.FilePath))
-                return File(System.IO.File.OpenRead(single.FilePath), "application/x-rpm", single.FileName);
-            return NotFound(new ApiResponse<object>(false, null, "Artifact file not found on disk", null));
+            var path = Path.Combine(artifactDirectory, provenanceName);
+            if (System.IO.File.Exists(path) &&
+                !System.IO.File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+            {
+                files.Add((path, provenanceName));
+            }
         }
 
-        // Multiple artifacts — create a zip archive on the fly
+        if (files.Count == 0)
+            return NotFound(new ApiResponse<object>(false, null, "Artifact files not found on disk", null));
+
+        // A lone RPM can still be returned directly. Builds with provenance are
+        // zipped so the SRPM, binaries, log, and manifests stay together.
+        if (files.Count == 1)
+            return File(System.IO.File.OpenRead(files[0].Path), "application/x-rpm", files[0].Name);
+
         var archiveName = $"build-{id.ToString("N")[..8]}-artifacts.zip";
         var tempArchive = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"artifacts-{id:N}.zip");
 
@@ -331,13 +357,11 @@ public class BuildsController : ControllerBase
             using (var zipStream = new System.IO.FileStream(tempArchive, System.IO.FileMode.Create))
             using (var zip = new System.IO.Compression.ZipArchive(zipStream, System.IO.Compression.ZipArchiveMode.Create))
             {
-                foreach (var artifact in job.Artifacts)
+                foreach (var file in files)
                 {
-                    if (string.IsNullOrEmpty(artifact.FilePath) || !System.IO.File.Exists(artifact.FilePath))
-                        continue;
-                    var entry = zip.CreateEntry(artifact.FileName, System.IO.Compression.CompressionLevel.Fastest);
+                    var entry = zip.CreateEntry(file.Name, System.IO.Compression.CompressionLevel.Fastest);
                     using var entryStream = entry.Open();
-                    using var fileStream = System.IO.File.OpenRead(artifact.FilePath);
+                    using var fileStream = System.IO.File.OpenRead(file.Path);
                     await fileStream.CopyToAsync(entryStream);
                 }
             }
@@ -345,10 +369,10 @@ public class BuildsController : ControllerBase
         catch
         {
             // Fallback: serve the first available artifact
-            var firstArtifact = job.Artifacts.FirstOrDefault(a =>
-                !string.IsNullOrEmpty(a.FilePath) && System.IO.File.Exists(a.FilePath));
-            if (firstArtifact != null)
-                return File(System.IO.File.OpenRead(firstArtifact.FilePath), "application/x-rpm", firstArtifact.FileName);
+            var firstArtifact = files.FirstOrDefault(file =>
+                file.Name.EndsWith(".rpm", StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(firstArtifact.Path))
+                return File(System.IO.File.OpenRead(firstArtifact.Path), "application/x-rpm", firstArtifact.Name);
             return NotFound(new ApiResponse<object>(false, null, "Could not create archive", null));
         }
 

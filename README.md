@@ -39,8 +39,9 @@ files** safely.
 Lumina CI automates the RPM release pipeline end to end:
 
 1. **Source** — resolve a pinned HTTPS Git repository or tarball URL.
-2. **Build** — run `dnf builddep` + `rpmbuild` (or `dotnet build`) inside an
-   ephemeral, isolated container.
+2. **Build** — create an SRPM, rebuild it in a fresh RPM topdir, and retain the
+   inputs, dependency inventory, runner identity, and logs inside an ephemeral,
+   isolated container.
 3. **Sign** — attach a PGP signature (security-service, GPG).
 4. **Scan** — run Trivy against the artifacts and record CVE findings.
 5. **Publish** — add the signed package to a managed RPM repository served by
@@ -124,6 +125,9 @@ primary UI; a REST API is available for automation and integrations.
 - **Isolated build containers** — every `rpmbuild`/`dotnet build` runs in a
   throwaway container on a dedicated network, with caps, limits, and a
   non-root user (see [Build security model](#build-security-model)).
+- **Traceable artifact bundles** — every successful build retains its SRPM,
+  binary RPMs, complete log, source/spec/patch hashes, installed-package
+  inventory, target platform, and resolved runner image digest or ID.
 - **PGP signing** — generate/manage signing keys and embed verified RPM signatures.
 - **CVE scanning** — Trivy integration with results stored per-artifact.
 - **Managed RPM repository** — verify and stage packages privately, then

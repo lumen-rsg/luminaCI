@@ -373,7 +373,7 @@ public class DockerBuildService : IBuildLauncher
         try
         {
             // Ensure the build image exists locally — try to pull if missing
-            await EnsureImageExistsAsync(imageName);
+            var imageIdentity = await EnsureImageExistsAsync(imageName);
             job.Status = BuildStatus.Building;
             job.StartedAt = DateTime.UtcNow;
             _db.BuildJobs.Update(job);
@@ -399,6 +399,8 @@ public class DockerBuildService : IBuildLauncher
                 $"SPEC_NAME={job.SpecName}",
                 $"ARTIFACTS_DIR=/artifacts",
                 $"BUILD_JOB_ID={job.Id}",
+                $"RUNNER_IMAGE_REFERENCE={imageName}",
+                $"RUNNER_IMAGE_IDENTITY={imageIdentity}",
                 "AUTO_DOWNLOAD=true"
             };
 
@@ -940,7 +942,7 @@ public class DockerBuildService : IBuildLauncher
     /// Ensure the specified Docker image exists locally. If not found, attempt to pull it.
     /// This prevents build failures when images haven't been pre-built on a new device.
     /// </summary>
-    private async Task EnsureImageExistsAsync(string imageName)
+    private async Task<string> EnsureImageExistsAsync(string imageName)
     {
         try
         {
@@ -956,7 +958,7 @@ public class DockerBuildService : IBuildLauncher
             if (images.Count > 0)
             {
                 _logger.LogDebug("Build image {Image} found locally", imageName);
-                return;
+                return GetImageIdentity(images[0], imageName);
             }
 
             _logger.LogWarning("Build image {Image} not found locally, attempting to pull...", imageName);
@@ -973,6 +975,16 @@ public class DockerBuildService : IBuildLauncher
                             _logger.LogDebug("Pull {Image}: {Status}", imageName, msg.Status);
                     }));
                 _logger.LogInformation("Successfully pulled build image {Image}", imageName);
+                var pulledImages = await _docker.Images.ListImagesAsync(new ImagesListParameters
+                {
+                    Filters = new Dictionary<string, IDictionary<string, bool>>
+                    {
+                        ["reference"] = new Dictionary<string, bool> { [imageName] = true }
+                    }
+                });
+                return pulledImages.Count > 0
+                    ? GetImageIdentity(pulledImages[0], imageName)
+                    : imageName;
             }
             catch (Exception pullEx)
             {
@@ -990,8 +1002,13 @@ public class DockerBuildService : IBuildLauncher
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Could not verify build image {Image} existence, proceeding anyway", imageName);
+            return imageName;
         }
     }
+
+    private static string GetImageIdentity(ImagesListResponse image, string fallback)
+        => image.RepoDigests?.FirstOrDefault()
+            ?? (!string.IsNullOrWhiteSpace(image.ID) ? image.ID : fallback);
 
     /// <summary>
     /// Save failed build log to a file for diagnostics.

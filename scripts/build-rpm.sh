@@ -479,30 +479,116 @@ ls -la "${BUILD_DIR}/SOURCES/"
 # container is launched with the per-container `no-new-privileges` security opt,
 # which neutralizes setuid binaries, so a syscall-based drop is the only option.
 
-# builder_phase: everything that runs as the unprivileged rpmbuilder user — the
-# rpmbuild step (which executes spec-supplied %build/%install shell) and the
-# artifact copy into /artifacts (writable by shared gid 1654).
+# builder_phase: everything that runs as the unprivileged rpmbuilder user.
+# First create an SRPM, then rebuild that self-contained source package in a
+# fresh topdir. This proves the retained source package contains every declared
+# source/patch and avoids publishing binaries from the mutable preparation tree.
 builder_phase() {
-    echo "Building RPM (as uid $(id -u))..."
-    rpmbuild -bb "${BUILD_DIR}/SPECS/${SPEC_NAME}" \
-        --define "_topdir ${BUILD_DIR}" \
-        --define "debug_package %{nil}" \
-        2>&1 | tee /tmp/build.log
-    local rpmbuild_exit=${PIPESTATUS[0]}
+    local rebuild_dir="${RPMBUILDER_HOME}/rebuild"
+    local rpmbuild_exit
+    local source_rpms
+    local source_rpm
 
+    : > /tmp/build.log
+    echo "Creating source RPM (as uid $(id -u))..."
+    rpmbuild -bs "${BUILD_DIR}/SPECS/${SPEC_NAME}" \
+        --define "_topdir ${BUILD_DIR}" \
+        2>&1 | tee -a /tmp/build.log
+    rpmbuild_exit=${PIPESTATUS[0]}
     if [ "${rpmbuild_exit}" -ne 0 ]; then
-        echo "ERROR: RPM build failed with exit code ${rpmbuild_exit}!"
+        echo "ERROR: source RPM creation failed with exit code ${rpmbuild_exit}!"
         return "${rpmbuild_exit}"
     fi
 
-    # Collect binary RPMs. -bb produces RPMS/<arch>/*.rpm only (no SRPMS); the
-    # RPMS/*/*.rpm glob gathers every arch subpackage (FUNC-009: the previous
-    # SRPMS copy was dead code under -bb and is removed).
+    shopt -s nullglob
+    source_rpms=("${BUILD_DIR}"/SRPMS/*.src.rpm)
+    if [ "${#source_rpms[@]}" -ne 1 ]; then
+        echo "ERROR: expected exactly one source RPM, found ${#source_rpms[@]}"
+        return 1
+    fi
+    source_rpm="${source_rpms[0]}"
+
+    rm -rf "${rebuild_dir}"
+    mkdir -p "${rebuild_dir}"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+    echo "Rebuilding immutable source RPM in clean topdir: $(basename "${source_rpm}")"
+    rpmbuild --rebuild "${source_rpm}" \
+        --define "_topdir ${rebuild_dir}" \
+        2>&1 | tee -a /tmp/build.log
+    rpmbuild_exit=${PIPESTATUS[0]}
+    if [ "${rpmbuild_exit}" -ne 0 ]; then
+        echo "ERROR: source RPM rebuild failed with exit code ${rpmbuild_exit}!"
+        return "${rpmbuild_exit}"
+    fi
+
     mkdir -p "${ARTIFACTS_DIR}"
-    cp -v "${BUILD_DIR}"/RPMS/*/*.rpm "${ARTIFACTS_DIR}/" || {
-        echo "ERROR: rpmbuild reported success but no RPMs were found under ${BUILD_DIR}/RPMS/"
+    cp -v "${source_rpm}" "${ARTIFACTS_DIR}/"
+    cp -v "${rebuild_dir}"/RPMS/*/*.rpm "${ARTIFACTS_DIR}/" || {
+        echo "ERROR: SRPM rebuild succeeded but produced no binary RPMs"
         return 1
     }
+
+    # Retain the evidence needed to explain and independently reproduce the
+    # build. Manifests deliberately exclude source URLs/credentials.
+    (
+        cd "${BUILD_DIR}"
+        find SOURCES SPECS -type f -print0 \
+            | sort -z \
+            | xargs -0 sha256sum
+    ) > "${ARTIFACTS_DIR}/build-inputs.sha256"
+    rpm -qa --qf '%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' \
+        | sort > "${ARTIFACTS_DIR}/installed-packages.txt"
+    (
+        cd "${ARTIFACTS_DIR}"
+        sha256sum -- ./*.rpm
+    ) > "${ARTIFACTS_DIR}/rpm-artifacts.sha256"
+    cp /tmp/build.log "${ARTIFACTS_DIR}/build.log"
+
+    local source_rpm_sha spec_sha inputs_sha packages_sha artifacts_sha
+    local runner_reference runner_identity target_cpu target_os os_id os_version
+    source_rpm_sha=$(sha256sum "${source_rpm}" | awk '{print $1}')
+    spec_sha=$(sha256sum "${BUILD_DIR}/SPECS/${SPEC_NAME}" | awk '{print $1}')
+    inputs_sha=$(sha256sum "${ARTIFACTS_DIR}/build-inputs.sha256" | awk '{print $1}')
+    packages_sha=$(sha256sum "${ARTIFACTS_DIR}/installed-packages.txt" | awk '{print $1}')
+    artifacts_sha=$(sha256sum "${ARTIFACTS_DIR}/rpm-artifacts.sha256" | awk '{print $1}')
+    runner_reference="${RUNNER_IMAGE_REFERENCE:-unknown}"
+    runner_identity="${RUNNER_IMAGE_IDENTITY:-unknown}"
+    target_cpu=$(rpm --eval '%{_target_cpu}')
+    target_os=$(rpm --eval '%{_target_os}')
+    os_id=$(. /etc/os-release && printf '%s' "${ID:-unknown}")
+    os_version=$(. /etc/os-release && printf '%s' "${VERSION_ID:-unknown}")
+
+    json_escape() {
+        local value="$1"
+        value=${value//\\/\\\\}
+        value=${value//\"/\\\"}
+        value=${value//$'\n'/\\n}
+        value=${value//$'\r'/\\r}
+        value=${value//$'\t'/\\t}
+        printf '%s' "${value}"
+    }
+
+    cat > "${ARTIFACTS_DIR}/build-provenance.json" <<EOF
+{
+  "schemaVersion": 1,
+  "buildJobId": "$(json_escape "${BUILD_JOB_ID:-unknown}")",
+  "createdAtUtc": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+  "sourceRpm": "$(json_escape "$(basename "${source_rpm}")")",
+  "sourceRpmSha256": "${source_rpm_sha}",
+  "specFile": "$(json_escape "${SPEC_NAME}")",
+  "specSha256": "${spec_sha}",
+  "inputsManifestSha256": "${inputs_sha}",
+  "installedPackagesManifestSha256": "${packages_sha}",
+  "rpmArtifactsManifestSha256": "${artifacts_sha}",
+  "runnerImageReference": "$(json_escape "${runner_reference}")",
+  "runnerImageIdentity": "$(json_escape "${runner_identity}")",
+  "targetCpu": "$(json_escape "${target_cpu}")",
+  "targetOs": "$(json_escape "${target_os}")",
+  "runnerOs": "$(json_escape "${os_id}")",
+  "runnerOsVersion": "$(json_escape "${os_version}")",
+  "sourceCommit": "$(json_escape "${COMMIT_SHA:-unknown}")"
+}
+EOF
+
     return 0
 }
 
@@ -521,7 +607,8 @@ chown -R rpmbuilder:lumina-build "${BUILD_DIR}"
 
 # Run the untrusted build phase as rpmbuilder (uid 1000, shared gid 1654).
 export -f builder_phase
-export BUILD_DIR SPEC_NAME ARTIFACTS_DIR
+export BUILD_DIR SPEC_NAME ARTIFACTS_DIR RPMBUILDER_HOME
+export BUILD_JOB_ID COMMIT_SHA RUNNER_IMAGE_REFERENCE RUNNER_IMAGE_IDENTITY
 setpriv --reuid 1000 --regid 1654 --clear-groups -- bash -c 'builder_phase'
 BUILD_EXIT=$?
 
