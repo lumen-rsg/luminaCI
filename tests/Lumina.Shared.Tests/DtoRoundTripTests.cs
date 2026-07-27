@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Lumina.Shared.DTOs;
+using Lumina.Shared.Events;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
 using Xunit;
@@ -119,6 +120,24 @@ public class DtoRoundTripTests
         RoundTrip(new SyncRepositoryRequest(Guid.NewGuid()));
         RoundTrip(new FetchSourceRequest("pkg"));
         RoundTrip(new FetchAllSourcesRequest());
+    }
+
+    [Fact]
+    public void ArtifactLocation_RoundTripsWithoutBinaryPayload()
+    {
+        var location = new ArtifactLocation(
+            "pkg-1.0-1.x86_64.rpm",
+            "lumina-artifacts",
+            $"sha256/{new string('a', 64)}/pkg-1.0-1.x86_64.rpm",
+            512 * 1024 * 1024L,
+            new string('a', 64));
+
+        var rt = RoundTrip(location);
+
+        Assert.Equal(location, rt);
+        Assert.DoesNotContain(
+            typeof(ArtifactLocation).GetProperties(),
+            property => property.PropertyType == typeof(byte[]));
     }
 
     // ─── Response DTOs ───────────────────────────────────────────────────

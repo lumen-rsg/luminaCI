@@ -109,40 +109,26 @@ public class MinioStorageService
     }
 
     /// <summary>
-    /// Publishes a package by fetching the built RPM from BuildService over the
-    /// message bus (RepositoryService has no shared filesystem with BuildService
-    /// and no view of BuildDbContext), saving it to the repository directory
-    /// routed by the package's own architecture, and recording real metadata.
+    /// Publishes a package by requesting only its immutable object reference
+    /// over the message bus, then streaming the RPM from MinIO.
     /// </summary>
     public async Task<Package> PublishPackageAsync(Guid artifactId, Guid repositoryId, string publishedBy)
     {
         var repo = await _db.Repositories.FindAsync(repositoryId)
             ?? throw new NotFoundException($"Repository {repositoryId} not found");
 
-        // Fetch the artifact bytes + real NEVRA filename from BuildService.
-        // The previous implementation read a MinIO object (repo-<name>/<id>.rpm)
-        // that was never written anywhere in the pipeline, so it always fell
-        // into the catch branch and published a zero-byte placeholder under a
-        // fabricated name. The bus request is the established pattern — it
-        // mirrors the signing-metadata request, the tiny sibling of this lookup.
-        ArtifactContent artifact;
+        ArtifactLocation artifact;
         try
         {
-            var response = await _bus.Request<GetArtifactContent, ArtifactContent>(
-                new GetArtifactContent(artifactId), timeout: TimeSpan.FromSeconds(60));
+            var response = await _bus.Request<GetArtifactLocation, ArtifactLocation>(
+                new GetArtifactLocation(artifactId), timeout: TimeSpan.FromSeconds(10));
             artifact = response.Message;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch artifact {ArtifactId} content from BuildService via bus", artifactId);
+            _logger.LogError(ex, "Failed to fetch artifact {ArtifactId} object location", artifactId);
             throw new ValidationException(
-                $"Could not fetch artifact {artifactId} content from BuildService. The build may not have completed or BuildService is unreachable.");
-        }
-
-        if (artifact.Content is null || artifact.Content.Length == 0)
-        {
-            throw new ValidationException(
-                $"Artifact {artifactId} has no content to publish (empty payload from BuildService).");
+                $"Could not resolve artifact {artifactId}. The signed object may not be available.");
         }
 
         var signing = await GetRequiredArtifactSigningAsync(artifactId);
@@ -163,8 +149,29 @@ public class MinioStorageService
         var stagingDirectory = _repoManager.CreatePublicationStagingDirectory(repositoryId);
         try
         {
-            await using var content = new MemoryStream(artifact.Content, writable: false);
-            var stagedPath = await _repoManager.WriteStagedRpmAsync(stagingDirectory, fileName, content);
+            var expectedObjectName = $"sha256/{artifact.HashSha256.ToLowerInvariant()}/{fileName}";
+            if (!string.Equals(artifact.BucketName, "lumina-artifacts", StringComparison.Ordinal) ||
+                !string.Equals(artifact.ObjectName, expectedObjectName, StringComparison.Ordinal))
+            {
+                throw new ValidationException(
+                    $"Artifact {artifactId} has an invalid content-addressed object reference.");
+            }
+
+            var stagedPath = _repoManager.GetStagedRpmPath(stagingDirectory, fileName);
+            try
+            {
+                await _minio.GetObjectAsync(
+                    new GetObjectArgs()
+                        .WithBucket(artifact.BucketName)
+                        .WithObject(artifact.ObjectName)
+                        .WithFile(stagedPath));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to stream artifact {ArtifactId} from {ObjectName}", artifactId, artifact.ObjectName);
+                throw new ValidationException($"Could not download immutable object for artifact {artifactId}.");
+            }
+
             var stagedHash = _repoManager.ComputeSha256(stagedPath);
             if (!string.Equals(stagedHash, artifact.HashSha256, StringComparison.OrdinalIgnoreCase) ||
                 !string.Equals(stagedHash, signing.SignedSha256, StringComparison.OrdinalIgnoreCase))

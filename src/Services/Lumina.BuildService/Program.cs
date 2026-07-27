@@ -7,6 +7,7 @@ using Lumina.Shared.Security;
 using Lumina.Web.Shared;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Minio;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -43,6 +44,13 @@ try
     builder.Services.AddSingleton<IRpmArtifactValidator, RpmArtifactValidator>();
     builder.Services.AddScoped<ISigningKeyGate, SigningKeyGate>();
     builder.Services.AddScoped<PipelineEngine>();
+    builder.Services.AddScoped<ArtifactStorageService>();
+    builder.Services.AddMinio(client => client
+        .WithEndpoint(builder.Configuration["MinIO:Endpoint"] ?? "minio:9000")
+        .WithCredentials(
+            builder.Configuration["MinIO:AccessKey"] ?? throw new InvalidOperationException("MinIO:AccessKey not configured"),
+            builder.Configuration["MinIO:SecretKey"] ?? throw new InvalidOperationException("MinIO:SecretKey not configured"))
+        .Build());
 
     // Redis distributed cache
     builder.Services.AddStackExchangeRedisCache(options =>
@@ -59,7 +67,7 @@ try
         x.AddConsumer<PackageSignedConsumer>();
         x.AddConsumer<PackageSigningFaultConsumer>();
         x.AddConsumer<GetArtifactSignatureConsumer>();
-        x.AddConsumer<GetArtifactContentConsumer>();
+        x.AddConsumer<GetArtifactLocationConsumer>();
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -75,7 +83,7 @@ try
                 e.ConfigureConsumer<PackageSignedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSigningFaultConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactSignatureConsumer>(ctx);
-                e.ConfigureConsumer<GetArtifactContentConsumer>(ctx);
+                e.ConfigureConsumer<GetArtifactLocationConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));

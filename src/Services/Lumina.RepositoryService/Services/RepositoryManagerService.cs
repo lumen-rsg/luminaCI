@@ -314,6 +314,20 @@ public class RepositoryManagerService
         return stagedPath;
     }
 
+    public string GetStagedRpmPath(string stagingDirectory, string fileName)
+    {
+        var safeName = Path.GetFileName(fileName);
+        if (safeName != fileName || !safeName.EndsWith(".rpm", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("The package filename must be a plain .rpm filename.");
+
+        var safeDirectory = ProcessArgumentSanitizer.ResolveConfinedPath(stagingDirectory, _reposBasePath);
+        var stagedPath = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(safeDirectory, safeName), _reposBasePath);
+        if (File.Exists(stagedPath))
+            throw new ConflictException("The staged package already exists.");
+        return stagedPath;
+    }
+
     public RpmMetadata ValidateStagedRpm(string stagedPath, string expectedFileName)
     {
         var metadata = ExtractRpmMetadata(stagedPath)

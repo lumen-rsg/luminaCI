@@ -36,6 +36,21 @@ public sealed class RepositoryManagerServiceTests : IDisposable
     }
 
     [Fact]
+    public void ObjectDownloadPath_IsConfinedAndCannotOverwrite()
+    {
+        var staging = _manager.CreatePublicationStagingDirectory(Guid.NewGuid());
+        var path = _manager.GetStagedRpmPath(staging, "pkg-1.0-1.noarch.rpm");
+
+        Assert.StartsWith(staging, path);
+        Assert.Throws<Lumina.Shared.Errors.ValidationException>(() =>
+            _manager.GetStagedRpmPath(staging, "../escape.rpm"));
+
+        File.WriteAllText(path, "existing");
+        Assert.Throws<Lumina.Shared.Errors.ConflictException>(() =>
+            _manager.GetStagedRpmPath(staging, "pkg-1.0-1.noarch.rpm"));
+    }
+
+    [Fact]
     public void Rollback_RestoresPreviousMetadataAndRemovesCandidate()
     {
         var live = _manager.EnsureRepoDir("stable", "noarch");

@@ -875,7 +875,9 @@ public class DockerBuildService : IBuildLauncher
                 FileSize = fileInfo.Length,
                 HashSha256 = hashSha256,
                 HashMd5 = hashMd5,
-                StoragePath = rpmPath,
+                // The immutable object key is populated after SecurityService
+                // embeds and verifies the RPM signature.
+                StoragePath = string.Empty,
                 CveScanStatus = ScanStatus.Pending,
                 CreatedAt = DateTime.UtcNow
             };

@@ -1,4 +1,5 @@
 using Lumina.BuildService.Data;
+using Lumina.BuildService.Services;
 using Lumina.Shared.Events;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
@@ -13,11 +14,16 @@ namespace Lumina.BuildService.Consumers;
 public class PackageSignedConsumer : IConsumer<PackageSigned>
 {
     private readonly BuildDbContext _db;
+    private readonly ArtifactStorageService _storage;
     private readonly ILogger<PackageSignedConsumer> _logger;
 
-    public PackageSignedConsumer(BuildDbContext db, ILogger<PackageSignedConsumer> logger)
+    public PackageSignedConsumer(
+        BuildDbContext db,
+        ArtifactStorageService storage,
+        ILogger<PackageSignedConsumer> logger)
     {
         _db = db;
+        _storage = storage;
         _logger = logger;
     }
 
@@ -38,10 +44,18 @@ public class PackageSignedConsumer : IConsumer<PackageSigned>
         }
 
         var artifact = job.Artifacts.First(a => a.Id == msg.ArtifactId);
+        var storagePath = await _storage.UploadSignedArtifactAsync(
+            artifact.FilePath,
+            artifact.FileName,
+            msg.SignedSha256,
+            msg.SignedFileSize,
+            context.CancellationToken);
+
         artifact.SigningKeyFingerprint = msg.KeyFingerprint;
         artifact.SignedAt = msg.SignedAt;
         artifact.HashSha256 = msg.SignedSha256;
         artifact.FileSize = msg.SignedFileSize;
+        artifact.StoragePath = storagePath;
         _db.Update(artifact);
         await _db.SaveChangesAsync();
 
