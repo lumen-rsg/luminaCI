@@ -367,6 +367,8 @@ public class DockerBuildService : IBuildLauncher
 
     public virtual async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? extraSourcesPipelineDir = null)
     {
+        BuildSourceSecurityPolicy.EnsureCredentialFree(sourceUrl, gitUsername, gitToken);
+
         var imageName = BuildImagePolicy.Resolve(_config, buildImage);
         _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName}) with image {Image}", job.Id, job.SpecName, imageName);
         var ownsExecutionSlot = false;
@@ -435,13 +437,6 @@ public class DockerBuildService : IBuildLauncher
             if (!string.IsNullOrEmpty(sourceUrl))
                 envVars.Add($"SOURCE_URL={sourceUrl}");
 
-            // Pass git credentials for private repositories
-            if (!string.IsNullOrEmpty(gitUsername))
-                envVars.Add($"GIT_USERNAME={gitUsername}");
-
-            if (!string.IsNullOrEmpty(gitToken))
-                envVars.Add($"GIT_TOKEN={gitToken}");
-
             if (!string.IsNullOrEmpty(job.CommitSha))
                 envVars.Add($"COMMIT_SHA={job.CommitSha}");
 
@@ -487,7 +482,7 @@ public class DockerBuildService : IBuildLauncher
             }
 
             // Build-container hardening. These containers run attacker-influenced
-            // .spec files (arbitrary shell via %prep/%build/%install, dnf builddep),
+            // .spec files (arbitrary macro and shell execution),
             // so they must be treated as untrusted:
             //   * Isolated bridge network (not host) — no direct path to Postgres /
             //     RabbitMQ / MinIO / Trivy on lumina-network.

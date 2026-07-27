@@ -66,11 +66,10 @@ RUN chmod +x /usr/local/bin/build-rpm.sh
 USER root
 RUN mkdir -p /artifacts && chown -R rpmbuilder:lumina-build /artifacts
 
-# The entrypoint runs as root so dnf builddep can install build dependencies
-# into the writable overlay (FUNC-002: builddep writes to /usr/lib and
-# /var/lib/rpm, which are not writable by uid 1000). The script then drops to
-# the rpmbuilder user for the rpmbuild step — i.e. for the untrusted %build /
-# %install shell supplied by the spec.
+# The entrypoint starts as root only so dnf can install dependencies into the
+# writable overlay. It drops to rpmbuilder before any raw-spec parsing, creates
+# an SRPM, returns to root only to resolve that SRPM's dependency header, then
+# drops again for the untrusted rebuild.
 #
 # The drop uses `setpriv` (direct setuid/setgid syscalls), NOT su/sudo/runuser:
 # the build container is launched with the per-container `no-new-privileges`

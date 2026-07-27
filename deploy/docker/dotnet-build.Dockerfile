@@ -46,7 +46,7 @@ RUN chmod +x /usr/local/bin/build-rpm.sh
 USER root
 RUN mkdir -p /artifacts && chown -R rpmbuilder:lumina-build /artifacts
 
-# The entrypoint must start as root for dnf builddep, then drops to uid 1000 /
-# gid 1654 before rpmbuild executes the untrusted spec.
+# The entrypoint starts as root for dependency installation, but raw-spec
+# parsing and both rpmbuild phases run as uid 1000 / gid 1654.
 
 ENTRYPOINT ["/usr/local/bin/build-rpm.sh"]

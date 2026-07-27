@@ -5,15 +5,13 @@
 # Environment variables:
 #   SPEC_CONTENT       — .spec file content (base64 encoded)
 #   SPEC_NAME          — Name of the spec file
-#   SOURCE_URL         — URL to download source, or git://... for git clone
+#   SOURCE_URL         — Credential-free URL to download, or git://... for clone
 #   SOURCE_DIR         — Directory with pre-fetched sources (mounted by SourceService)
 #   SPEC_PATH_IN_REPO  — Repo-relative path to the .spec, used to disambiguate
 #                        when a repo contains more than one spec (FUNC-004).
 #   ARTIFACTS_DIR      — Output directory for built RPMs
 #   BUILD_JOB_ID       — Build job ID for tracking
-#   AUTO_DOWNLOAD      — "true" to run spectool for missing sources (default: true)
-#   GIT_USERNAME       — Username for private git repositories
-#   GIT_TOKEN          — PAT / password for git auth
+#   AUTO_DOWNLOAD      — "true" to run spectool as uid 1000 (default: true)
 #   TARGET_DISTRIBUTION — Reviewed target distribution (fedora)
 #   TARGET_RELEASE      — Reviewed distribution release (44)
 #   TARGET_ARCHITECTURE — Native RPM architecture (x86_64 or aarch64)
@@ -48,6 +46,19 @@ if [ "${runner_distribution}" != "${TARGET_DISTRIBUTION}" ] \
     echo "Runner: ${runner_distribution}-${runner_release}-${runner_architecture}"
     exit 1
 fi
+
+# Credentials belong in a trusted fetcher which mounts an immutable snapshot at
+# SOURCE_DIR. They must never be visible to spec macro expansion or scriptlets.
+if [ -n "${GIT_USERNAME:-}" ] || [ -n "${GIT_TOKEN:-}" ]; then
+    echo "ERROR: Git credentials are forbidden in the RPM build container; mount a credential-free source snapshot via SOURCE_DIR." >&2
+    exit 1
+fi
+if [[ "${SOURCE_URL:-}" =~ ^https?://[^/@]+@ ]] \
+    || [[ "${SOURCE_URL:-}" =~ ^git://https?://[^/@]+@ ]]; then
+    echo "ERROR: Source URLs containing credentials are forbidden in the RPM build container." >&2
+    exit 1
+fi
+unset GIT_USERNAME GIT_TOKEN
 
 echo "=== Lumina CI RPM Build ==="
 echo "Spec: ${SPEC_NAME}"
@@ -179,8 +190,12 @@ create_tarball() {
     echo "  Tarball created: ${tarball_name} ($(stat -c%s "${BUILD_DIR}/SOURCES/${tarball_name}" 2>/dev/null || echo '?') bytes)"
 }
 
+preparation_phase() {
+# Everything in this function handles or expands attacker-controlled input. The
+# caller invokes it only after dropping to uid 1000.
+
 # ═══════════════════════════════════════════════════════════
-# Step 0: Spec file placement
+# Step 0: Spec file placement (unprivileged)
 # ═══════════════════════════════════════════════════════════
 SPEC_DEFERRED=false
 
@@ -345,22 +360,8 @@ if [ -n "${SOURCE_URL:-}" ]; then
 
         echo "Cloning: ${GIT_REPO} (branch: ${GIT_BRANCH}, commit: ${GIT_COMMIT:-latest})"
 
-        # Inject credentials for private repos
-        AUTH_REPO="${GIT_REPO}"
-        if [ -n "${GIT_USERNAME:-}" ] && [ -n "${GIT_TOKEN:-}" ]; then
-            if [[ "${GIT_REPO}" =~ ^https://([^/]+)(/.*)$ ]]; then
-                AUTH_REPO="https://${GIT_USERNAME}:${GIT_TOKEN}@${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
-                echo "Using authenticated git URL"
-            elif [[ "${GIT_REPO}" =~ ^http://([^/]+)(/.*)$ ]]; then
-                AUTH_REPO="http://${GIT_USERNAME}:${GIT_TOKEN}@${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
-                echo "Using authenticated git URL"
-            else
-                echo "Warning: Cannot inject credentials for non-HTTPS URL"
-            fi
-        fi
-
         CLONE_DIR=$(mktemp -d)
-        git clone --depth 1000 --no-single-branch --branch "${GIT_BRANCH}" "${AUTH_REPO}" "${CLONE_DIR}/repo" || {
+        git clone --depth 1000 --no-single-branch --branch "${GIT_BRANCH}" "${GIT_REPO}" "${CLONE_DIR}/repo" || {
             echo "ERROR: git clone failed"
             exit 1
         }
@@ -489,48 +490,34 @@ fi
 echo "SOURCES/ contents:"
 ls -la "${BUILD_DIR}/SOURCES/"
 
-# ═══════════════════════════════════════════════════════════
-# Step 6: Build
-# ═══════════════════════════════════════════════════════════
-# PRIVILEGE SPLIT (FUNC-002): this script runs as root so that dnf builddep can
-# install build dependencies into the writable overlay (/usr/lib, /var/lib/rpm
-# are not writable by uid 1000). The dependency install stays root; the
-# untrusted %build/%install shell in the spec then runs as the `rpmbuilder`
-# user via the builder_phase drop below.
-#
-# The drop uses `setpriv` (direct syscalls), not su/sudo/runuser: the build
-# container is launched with the per-container `no-new-privileges` security opt,
-# which neutralizes setuid binaries, so a syscall-based drop is the only option.
+echo "Creating source RPM from untrusted spec (as uid $(id -u))..."
+rpmbuild -bs "${BUILD_DIR}/SPECS/${SPEC_NAME}" \
+    --target "${TARGET_ARCHITECTURE}" \
+    --define "_topdir ${BUILD_DIR}" \
+    2>&1 | tee /tmp/build.log
+rpmbuild_exit=${PIPESTATUS[0]}
+if [ "${rpmbuild_exit}" -ne 0 ]; then
+    echo "ERROR: source RPM creation failed with exit code ${rpmbuild_exit}!"
+    return "${rpmbuild_exit}"
+fi
 
-# builder_phase: everything that runs as the unprivileged rpmbuilder user.
-# First create an SRPM, then rebuild that self-contained source package in a
-# fresh topdir. This proves the retained source package contains every declared
-# source/patch and avoids publishing binaries from the mutable preparation tree.
+shopt -s nullglob
+source_rpms=("${BUILD_DIR}"/SRPMS/*.src.rpm)
+if [ "${#source_rpms[@]}" -ne 1 ]; then
+    echo "ERROR: expected exactly one source RPM, found ${#source_rpms[@]}"
+    return 1
+fi
+printf '%s\n' "${source_rpms[0]}" > /tmp/lumina-source-rpm-path
+}
+
+# ═══════════════════════════════════════════════════════════
+# Step 6: Install dependencies and rebuild the prepared SRPM
+# ═══════════════════════════════════════════════════════════
+# builder_phase rebuilds the prepared SRPM as uid 1000.
 builder_phase() {
     local rebuild_dir="${RPMBUILDER_HOME}/rebuild"
     local rpmbuild_exit
-    local source_rpms
-    local source_rpm
-
-    : > /tmp/build.log
-    echo "Creating source RPM (as uid $(id -u))..."
-    rpmbuild -bs "${BUILD_DIR}/SPECS/${SPEC_NAME}" \
-        --target "${TARGET_ARCHITECTURE}" \
-        --define "_topdir ${BUILD_DIR}" \
-        2>&1 | tee -a /tmp/build.log
-    rpmbuild_exit=${PIPESTATUS[0]}
-    if [ "${rpmbuild_exit}" -ne 0 ]; then
-        echo "ERROR: source RPM creation failed with exit code ${rpmbuild_exit}!"
-        return "${rpmbuild_exit}"
-    fi
-
-    shopt -s nullglob
-    source_rpms=("${BUILD_DIR}"/SRPMS/*.src.rpm)
-    if [ "${#source_rpms[@]}" -ne 1 ]; then
-        echo "ERROR: expected exactly one source RPM, found ${#source_rpms[@]}"
-        return 1
-    fi
-    source_rpm="${source_rpms[0]}"
+    local source_rpm="${SOURCE_RPM:?SOURCE_RPM is required}"
 
     rm -rf "${rebuild_dir}"
     mkdir -p "${rebuild_dir}"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
@@ -621,23 +608,56 @@ EOF
     return 0
 }
 
-echo "Installing build dependencies (as root)..."
-# FUNC-002: builddep failure is fatal with stderr preserved. The previous
-# `2>/dev/null || echo "Warning..."` discarded the real error and downgraded a
-# hard failure to a hint, so operators chased downstream rpmbuild errors
-# instead of the missing-deps root cause.
+rm -f /tmp/lumina-source-rpm-path /tmp/build.log
+chown -R rpmbuilder:lumina-build "${BUILD_DIR}"
+
+# Drop privileges before the first parse or macro expansion of the raw spec.
+export -f get_source0_filename get_setup_dirname resolve_spec_file create_tarball
+export -f preparation_phase
+export BUILD_DIR SPEC_NAME ARTIFACTS_DIR RPMBUILDER_HOME AUTO_DOWNLOAD
+export SOURCE_DIR SOURCE_URL SPEC_CONTENT SPEC_PATH_IN_REPO
+export TARGET_ARCHITECTURE
+setpriv --reuid 1000 --regid 1654 --clear-groups -- bash -c 'preparation_phase'
+
+SOURCE_RPM="$(< /tmp/lumina-source-rpm-path)"
+case "${SOURCE_RPM}" in
+    "${BUILD_DIR}"/SRPMS/*.src.rpm) ;;
+    *)
+        echo "ERROR: unprivileged preparation returned an invalid SRPM path." >&2
+        exit 1
+        ;;
+esac
+if [ ! -f "${SOURCE_RPM}" ] || [ -L "${SOURCE_RPM}" ]; then
+    echo "ERROR: prepared SRPM is missing or is not a regular file." >&2
+    exit 1
+fi
+if [ "$(stat -c '%u' "${SOURCE_RPM}")" != "1000" ]; then
+    echo "ERROR: prepared SRPM was not created by the unprivileged builder." >&2
+    exit 1
+fi
+
+# Snapshot the unprivileged output into a root-owned, read-only location before
+# the privileged package manager opens it. The later rebuild reads this same
+# immutable copy.
+ROOT_SRPM_DIR="/tmp/lumina-prepared-srpm"
+rm -rf "${ROOT_SRPM_DIR}"
+install -d -o root -g root -m 0755 "${ROOT_SRPM_DIR}"
+ROOT_SRPM="${ROOT_SRPM_DIR}/$(basename "${SOURCE_RPM}")"
+install -o root -g root -m 0444 "${SOURCE_RPM}" "${ROOT_SRPM}"
+SOURCE_RPM="${ROOT_SRPM}"
+
+# Root consumes only dependency tags from the already-created SRPM. It never
+# invokes RPM's macro engine on the raw attacker-controlled spec.
+echo "Installing build dependencies from SRPM metadata (as root)..."
 if ! dnf --disablerepo='*' --enablerepo=fedora builddep -y \
-    "${BUILD_DIR}/SPECS/${SPEC_NAME}"; then
+    "${SOURCE_RPM}"; then
     echo "ERROR: dnf builddep failed — see stderr above for the unresolvable/missing dependencies."
     exit 1
 fi
 
-# Hand the build tree to the unprivileged user so %build/%install can write to it.
-chown -R rpmbuilder:lumina-build "${BUILD_DIR}"
-
-# Run the untrusted build phase as rpmbuilder (uid 1000, shared gid 1654).
+# Run the untrusted build phase as uid 1000.
 export -f builder_phase
-export BUILD_DIR SPEC_NAME ARTIFACTS_DIR RPMBUILDER_HOME
+export BUILD_DIR SPEC_NAME ARTIFACTS_DIR RPMBUILDER_HOME SOURCE_RPM
 export BUILD_JOB_ID COMMIT_SHA RUNNER_IMAGE_REFERENCE RUNNER_IMAGE_IDENTITY
 export TARGET_DISTRIBUTION TARGET_RELEASE TARGET_ARCHITECTURE BUILD_PROFILE
 setpriv --reuid 1000 --regid 1654 --clear-groups -- bash -c 'builder_phase'

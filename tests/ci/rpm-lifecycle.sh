@@ -37,6 +37,10 @@ docker build \
     --file "${REPOSITORY_ROOT}/deploy/docker/rpm-build.Dockerfile" \
     "$REPOSITORY_ROOT"
 
+"${REPOSITORY_ROOT}/tests/ci/untrusted-spec-boundary.sh" \
+    "$RUNNER_IMAGE" \
+    "$target_architecture"
+
 runner_identity="$(docker image inspect "$RUNNER_IMAGE" --format '{{.Id}}')"
 docker run --rm \
     --security-opt no-new-privileges \
