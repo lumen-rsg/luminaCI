@@ -62,3 +62,14 @@ If the new release fails:
 The complete Compose CI job rehearses this path by switching all seven
 application services to a preserved image manifest without rebuilding and
 rerunning the end-to-end smoke suite.
+
+## Staging acceptance canary
+
+Configure the `staging` GitHub Environment with `LUMINA_BASE_URL`,
+`LUMINA_CANARY_SOURCE_URL`, `LUMINA_CANARY_SOURCE_SHA256`,
+`LUMINA_TARGET_ARCHITECTURE`, and the two `LUMINA_STAGING_*` credentials.
+The source URL must serve a digest-pinned archive compatible with
+`Test/production_canary.spec`.
+Run the `staging acceptance` workflow after every deployment. Approval requires
+the retained canary build to show four successful steps and a signed, scanned
+artifact in its dedicated repository.

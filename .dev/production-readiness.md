@@ -30,8 +30,6 @@ Passing CI run:
 
 ## Production acceptance checklist
 
-- [ ] A real source-to-build-to-scan-to-sign-to-publish canary succeeds in
-      staging.
 - [ ] Monitoring and actionable alerts cover the application and its
       dependencies.
 - [ ] Expected production load and a suitable soak test pass.

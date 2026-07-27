@@ -35,6 +35,9 @@ public class DockerBuildService : IBuildLauncher
     /// <summary>Dedicated, isolated bridge network for untrusted build containers. Build containers are attached here instead of the host network so they cannot reach Postgres/RabbitMQ/MinIO/Trivy directly.</summary>
     private readonly string _buildNetwork;
 
+    /// <summary>Host-visible root used for bind mounts passed to the Docker daemon.</summary>
+    private readonly string _hostDataRoot;
+
     /// <summary>Memory cap per build container, in bytes (default 2 GiB).</summary>
     private readonly long _buildMemoryBytes;
 
@@ -111,6 +114,10 @@ public class DockerBuildService : IBuildLauncher
         // run arbitrary shell inside the rpmbuild container, so they're deliberately
         // tight and can only be loosened via configuration.
         _buildNetwork = config["Docker:BuildNetwork"] ?? "lumina-buildnet";
+        var configuredHostDataRoot = config["Docker:HostDataRoot"] ?? "/opt/lumina";
+        if (!Path.IsPathRooted(configuredHostDataRoot))
+            throw new InvalidOperationException("Docker:HostDataRoot must be an absolute path.");
+        _hostDataRoot = Path.GetFullPath(configuredHostDataRoot);
         _buildMemoryBytes = ParseLongConfig(config, "Docker:BuildMemoryBytes", 2L * 1024 * 1024 * 1024);
         _buildPidsLimit = ParseLongConfig(config, "Docker:BuildPidsLimit", 512);
         _buildCpuQuota = ParseLongConfig(config, "Docker:BuildCpuQuota", 150_000); // 1.5 CPUs (period 100000 µs)
@@ -396,13 +403,12 @@ public class DockerBuildService : IBuildLauncher
             // Container-internal path for artifact scanning (matches docker-compose volume mount)
             var artifactDir = $"/app/builds/{job.Id}";
             // Host-side path for RPM container bind mounts (Docker API resolves on host)
-            var hostArtifactDir = $"/opt/lumina/builds/{job.Id}";
+            var hostArtifactDir = Path.Combine(_hostDataRoot, "builds", job.Id.ToString());
             Directory.CreateDirectory(artifactDir);
-            Directory.CreateDirectory(hostArtifactDir);
             if (!OperatingSystem.IsWindows())
             {
                 File.SetUnixFileMode(
-                    hostArtifactDir,
+                    artifactDir,
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
                     UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
                     UnixFileMode.SetGroup);
@@ -427,9 +433,10 @@ public class DockerBuildService : IBuildLauncher
             string? hostSpecDir = null;
             if (!string.IsNullOrEmpty(specContent))
             {
-                hostSpecDir = $"/opt/lumina/sources/_specs/{job.Id}";
-                Directory.CreateDirectory(hostSpecDir);
-                var specFilePath = Path.Combine(hostSpecDir, job.SpecName);
+                var specDir = $"/opt/lumina/sources/_specs/{job.Id}";
+                hostSpecDir = Path.Combine(_hostDataRoot, "sources", "_specs", job.Id.ToString());
+                Directory.CreateDirectory(specDir);
+                var specFilePath = Path.Combine(specDir, job.SpecName);
                 await File.WriteAllTextAsync(specFilePath, specContent);
                 _logger.LogInformation("Spec file written to {SpecFilePath} ({Size} bytes)", specFilePath, specContent.Length);
             }
@@ -449,7 +456,7 @@ public class DockerBuildService : IBuildLauncher
             };
 
             // Mount spec file into container at /specs/
-            if (!string.IsNullOrEmpty(hostSpecDir) && Directory.Exists(hostSpecDir))
+            if (!string.IsNullOrEmpty(hostSpecDir))
             {
                 binds.Add($"{hostSpecDir}:/specs:ro,z");
                 _logger.LogInformation("Mounting spec file from {SpecDir} to /specs", hostSpecDir);
@@ -457,21 +464,22 @@ public class DockerBuildService : IBuildLauncher
 
             // Mount extra uploaded sources (pipeline-level only — uploaded via the
             // Extra Sources UI into /opt/lumina/extra-sources/pipelines/{pipelineId}/).
-            var hostExtraDir = $"/opt/lumina/extra-sources/_builds/{job.Id}";
+            var extraDir = $"/opt/lumina/extra-sources/_builds/{job.Id}";
+            var hostExtraDir = Path.Combine(_hostDataRoot, "extra-sources", "_builds", job.Id.ToString());
             if (!string.IsNullOrEmpty(extraSourcesPipelineDir) && Directory.Exists(extraSourcesPipelineDir))
             {
-                Directory.CreateDirectory(hostExtraDir);
+                Directory.CreateDirectory(extraDir);
 
                 // Copy all pipeline extra sources preserving subdirectory structure
                 foreach (var dir in Directory.GetDirectories(extraSourcesPipelineDir, "*", SearchOption.AllDirectories))
                 {
                     var relPath = Path.GetRelativePath(extraSourcesPipelineDir, dir);
-                    Directory.CreateDirectory(Path.Combine(hostExtraDir, relPath));
+                    Directory.CreateDirectory(Path.Combine(extraDir, relPath));
                 }
                 foreach (var file in Directory.GetFiles(extraSourcesPipelineDir, "*", SearchOption.AllDirectories))
                 {
                     var relPath = Path.GetRelativePath(extraSourcesPipelineDir, file);
-                    var dest = Path.Combine(hostExtraDir, relPath);
+                    var dest = Path.Combine(extraDir, relPath);
                     Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                     File.Copy(file, dest, true);
                 }
@@ -969,7 +977,10 @@ public class DockerBuildService : IBuildLauncher
             return 0;
         }
 
-        var rpmFiles = Directory.GetFiles(artifactDir, "*.rpm", SearchOption.TopDirectoryOnly);
+        var rpmFiles = Directory
+            .GetFiles(artifactDir, "*.rpm", SearchOption.TopDirectoryOnly)
+            .Where(path => !path.EndsWith(".src.rpm", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         _logger.LogInformation("Found {Count} RPM artifacts for job {JobId}", rpmFiles.Length, job.Id);
 
         var registeredCount = 0;

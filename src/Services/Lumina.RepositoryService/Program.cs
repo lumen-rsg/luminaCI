@@ -31,11 +31,16 @@ try
         .WithCredentials(
             builder.Configuration["Minio:AccessKey"] ?? throw new InvalidOperationException("Minio:AccessKey not configured"),
             builder.Configuration["Minio:SecretKey"] ?? throw new InvalidOperationException("Minio:SecretKey not configured"))
+        // MinIO is private to the Compose network and serves plaintext on 9000;
+        // making this explicit also gives presigned URLs the correct scheme.
+        .WithSSL(false)
         .Build());
 
     builder.Services.AddScoped<RepositoryManagerService>();
     builder.Services.AddScoped<MinioStorageService>();
     builder.Services.AddScoped<SignatureVerificationService>();
+    builder.Services.AddHttpClient("ArtifactStorage", client =>
+        client.Timeout = TimeSpan.FromMinutes(2));
 
     // Redis distributed cache
     builder.Services.AddStackExchangeRedisCache(options =>
@@ -66,7 +71,11 @@ try
 
             cfg.ReceiveEndpoint("lumina-repository-service", endpoint =>
             {
-                endpoint.UseEntityFrameworkOutbox<RepositoryDbContext>(ctx);
+                // Publication owns an explicit DB/filesystem transaction. An EF
+                // consumer outbox would start another transaction on the same
+                // DbContext; buffer PackagePublished in memory until the
+                // publication transaction succeeds instead.
+                endpoint.UseInMemoryOutbox(ctx);
                 endpoint.ConfigureConsumer<PackagePublishRequestedConsumer>(ctx);
             });
 

@@ -189,6 +189,7 @@ services:
       - Docker__SocketPath=http://docker-socket-proxy:2375
       # Untrusted build-container isolation knobs (see DockerBuildService.cs).
       - Docker__BuildNetwork=${BUILD_NETWORK:-lumina-buildnet}
+      - Docker__HostDataRoot=${HOST_DATA_ROOT:-/opt/lumina}
       - Docker__BuildMemoryBytes=${BUILD_MEMORY_BYTES:-2147483648}
       - Docker__BuildPidsLimit=${BUILD_PIDS_LIMIT:-512}
       - Docker__BuildCpuQuota=${BUILD_CPU_QUOTA:-150000}
@@ -613,6 +614,7 @@ networks:
   # services directly — they only get outbound internet (for dnf builddep / git
   # clone) and a path back to build-service via build-service's own attachment.
   lumina-buildnet:
+    name: ${BUILD_NETWORK:-lumina-buildnet}
     driver: bridge
   # Two-party network: only build-service and docker-socket-proxy. Isolates the
   # socket-exposing proxy from every other service.

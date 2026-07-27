@@ -6,6 +6,8 @@ services:
       - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/extra-sources:/volumes/extra-sources:z
 
   build-service:
+    environment:
+      - Docker__HostDataRoot=${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}
     volumes:
       - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/builds:/app/builds:z
       - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/builds:/opt/lumina/builds:z

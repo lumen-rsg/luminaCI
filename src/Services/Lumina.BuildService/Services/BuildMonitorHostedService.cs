@@ -36,6 +36,8 @@ public sealed class BuildMonitorHostedService(
         var candidates = await db.BuildJobs
             .AsNoTracking()
             .Where(job => job.Status == BuildStatus.Building
+                && job.StepRuns.Any(step =>
+                    step.Type == StepType.Build && step.Status == StepStatus.Running)
                 && (job.LeaseExpiresAt == null || job.LeaseExpiresAt < now))
             .Select(job => job.Id)
             .ToListAsync(cancellationToken);
@@ -48,6 +50,8 @@ public sealed class BuildMonitorHostedService(
             var claimed = await db.BuildJobs
                 .Where(job => job.Id == jobId
                     && job.Status == BuildStatus.Building
+                    && job.StepRuns.Any(step =>
+                        step.Type == StepType.Build && step.Status == StepStatus.Running)
                     && (job.LeaseExpiresAt == null || job.LeaseExpiresAt < now))
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(job => job.LeaseOwner, execution.WorkerId)

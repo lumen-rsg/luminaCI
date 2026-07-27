@@ -1,0 +1,31 @@
+name: staging acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-acceptance
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: source, build, scan, sign, publish canary
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run staging canary
+        env:
+          BASE_URL: ${{ vars.LUMINA_BASE_URL }}
+          CANARY_SOURCE_URL: ${{ vars.LUMINA_CANARY_SOURCE_URL }}
+          CANARY_SOURCE_SHA256: ${{ vars.LUMINA_CANARY_SOURCE_SHA256 }}
+          CANARY_TARGET_ARCHITECTURE: ${{ vars.LUMINA_TARGET_ARCHITECTURE }}
+          STAGING_USERNAME: ${{ secrets.LUMINA_STAGING_USERNAME }}
+          STAGING_PASSWORD: ${{ secrets.LUMINA_STAGING_PASSWORD }}
+        run: scripts/staging-canary.sh

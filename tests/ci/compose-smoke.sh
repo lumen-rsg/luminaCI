@@ -85,6 +85,14 @@ SMOKE_USERNAME=admin \
 SMOKE_PASSWORD=ci-admin-password \
     "${REPOSITORY_ROOT}/scripts/smoke-test.sh"
 
+BASE_URL=https://localhost \
+CANARY_SOURCE_URL=https://raw.githubusercontent.com/rpm-software-management/rpm/c1fe256483b4802af27c2fe67a31443ac4045bd4/tests/data/SOURCES/hello-1.0.tar.gz \
+CANARY_SOURCE_SHA256=7da10c0f91e120beff34b1d1077f1a77b2422dab7cb158379d44de4e83f90f30 \
+CURL_INSECURE=1 \
+STAGING_USERNAME=admin \
+STAGING_PASSWORD=ci-admin-password \
+    "${REPOSITORY_ROOT}/scripts/staging-canary.sh"
+
 docker tag lumina-api-gateway:local lumina-api-gateway:rollback-rehearsal
 docker tag lumina-build-service:local lumina-build-service:rollback-rehearsal
 docker tag lumina-security-service:local lumina-security-service:rollback-rehearsal

@@ -67,6 +67,64 @@ public class TrivyScannerServiceTests
     }
 
     [Fact]
+    public void ParseCliResponse_AcceptsCompleteServerBackedReportWithoutTargets()
+    {
+        const string json = """
+            {
+              "SchemaVersion": 2,
+              "Trivy": {
+                "Version": "0.72.0",
+                "Server": {
+                  "Version": "0.72.0",
+                  "VulnerabilityDB": {
+                    "UpdatedAt": "2026-07-27T19:20:18Z"
+                  }
+                }
+              },
+              "CreatedAt": "2026-07-27T22:57:07Z",
+              "ArtifactName": "/tmp/lumina-rootfs",
+              "ArtifactType": "filesystem",
+              "Metadata": {
+                "OS": {
+                  "Family": "none",
+                  "Name": ""
+                }
+              }
+            }
+            """;
+
+        var result = TrivyScannerService.ParseTrivyCliResponse(json);
+
+        Assert.True(result.Success);
+        Assert.Empty(result.Vulnerabilities);
+    }
+
+    [Theory]
+    [InlineData("""{"SchemaVersion":2,"ArtifactType":"filesystem"}""")]
+    [InlineData("""
+        {
+          "SchemaVersion": 2,
+          "Trivy": {
+            "Version": "0.72.0",
+            "Server": {
+              "Version": "0.72.0",
+              "VulnerabilityDB": {}
+            }
+          },
+          "CreatedAt": "2026-07-27T22:57:07Z",
+          "ArtifactType": "filesystem",
+          "Metadata": {"OS": {}}
+        }
+        """)]
+    public void ParseCliResponse_RejectsIncompleteEmptyReportEnvelope(string json)
+    {
+        var result = TrivyScannerService.ParseTrivyCliResponse(json);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
     public void ParseCliResponse_ParsesVulnerabilities()
     {
         const string json = """

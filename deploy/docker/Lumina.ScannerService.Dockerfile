@@ -23,8 +23,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 EXPOSE 5003
 
-# Install rpm2cpio and cpio for RPM extraction (needed for trivy rootfs scanning)
-RUN apt-get update && apt-get install -y --no-install-recommends curl cpio rpm2cpio && rm -rf /var/lib/apt/lists/*
+# Install the RPM database tools used to materialize an isolated root for Trivy.
+RUN apt-get update && apt-get install -y --no-install-recommends curl rpm && rm -rf /var/lib/apt/lists/*
 
 # Copy trivy binary from official image
 COPY --from=trivy-bin /usr/local/bin/trivy /usr/local/bin/trivy

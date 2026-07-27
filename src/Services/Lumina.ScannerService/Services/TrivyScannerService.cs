@@ -25,9 +25,9 @@ internal sealed class TrivyScanResult
 }
 
 /// <summary>
-/// Trivy scanner service that uses the Trivy Server HTTP API (/twirp/trivy.v1.Scanner/Scan).
-/// Requires TRIVY_SERVER_URL to be configured (e.g., http://trivy-server:8080).
-/// Falls back to CLI mode if server is unavailable.
+/// Trivy scanner service that uses the embedded Trivy CLI in client/server mode.
+/// RPM artifacts are installed without scripts into an isolated root filesystem
+/// so Trivy can inspect the package database without executing package content.
 /// </summary>
 public class TrivyScannerService
 {
@@ -63,7 +63,7 @@ public class TrivyScannerService
     }
 
     /// <summary>
-    /// Scan an artifact using Trivy Server API. Creates a CveReport record.
+    /// Scan an artifact using Trivy. Creates a CveReport record.
     /// </summary>
     public async Task<CveReport> ScanArtifactAsync(
         Guid artifactId,
@@ -165,37 +165,10 @@ public class TrivyScannerService
     private async Task RunScanAsync(CveReport report, string artifactPath)
     {
         TrivyScanResult scanResult;
-        string? scanError = null;
-
         try
         {
             var trivyServerUrl = _config["Trivy:ServerUrl"] ?? "http://trivy-server:8080";
-
-            // Try Trivy Server API first
-            TrivyScanResult serverResult;
-            try
-            {
-                serverResult = await ScanViaServerApiAsync(trivyServerUrl, artifactPath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Trivy Server API failed, falling back to CLI for artifact {ArtifactId}", report.ArtifactId);
-                serverResult = new TrivyScanResult { Error = ex.Message };
-            }
-
-            // Fall back to CLI only when the server call itself threw or reported
-            // failure. If the server succeeded (even with zero vulns) we trust it.
-            if (serverResult.Success)
-            {
-                scanResult = serverResult;
-            }
-            else
-            {
-                scanResult = await ScanViaCliAsync(artifactPath);
-                // Preserve the server-side failure reason for the report summary.
-                if (!scanResult.Success && !string.IsNullOrEmpty(serverResult.Error))
-                    scanError = $"server: {serverResult.Error}; cli: {scanResult.Error}";
-            }
+            scanResult = await ScanViaCliAsync(artifactPath, trivyServerUrl);
         }
         catch (Exception ex)
         {
@@ -205,13 +178,13 @@ public class TrivyScannerService
             return;
         }
 
-        // A parse failure (after server + CLI fallback) must NOT be reported as a
+        // A parse failure must NOT be reported as a
         // clean scan. Previously a parse exception was swallowed and an empty
         // vulnerability list surfaced as "0 critical, 0 high", which the signing
         // gate treats as a pass. Fail the report instead.
         if (!scanResult.Success)
         {
-            var error = string.IsNullOrEmpty(scanError) ? scanResult.Error : scanError;
+            var error = scanResult.Error;
             _logger.LogError("Trivy response could not be parsed for artifact {ArtifactId}: {Error}. RawOutput will be persisted for diagnosis.",
                 report.ArtifactId, error ?? "unknown error");
             FailReport(report, $"Trivy output parse failed: {error}", rawOutput: scanResult.RawOutput);
@@ -298,9 +271,9 @@ public class TrivyScannerService
     }
 
     /// <summary>
-    /// Fallback: scan using Trivy CLI with Process.Start.
+    /// Scan an RPM through Trivy's rootfs mode without executing package scripts.
     /// </summary>
-    private async Task<TrivyScanResult> ScanViaCliAsync(string artifactPath)
+    private async Task<TrivyScanResult> ScanViaCliAsync(string artifactPath, string serverUrl)
     {
         if (!File.Exists(artifactPath))
         {
@@ -308,15 +281,44 @@ public class TrivyScannerService
             return new TrivyScanResult { Error = $"artifact file not found: {artifactPath}" };
         }
 
+        var scanDirectory = Path.Combine(Path.GetTempPath(), "lumina-rootfs", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scanDirectory);
         var tempReport = Path.Combine(Path.GetTempPath(), $"trivy-report-{Guid.NewGuid():N}.json");
         string? stderr = null;
 
         try
         {
+            await RunProcessCheckedAsync(
+                "rpm",
+                ["--root", scanDirectory, "--dbpath", "/var/lib/rpm", "--initdb"],
+                _scanTimeout);
+            await RunProcessCheckedAsync(
+                "rpm",
+                [
+                    "--root", scanDirectory,
+                    "--dbpath", "/var/lib/rpm",
+                    "--install",
+                    "--nodeps",
+                    "--noscripts",
+                    "--notriggers",
+                    artifactPath
+                ],
+                _scanTimeout);
+
             var psi = new ProcessStartInfo
             {
                 FileName = _config["Trivy:Path"] ?? "trivy",
-                ArgumentList = { "fs", "--format", "json", "--output", tempReport, "--exit-code", "0", "--no-progress", artifactPath },
+                ArgumentList =
+                {
+                    "rootfs",
+                    "--server", serverUrl,
+                    "--format", "json",
+                    "--output", tempReport,
+                    "--exit-code", "0",
+                    "--no-progress",
+                    "--scanners", "vuln",
+                    scanDirectory
+                },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -367,6 +369,40 @@ public class TrivyScannerService
         {
             if (File.Exists(tempReport))
                 try { File.Delete(tempReport); } catch { }
+            if (Directory.Exists(scanDirectory))
+                try { Directory.Delete(scanDirectory, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task RunProcessCheckedAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        TimeSpan timeout)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var argument in arguments)
+            psi.ArgumentList.Add(argument);
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to start {fileName}.");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        if (!await WaitForExitOrKillAsync(process, timeout))
+            throw new TimeoutException($"{fileName} exceeded the scan timeout.");
+
+        var stdout = Truncate(await stdoutTask, 4_000);
+        var stderr = Truncate(await stderrTask, 4_000);
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"{fileName} exited with code {process.ExitCode}: {stderr}{stdout}");
         }
     }
 
@@ -476,12 +512,25 @@ public class TrivyScannerService
             var root = doc.RootElement;
             var vulnerabilities = new List<Vulnerability>();
 
-            if (root.ValueKind != JsonValueKind.Object ||
-                !root.TryGetProperty("Results", out var results) ||
-                results.ValueKind != JsonValueKind.Array)
+            if (root.ValueKind != JsonValueKind.Object)
             {
                 return InvalidTrivyPayload(jsonResponse, "CLI response must contain a Results array");
             }
+
+            if (!root.TryGetProperty("Results", out var results))
+            {
+                // Trivy omits Results entirely when a valid scan finds no
+                // vendor-supported package targets (common for internally built
+                // RPMs). Do not confuse that documented output shape with an
+                // arbitrary JSON object: require the complete client/server
+                // report envelope before accepting it as clean.
+                return IsCompleteEmptyCliReport(root)
+                    ? new TrivyScanResult { Vulnerabilities = vulnerabilities, RawOutput = jsonResponse }
+                    : InvalidTrivyPayload(jsonResponse, "CLI response must contain a Results array");
+            }
+
+            if (results.ValueKind != JsonValueKind.Array)
+                return InvalidTrivyPayload(jsonResponse, "CLI Results must be an array");
 
             var parseError = ParseResults(results, "Vulnerabilities", vulnerabilities);
             if (parseError != null)
@@ -493,6 +542,42 @@ public class TrivyScannerService
         {
             return new TrivyScanResult { Error = ex.Message, RawOutput = jsonResponse };
         }
+    }
+
+    private static bool IsCompleteEmptyCliReport(JsonElement root)
+    {
+        if (!root.TryGetProperty("SchemaVersion", out var schemaVersion) ||
+            schemaVersion.ValueKind != JsonValueKind.Number ||
+            !schemaVersion.TryGetInt32(out var schema) ||
+            schema < 2 ||
+            !root.TryGetProperty("ArtifactType", out var artifactType) ||
+            artifactType.ValueKind != JsonValueKind.String ||
+            artifactType.GetString() != "filesystem" ||
+            !root.TryGetProperty("CreatedAt", out var createdAt) ||
+            createdAt.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("Trivy", out var trivy) ||
+            trivy.ValueKind != JsonValueKind.Object ||
+            !trivy.TryGetProperty("Version", out var clientVersion) ||
+            clientVersion.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(clientVersion.GetString()) ||
+            !trivy.TryGetProperty("Server", out var server) ||
+            server.ValueKind != JsonValueKind.Object ||
+            !server.TryGetProperty("Version", out var serverVersion) ||
+            serverVersion.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(serverVersion.GetString()) ||
+            !server.TryGetProperty("VulnerabilityDB", out var vulnerabilityDb) ||
+            vulnerabilityDb.ValueKind != JsonValueKind.Object ||
+            !vulnerabilityDb.TryGetProperty("UpdatedAt", out var databaseUpdatedAt) ||
+            databaseUpdatedAt.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("Metadata", out var metadata) ||
+            metadata.ValueKind != JsonValueKind.Object ||
+            !metadata.TryGetProperty("OS", out var os) ||
+            os.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static string? ParseResults(

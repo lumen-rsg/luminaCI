@@ -50,11 +50,14 @@ try
     builder.Services.AddScoped<PipelineEngine>();
     builder.Services.AddScoped<PipelineRunCoordinator>();
     builder.Services.AddScoped<ArtifactStorageService>();
+    builder.Services.AddHttpClient("ArtifactStorage", client =>
+        client.Timeout = TimeSpan.FromMinutes(2));
     builder.Services.AddMinio(client => client
         .WithEndpoint(builder.Configuration["MinIO:Endpoint"] ?? "minio:9000")
         .WithCredentials(
             builder.Configuration["MinIO:AccessKey"] ?? throw new InvalidOperationException("MinIO:AccessKey not configured"),
             builder.Configuration["MinIO:SecretKey"] ?? throw new InvalidOperationException("MinIO:SecretKey not configured"))
+        .WithSSL(false)
         .Build());
 
     // Redis distributed cache

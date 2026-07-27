@@ -17,6 +17,7 @@ public class MinioStorageService
     private readonly SignatureVerificationService _verification;
     private readonly ILogger<MinioStorageService> _logger;
     private readonly IBus _bus;
+    private readonly HttpClient _artifactHttpClient;
 
     public MinioStorageService(
         RepositoryDbContext db,
@@ -24,7 +25,8 @@ public class MinioStorageService
         RepositoryManagerService repoManager,
         SignatureVerificationService verification,
         ILogger<MinioStorageService> logger,
-        IBus bus)
+        IBus bus,
+        IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _minio = minio;
@@ -32,6 +34,7 @@ public class MinioStorageService
         _verification = verification;
         _logger = logger;
         _bus = bus;
+        _artifactHttpClient = httpClientFactory.CreateClient("ArtifactStorage");
     }
 
     public async Task<PackageRepository> CreateRepositoryAsync(string name, string displayName, string basePath, string arch, string distribution, string createdBy)
@@ -177,11 +180,24 @@ public class MinioStorageService
             var stagedPath = _repoManager.GetStagedRpmPath(stagingDirectory, fileName);
             try
             {
-                await _minio.GetObjectAsync(
-                    new GetObjectArgs()
+                var downloadUrl = await _minio.PresignedGetObjectAsync(
+                    new PresignedGetObjectArgs()
                         .WithBucket(artifact.BucketName)
                         .WithObject(artifact.ObjectName)
-                        .WithFile(stagedPath));
+                        .WithExpiry(120));
+                using var response = await _artifactHttpClient.GetAsync(
+                    downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+                await using var source = await response.Content.ReadAsStreamAsync();
+                await using var stagedFile = new FileStream(
+                    stagedPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    128 * 1024,
+                    FileOptions.Asynchronous | FileOptions.WriteThrough);
+                await source.CopyToAsync(stagedFile);
+                await stagedFile.FlushAsync();
             }
             catch (Exception ex)
             {
@@ -194,7 +210,8 @@ public class MinioStorageService
                 !string.Equals(stagedHash, signing.SignedSha256, StringComparison.OrdinalIgnoreCase))
             {
                 throw new ValidationException(
-                    $"Artifact {artifactId} bytes do not match the verified signed SHA-256 digest.");
+                    $"Artifact {artifactId} bytes do not match the verified signed SHA-256 digest " +
+                    $"(expected {signing.SignedSha256}, got {stagedHash}).");
             }
             if (new FileInfo(stagedPath).Length != artifact.FileSize)
                 throw new ValidationException($"Artifact {artifactId} size does not match its build record.");

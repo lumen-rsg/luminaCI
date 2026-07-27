@@ -14,11 +14,16 @@ public class ArtifactStorageService
 
     private readonly IMinioClient _minio;
     private readonly ILogger<ArtifactStorageService> _logger;
+    private readonly HttpClient _artifactHttpClient;
 
-    public ArtifactStorageService(IMinioClient minio, ILogger<ArtifactStorageService> logger)
+    public ArtifactStorageService(
+        IMinioClient minio,
+        ILogger<ArtifactStorageService> logger,
+        IHttpClientFactory httpClientFactory)
     {
         _minio = minio;
         _logger = logger;
+        _artifactHttpClient = httpClientFactory.CreateClient("ArtifactStorage");
     }
 
     public async Task<string> UploadSignedArtifactAsync(
@@ -65,14 +70,21 @@ public class ArtifactStorageService
             var objectName = $"sha256/{actualHash}/{safeName}";
 
             await EnsureBucketAsync(cancellationToken);
-            await _minio.PutObjectAsync(
-                new PutObjectArgs()
+            var uploadUrl = await _minio.PresignedPutObjectAsync(
+                new PresignedPutObjectArgs()
                     .WithBucket(BucketName)
                     .WithObject(objectName)
-                    .WithStreamData(stream)
-                    .WithObjectSize(stream.Length)
-                    .WithContentType("application/x-rpm"),
-                cancellationToken);
+                    .WithExpiry(120));
+            using var request = new HttpRequestMessage(HttpMethod.Put, uploadUrl)
+            {
+                Content = new StreamContent(stream)
+            };
+            request.Content.Headers.ContentType =
+                new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-rpm");
+            request.Content.Headers.ContentLength = stream.Length;
+            using var response = await _artifactHttpClient.SendAsync(
+                request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
 
             _logger.LogInformation(
                 "Stored signed artifact {FileName} as immutable object {ObjectName}",
@@ -88,12 +100,21 @@ public class ArtifactStorageService
 
     private async Task EnsureBucketAsync(CancellationToken cancellationToken)
     {
-        var exists = await _minio.BucketExistsAsync(
-            new BucketExistsArgs().WithBucket(BucketName), cancellationToken);
-        if (!exists)
+        // MinIO .NET 6 can incorrectly report a non-existent bucket as present
+        // once another bucket exists on the endpoint. Creation is idempotent:
+        // try it first, then accept an error only when a follow-up HEAD proves
+        // that another caller already created the bucket.
+        try
         {
             await _minio.MakeBucketAsync(
                 new MakeBucketArgs().WithBucket(BucketName), cancellationToken);
+        }
+        catch
+        {
+            var exists = await _minio.BucketExistsAsync(
+                new BucketExistsArgs().WithBucket(BucketName), cancellationToken);
+            if (!exists)
+                throw;
         }
     }
 }
