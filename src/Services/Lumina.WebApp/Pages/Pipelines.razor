@@ -27,84 +27,82 @@
     }
 </div>
 
-<!-- Create Pipeline Dialog -->
+<!-- Create Pipeline Form -->
 @if (_showCreate)
 {
-    <div class="card mb-4 animate-slide-in">
+    <div class="card mb-4 animate-slide-in" role="region" aria-labelledby="create-pipeline-title">
         <div class="card-header">
-            <h4 class="mb-0"><Icon Name="plus" /> Create Pipeline</h4>
+            <h4 id="create-pipeline-title" class="mb-0"><Icon Name="plus" /> Create Pipeline</h4>
         </div>
         <div class="card-body">
             <div class="row">
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Name</label>
-                    <input type="text" class="form-control" @bind="_newName" placeholder="my-package-build" />
+                    <label class="form-label" for="new-pipeline-name">Name</label>
+                    <input id="new-pipeline-name" type="text" class="form-control" @bind="_newName" placeholder="my-package-build" />
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Description</label>
-                    <input type="text" class="form-control" @bind="_newDescription" placeholder="Build pipeline for..." />
+                    <label class="form-label" for="new-pipeline-description">Description</label>
+                    <input id="new-pipeline-description" type="text" class="form-control" @bind="_newDescription" placeholder="Build pipeline for..." />
                 </div>
             </div>
             <div class="mb-3">
-                <label class="form-label">Tags (comma-separated)</label>
-                <input type="text" class="form-control" @bind="_newTags" placeholder="rpm, production" />
+                <label class="form-label" for="new-pipeline-tags">Tags (comma-separated)</label>
+                <input id="new-pipeline-tags" type="text" class="form-control" @bind="_newTags" placeholder="rpm, production" />
             </div>
 
             <div class="section-title mt-4">Git Integration (optional)</div>
             <div class="mb-3">
-                <label class="form-label">Git Repository URL</label>
-                <input type="text" class="form-control" @bind="_newGitRepoUrl" placeholder="https://github.com/example/my-package.git" />
+                <label class="form-label" for="new-pipeline-git-url">Git Repository URL</label>
+                <input id="new-pipeline-git-url" type="url" class="form-control" @bind="_newGitRepoUrl" placeholder="https://github.com/example/my-package.git" />
                 <div class="form-text">If set, sources will be automatically cloned on each build</div>
             </div>
             <div class="row mb-3">
                 <div class="col-md-6">
-                    <label class="form-label">Branch</label>
-                    <input type="text" class="form-control" @bind="_newGitBranch" placeholder="main" />
+                    <label class="form-label" for="new-pipeline-branch">Branch</label>
+                    <input id="new-pipeline-branch" type="text" class="form-control" @bind="_newGitBranch" placeholder="main" />
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label">Spec File Path</label>
-                    <input type="text" class="form-control" @bind="_newSpecPath" placeholder="my-package.spec" />
+                    <label class="form-label" for="new-pipeline-spec-path">Spec File Path</label>
+                    <input id="new-pipeline-spec-path" type="text" class="form-control" @bind="_newSpecPath" placeholder="my-package.spec" />
                 </div>
             </div>
             <div class="mb-3">
-                <label class="form-label">Webhook Secret</label>
-                <input type="text" class="form-control" @bind="_newWebhookSecret" placeholder="Secret for webhook verification" />
+                <label class="form-label" for="new-pipeline-webhook-secret">Webhook Secret</label>
+                <input id="new-pipeline-webhook-secret" type="password" class="form-control" autocomplete="new-password" @bind="_newWebhookSecret" placeholder="Secret for webhook verification" />
             </div>
 
             <div class="section-title mt-4">Git Credentials (for private repositories)</div>
             <div class="row mb-3">
                 <div class="col-md-6">
-                    <label class="form-label">Git Username</label>
-                    <input type="text" class="form-control" @bind="_newGitUsername" placeholder="git-user or token name" />
+                    <label class="form-label" for="new-pipeline-git-username">Git Username</label>
+                    <input id="new-pipeline-git-username" type="text" class="form-control" autocomplete="username" @bind="_newGitUsername" placeholder="git-user or token name" />
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label">Git Token / Password</label>
-                    <input type="password" class="form-control" @bind="_newGitToken" placeholder="Personal Access Token" />
+                    <label class="form-label" for="new-pipeline-git-token">Git Token / Password</label>
+                    <input id="new-pipeline-git-token" type="password" class="form-control" autocomplete="new-password" @bind="_newGitToken" placeholder="Personal Access Token" />
                 </div>
             </div>
 
             <div class="section-title mt-4">Build Environment</div>
             <div class="mb-3">
-                <label class="form-label">Build Image</label>
-                <select class="form-select" @bind="_newBuildImage">
+                <label class="form-label" for="new-pipeline-build-image">Build Image</label>
+                <select id="new-pipeline-build-image" class="form-select" @bind="_newBuildImage">
                     <option value="">Default (rpm-build — Fedora + RPM tools)</option>
                     <option value="lumina-dotnet-build:latest">.NET / NativeAOT (Fedora + .NET 10 SDK + clang)</option>
                 </select>
             </div>
             <div class="mb-3">
-                <label class="form-label">RPM Spec Content</label>
+                <label class="form-label" for="new-pipeline-spec-content">RPM Spec Content</label>
                 <div class="d-flex align-items-center gap-2 mb-2">
-                    <label class="btn btn-outline-primary btn-sm mb-0">
-                        Upload .spec file
-                        <InputFile OnChange="@OnCreateSpecFileUploaded" Accept=".spec,.spec.in" style="display:none" />
-                    </label>
+                    <InputFile id="new-pipeline-spec-upload" class="visually-hidden-file-input" OnChange="@OnCreateSpecFileUploaded" Accept=".spec,.spec.in" />
+                    <label for="new-pipeline-spec-upload" class="btn btn-outline-primary btn-sm mb-0">Upload .spec file</label>
                     @if (!string.IsNullOrEmpty(_newSpecFileName))
                     {
                         <span class="text-sm text-muted">@_newSpecFileName</span>
-                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _newSpecContent = ""; _newSpecFileName = ""; })" title="Clear"><Icon Name="x" /></button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _newSpecContent = ""; _newSpecFileName = ""; })" title="Clear" aria-label="Clear uploaded create-pipeline spec"><Icon Name="x" /></button>
                     }
                 </div>
-                <textarea class="form-control font-monospace" rows="8" @bind="_newSpecContent" style="font-size:0.82rem;" placeholder="Name: my-package
+                <textarea id="new-pipeline-spec-content" class="form-control font-monospace" rows="8" @bind="_newSpecContent" style="font-size:0.82rem;" placeholder="Name: my-package
 Version: 1.0
 ..."></textarea>
                 <div class="form-text">Upload a .spec file or enter content manually. Required if the git repository has no .spec file.</div>
@@ -121,12 +119,12 @@ Version: 1.0
     </div>
 }
 
-<!-- Trigger Build Dialog -->
+<!-- Trigger Build Form -->
 @if (_showTrigger)
 {
-    <div class="card mb-4 animate-slide-in">
+    <div class="card mb-4 animate-slide-in" role="region" aria-labelledby="trigger-build-title">
         <div class="card-header">
-            <h4 class="mb-0">Trigger Build — @_triggerPipelineName</h4>
+            <h4 id="trigger-build-title" class="mb-0">Trigger Build — @_triggerPipelineName</h4>
         </div>
         <div class="card-body">
             @if (_triggerPipelineHasGit)
@@ -137,36 +135,34 @@ Version: 1.0
             }
             <div class="row">
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Package Spec Name</label>
-                    <input type="text" class="form-control" @bind="_triggerSpecName" placeholder="my-package" />
+                    <label class="form-label" for="trigger-spec-name">Package Spec Name</label>
+                    <input id="trigger-spec-name" type="text" class="form-control" @bind="_triggerSpecName" placeholder="my-package" />
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Triggered By</label>
-                    <input type="text" class="form-control" @bind="_triggeredBy" placeholder="admin" />
+                    <label class="form-label" for="triggered-by">Triggered By</label>
+                    <input id="triggered-by" type="text" class="form-control" @bind="_triggeredBy" placeholder="admin" />
                 </div>
             </div>
             <div class="mb-3">
-                <label class="form-label">Source URL</label>
-                <input type="text" class="form-control" @bind="_triggerSourceUrl" placeholder="https://github.com/example/my-package/archive/v1.0.tar.gz" />
+                <label class="form-label" for="trigger-source-url">Source URL</label>
+                <input id="trigger-source-url" type="url" class="form-control" @bind="_triggerSourceUrl" placeholder="https://github.com/example/my-package/archive/v1.0.tar.gz" />
                 @if (_triggerPipelineHasGit)
                 {
                     <div class="form-text">Leave empty to auto-clone from <code>@_triggerPipelineGitUrl</code> (branch: @_triggerPipelineGitBranch)</div>
                 }
             </div>
             <div class="mb-3">
-                <label class="form-label">RPM Spec Content</label>
+                <label class="form-label" for="trigger-spec-content">RPM Spec Content</label>
                 <div class="d-flex align-items-center gap-2 mb-2">
-                    <label class="btn btn-outline-primary btn-sm mb-0">
-                        Upload .spec file
-                        <InputFile OnChange="@OnTriggerSpecFileUploaded" Accept=".spec,.spec.in" style="display:none" />
-                    </label>
+                    <InputFile id="trigger-spec-upload" class="visually-hidden-file-input" OnChange="@OnTriggerSpecFileUploaded" Accept=".spec,.spec.in" />
+                    <label for="trigger-spec-upload" class="btn btn-outline-primary btn-sm mb-0">Upload .spec file</label>
                     @if (!string.IsNullOrEmpty(_triggerSpecFileName))
                     {
                         <span class="text-sm text-muted">@_triggerSpecFileName</span>
-                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _triggerSpecContent = ""; _triggerSpecFileName = ""; })" title="Clear"><Icon Name="x" /></button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _triggerSpecContent = ""; _triggerSpecFileName = ""; })" title="Clear" aria-label="Clear uploaded trigger spec"><Icon Name="x" /></button>
                     }
                 </div>
-                <textarea class="form-control font-monospace" rows="10" @bind="_triggerSpecContent" style="font-size:0.82rem;"></textarea>
+                <textarea id="trigger-spec-content" class="form-control font-monospace" rows="10" @bind="_triggerSpecContent" style="font-size:0.82rem;"></textarea>
                 @if (_triggerPipelineHasGit)
                 {
                     <div class="form-text">Leave empty — spec will be read from the cloned git repository.</div>
@@ -180,7 +176,7 @@ Version: 1.0
     </div>
 }
 
-<!-- Edit Pipeline Dialog -->
+<!-- Edit Pipeline Form -->
 @if (_editLoading)
 {
     <div class="card mb-4 animate-slide-in">
@@ -199,71 +195,69 @@ else if (_editLoadError != null)
 }
 else if (_showEdit && _edit != null)
 {
-    <div class="card mb-4 animate-slide-in">
+    <div class="card mb-4 animate-slide-in" role="region" aria-labelledby="edit-pipeline-title">
         <div class="card-header">
-            <h4 class="mb-0">Edit Pipeline — @_edit.Name</h4>
+            <h4 id="edit-pipeline-title" class="mb-0">Edit Pipeline — @_edit.Name</h4>
         </div>
         <div class="card-body">
             <div class="row">
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Name</label>
-                    <input type="text" class="form-control" @bind="_edit.Name" />
+                    <label class="form-label" for="edit-pipeline-name">Name</label>
+                    <input id="edit-pipeline-name" type="text" class="form-control" @bind="_edit.Name" />
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Description</label>
-                    <input type="text" class="form-control" @bind="_edit.Description" />
+                    <label class="form-label" for="edit-pipeline-description">Description</label>
+                    <input id="edit-pipeline-description" type="text" class="form-control" @bind="_edit.Description" />
                 </div>
             </div>
             <div class="mb-3">
-                <label class="form-label">Tags (comma-separated)</label>
-                <input type="text" class="form-control" @bind="_edit.Tags" />
+                <label class="form-label" for="edit-pipeline-tags">Tags (comma-separated)</label>
+                <input id="edit-pipeline-tags" type="text" class="form-control" @bind="_edit.Tags" />
             </div>
             <div class="section-title mt-4">Git Integration</div>
             <div class="mb-3">
-                <label class="form-label">Git Repository URL</label>
-                <input type="text" class="form-control" @bind="_edit.GitRepoUrl" />
+                <label class="form-label" for="edit-pipeline-git-url">Git Repository URL</label>
+                <input id="edit-pipeline-git-url" type="url" class="form-control" @bind="_edit.GitRepoUrl" />
             </div>
             <div class="row mb-3">
                 <div class="col-md-6">
-                    <label class="form-label">Branch</label>
-                    <input type="text" class="form-control" @bind="_edit.GitBranch" />
+                    <label class="form-label" for="edit-pipeline-branch">Branch</label>
+                    <input id="edit-pipeline-branch" type="text" class="form-control" @bind="_edit.GitBranch" />
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label">Spec File Path</label>
-                    <input type="text" class="form-control" @bind="_edit.SpecPath" />
+                    <label class="form-label" for="edit-pipeline-spec-path">Spec File Path</label>
+                    <input id="edit-pipeline-spec-path" type="text" class="form-control" @bind="_edit.SpecPath" />
                 </div>
             </div>
             <div class="row mb-3">
                 <div class="col-md-6">
-                    <label class="form-label">Git Username</label>
-                    <input type="text" class="form-control" @bind="_edit.GitUsername" />
+                    <label class="form-label" for="edit-pipeline-git-username">Git Username</label>
+                    <input id="edit-pipeline-git-username" type="text" class="form-control" autocomplete="username" @bind="_edit.GitUsername" />
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label">Git Token / Password</label>
-                    <input type="password" class="form-control" @bind="_edit.GitToken" placeholder="Leave empty to keep current" />
+                    <label class="form-label" for="edit-pipeline-git-token">Git Token / Password</label>
+                    <input id="edit-pipeline-git-token" type="password" class="form-control" autocomplete="new-password" @bind="_edit.GitToken" placeholder="Leave empty to keep current" />
                 </div>
             </div>
             <div class="mb-3">
-                <label class="form-label">Build Image</label>
-                <select class="form-select" @bind="_edit.BuildImage">
+                <label class="form-label" for="edit-pipeline-build-image">Build Image</label>
+                <select id="edit-pipeline-build-image" class="form-select" @bind="_edit.BuildImage">
                     <option value="">Default (rpm-build)</option>
                     <option value="lumina-dotnet-build:latest">.NET / NativeAOT</option>
                 </select>
             </div>
             <div class="mb-3">
-                <label class="form-label">RPM Spec Content (inline)</label>
+                <label class="form-label" for="edit-pipeline-spec-content">RPM Spec Content (inline)</label>
                 <div class="d-flex align-items-center gap-2 mb-2">
-                    <label class="btn btn-outline-primary btn-sm mb-0">
-                        Upload .spec file
-                        <InputFile OnChange="@OnEditSpecFileUploaded" Accept=".spec,.spec.in" style="display:none" />
-                    </label>
+                    <InputFile id="edit-pipeline-spec-upload" class="visually-hidden-file-input" OnChange="@OnEditSpecFileUploaded" Accept=".spec,.spec.in" />
+                    <label for="edit-pipeline-spec-upload" class="btn btn-outline-primary btn-sm mb-0">Upload .spec file</label>
                     @if (!string.IsNullOrEmpty(_edit.SpecFileName))
                     {
                         <span class="text-sm text-muted">@_edit.SpecFileName</span>
-                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _edit.SpecContent = ""; _edit.SpecFileName = ""; })" title="Clear"><Icon Name="x" /></button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _edit.SpecContent = ""; _edit.SpecFileName = ""; })" title="Clear" aria-label="Clear uploaded edit spec"><Icon Name="x" /></button>
                     }
                 </div>
-                <textarea class="form-control font-monospace" rows="6" @bind="_edit.SpecContent" style="font-size:0.82rem;"></textarea>
+                <textarea id="edit-pipeline-spec-content" class="form-control font-monospace" rows="6" @bind="_edit.SpecContent" style="font-size:0.82rem;"></textarea>
             </div>
             <div class="d-flex gap-2 mt-3">
                 <button class="btn btn-warning" @onclick="SaveEditPipeline" disabled="@_savingEdit">
@@ -278,16 +272,19 @@ else if (_showEdit && _edit != null)
 <!-- Delete Confirmation -->
 @if (_showDeleteConfirm)
 {
-    <div class="card mb-4 animate-slide-in">
-        <div class="card-header">
-            <h4 class="mb-0">Delete Pipeline — @_deletePipelineName?</h4>
-        </div>
-        <div class="card-body">
-            <p>Are you sure you want to delete pipeline <strong>@_deletePipelineName</strong>?</p>
-            <p class="text-muted text-sm">This action cannot be undone. Build history will be preserved.</p>
-            <div class="d-flex gap-2">
-                <button class="btn btn-danger" @onclick="DeletePipeline">Delete</button>
-                <button class="btn btn-outline-secondary" @onclick="() => _showDeleteConfirm = false">Cancel</button>
+    <div class="modal-overlay" @onclick="CloseDeleteDialog">
+        <div id="delete-pipeline-dialog" class="card modal-card animate-slide-in" role="dialog"
+             aria-modal="true" aria-labelledby="delete-pipeline-title" @onclick:stopPropagation="true">
+            <div class="card-header">
+                <h4 id="delete-pipeline-title" class="mb-0">Delete Pipeline — @_deletePipelineName?</h4>
+            </div>
+            <div class="card-body">
+                <p>Are you sure you want to delete pipeline <strong>@_deletePipelineName</strong>?</p>
+                <p class="text-muted text-sm">This action cannot be undone. Build history will be preserved.</p>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-danger" @onclick="DeletePipeline">Delete</button>
+                    <button class="btn btn-outline-secondary" data-dialog-close autofocus @onclick="CloseDeleteDialog">Cancel</button>
+                </div>
             </div>
         </div>
     </div>
@@ -296,9 +293,9 @@ else if (_showEdit && _edit != null)
 <!-- Alert Messages -->
 @if (_triggerMessage != null)
 {
-    <div class="alert @(IsSuccess ? "alert-success" : "alert-danger") alert-dismissible fade show animate-slide-in">
+    <div class="alert @(IsSuccess ? "alert-success" : "alert-danger") alert-dismissible fade show animate-slide-in" role="status" aria-live="polite">
         @_triggerMessage
-        <button type="button" class="btn-close" @onclick="() => _triggerMessage = null"></button>
+        <button type="button" class="btn-close" @onclick="() => _triggerMessage = null" aria-label="Dismiss pipeline message"></button>
     </div>
 }
 
@@ -358,23 +355,23 @@ else if (_showEdit && _edit != null)
                         <div class="d-flex gap-2">
                         @if (!string.IsNullOrEmpty(pipeline.GitRepoUrl))
                             {
-                                <button class="btn btn-sm btn-success" @onclick="() => AutoBuild(pipeline.Id, pipeline.Name)" title="Auto Build — fetch from git">
+                                <button class="btn btn-sm btn-success" @onclick="() => AutoBuild(pipeline.Id, pipeline.Name)" title="Auto Build — fetch from git" aria-label="Auto build @pipeline.Name">
                                     <Icon Name="sync" /> Auto
                                 </button>
-                                <button class="btn btn-sm btn-outline-info" @onclick="() => CopyWebhookUrl(pipeline.Id)" title="Copy webhook URL">
+                                <button class="btn btn-sm btn-outline-info" @onclick="() => CopyWebhookUrl(pipeline.Id)" title="Copy webhook URL" aria-label="Copy webhook URL for @pipeline.Name">
                                     <Icon Name="link" /> Webhook
                                 </button>
                             }
-                        <button class="btn btn-sm btn-outline-success" @onclick="() => ShowTriggerDialog(pipeline)" title="Manual Build">
+                        <button class="btn btn-sm btn-outline-success" @onclick="() => ShowTriggerDialog(pipeline)" title="Manual Build" aria-label="Manually build @pipeline.Name">
                             <Icon Name="play" /> Run
                         </button>
-                        <button class="btn btn-sm btn-outline-warning" @onclick="() => ShowEditDialog(pipeline)" title="Edit Pipeline">
+                        <button class="btn btn-sm btn-outline-warning" @onclick="() => ShowEditDialog(pipeline)" title="Edit Pipeline" aria-label="Edit pipeline @pipeline.Name">
                             <Icon Name="edit" /> Edit
                         </button>
-                        <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(pipeline)" title="Delete Pipeline">
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(pipeline)" title="Delete Pipeline" aria-label="Delete pipeline @pipeline.Name">
                             <Icon Name="trash" /> Delete
                         </button>
-                        <button class="btn btn-sm @(IsSourcesExpanded(pipeline.Id) ? "btn-info" : "btn-outline-info")" @onclick="() => TogglePipelineSources(pipeline.Id)" title="Extra Sources">
+                        <button class="btn btn-sm @(IsSourcesExpanded(pipeline.Id) ? "btn-info" : "btn-outline-info")" @onclick="() => TogglePipelineSources(pipeline.Id)" title="Extra Sources" aria-label="Toggle extra sources for @pipeline.Name" aria-expanded="@IsSourcesExpanded(pipeline.Id)">
                             <Icon Name="package" /> Sources
                         </button>
                         <a href="/builds" class="btn btn-sm btn-outline-primary" title="View Builds">
@@ -394,11 +391,13 @@ else if (_showEdit && _edit != null)
                         <div class="row mb-2">
                             <div class="col-md-8">
                                 <div class="d-flex gap-2 align-items-center">
-                                    <label class="btn btn-primary btn-sm mb-0 @(_uploading ? "disabled" : "")">
-                                        Upload Files
-                                        <InputFile OnChange="@(e => OnExtraSourceUploaded(e, pipeline.Id))" Accept=".tar.gz,.tar.bz2,.tar.xz,.tgz,.zip,.patch,.diff,.gz,.bz2,.xz,.rar,.7z,.tar" multiple style="display:none" disabled="@_uploading" />
-                                    </label>
-                                    <input type="text" class="form-control form-control-sm" style="max-width:200px"
+                                    <InputFile id="@($"extra-source-upload-{pipeline.Id}")" class="visually-hidden-file-input"
+                                               OnChange="@(e => OnExtraSourceUploaded(e, pipeline.Id))"
+                                               Accept=".tar.gz,.tar.bz2,.tar.xz,.tgz,.zip,.patch,.diff,.gz,.bz2,.xz,.rar,.7z,.tar"
+                                               multiple disabled="@_uploading" />
+                                    <label for="@($"extra-source-upload-{pipeline.Id}")" class="btn btn-primary btn-sm mb-0 @(_uploading ? "disabled" : "")">Upload Files</label>
+                                    <label class="visually-hidden" for="@($"extra-source-subfolder-{pipeline.Id}")">Optional source subfolder</label>
+                                    <input id="@($"extra-source-subfolder-{pipeline.Id}")" type="text" class="form-control form-control-sm" style="max-width:200px"
                                            @bind:get="GetSubfolderBinding(pipeline.Id)"
                                            @bind:set="(v) => SetSubfolder(pipeline.Id, v)"
                                            placeholder="Subfolder (optional)" disabled="@_uploading" />
@@ -444,7 +443,8 @@ else if (_showEdit && _edit != null)
                         {
                             <div class="table-responsive">
                                 <table class="table table-sm" style="font-size:0.82rem;">
-                                    <thead><tr><th>File</th><th>Subfolder</th><th>Size</th><th>Uploaded</th><th></th></tr></thead>
+                                    <caption class="visually-hidden">Extra source files for @pipeline.Name</caption>
+                                    <thead><tr><th scope="col">File</th><th scope="col">Subfolder</th><th scope="col">Size</th><th scope="col">Uploaded</th><th scope="col">Actions</th></tr></thead>
                                     <tbody>
                                         @foreach (var src in files)
                                         {
@@ -453,7 +453,7 @@ else if (_showEdit && _edit != null)
                                                 <td>@(src.SubFolder ?? "/")</td>
                                                 <td>@FormatFileSize(src.FileSize)</td>
                                                 <td>@src.UploadedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
-                                                <td><button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size:0.75rem" @onclick="() => DeleteSource(pipeline.Id, src.Path)"><Icon Name="x" /></button></td>
+                                                <td><button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size:0.75rem" @onclick="() => DeleteSource(pipeline.Id, src.Path)" aria-label="Delete source @src.FileName"><Icon Name="x" /></button></td>
                                             </tr>
                                         }
                                     </tbody>
@@ -537,6 +537,7 @@ else
 
     // Delete dialog
     private bool _showDeleteConfirm = false;
+    private bool _deleteDialogInitialized;
     private Guid _deletePipelineId;
     private string _deletePipelineName = "";
 
@@ -586,6 +587,15 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
     protected override async Task OnInitializedAsync()
     {
         await LoadPipelinesInternal();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_showDeleteConfirm && !_deleteDialogInitialized)
+        {
+            _deleteDialogInitialized = true;
+            await JS.InvokeVoidAsync("activateAccessibleDialog", "delete-pipeline-dialog");
+        }
     }
 
     private async Task LoadPipelinesInternal()
@@ -939,8 +949,11 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
     {
         _deletePipelineId = pipeline.Id;
         _deletePipelineName = pipeline.Name;
+        _deleteDialogInitialized = false;
         _showDeleteConfirm = true;
     }
+
+    private void CloseDeleteDialog() => _showDeleteConfirm = false;
 
     private async Task DeletePipeline()
     {

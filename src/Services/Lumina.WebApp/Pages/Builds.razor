@@ -67,17 +67,18 @@ else if (CurrentBuilds.Any())
     <div class="card animate-slide-in">
         <div class="table-responsive">
             <table class="table table-hover table-striped">
+                <caption class="visually-hidden">Build history</caption>
                 <thead>
                         <tr>
-                            <th style="width:6px;padding:0;"></th>
-                            <th>Build</th>
-                            <th>Spec Name</th>
-                            <th>Status</th>
-                            <th>Git</th>
-                            <th>Pipeline</th>
-                            <th>Triggered By</th>
-                            <th>Started</th>
-                            <th style="width:80px;"></th>
+                            <th scope="col" style="width:6px;padding:0;"><span class="visually-hidden">Status indicator</span></th>
+                            <th scope="col">Build</th>
+                            <th scope="col">Spec Name</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Git</th>
+                            <th scope="col">Pipeline</th>
+                            <th scope="col">Triggered By</th>
+                            <th scope="col">Started</th>
+                            <th scope="col" style="width:80px;">Actions</th>
                         </tr>
                 </thead>
                 <tbody>

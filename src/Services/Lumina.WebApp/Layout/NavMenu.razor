@@ -4,7 +4,7 @@
 
 <div class="sidebar">
     <div class="sidebar-brand">
-        <a href="/">
+        <a href="/" aria-label="Lumina CI dashboard">
             <span class="brand-icon">L</span>
             <span>Lumina CI</span>
         </a>
@@ -12,11 +12,11 @@
 
     @if (Auth.IsAuthenticated)
     {
-        <nav class="sidebar-nav">
+        <nav class="sidebar-nav" aria-label="Primary navigation">
             <div class="sidebar-section">Overview</div>
             <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
                 <li class="nav-item">
-                    <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                    <NavLink class="nav-link" href="" Match="NavLinkMatch.All" aria-label="Dashboard">
                         <span class="nav-icon"><Icon Name="gauge" /></span>
                         <span>Dashboard</span>
                     </NavLink>
@@ -26,23 +26,23 @@
             <div class="sidebar-section">CI/CD</div>
             <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
                 <li class="nav-item">
-                    <NavLink class="nav-link" href="pipelines">
+                    <NavLink class="nav-link" href="pipelines" aria-label="Pipelines">
                         <span class="nav-icon"><Icon Name="flow" /></span>
                         <span>Pipelines</span>
                     </NavLink>
                 </li>
                 <li class="nav-item">
-                    <NavLink class="nav-link" href="builds">
+                    <NavLink class="nav-link" href="builds" aria-label="@($"Builds, {_queueBadge} active")">
                         <span class="nav-icon"><Icon Name="hammer" /></span>
                         <span>Builds</span>
                         @if (_queueBadge > 0)
                         {
-                            <span class="nav-badge">@_queueBadge</span>
+                            <span class="nav-badge" aria-label="@($"{_queueBadge} active builds")">@_queueBadge</span>
                         }
                     </NavLink>
                 </li>
                 <li class="nav-item">
-                    <NavLink class="nav-link" href="sources">
+                    <NavLink class="nav-link" href="sources" aria-label="Sources">
                         <span class="nav-icon"><Icon Name="package" /></span>
                         <span>Sources</span>
                     </NavLink>
@@ -52,13 +52,13 @@
             <div class="sidebar-section">Management</div>
             <ul class="nav flex-column" style="list-style:none;padding:0;margin:0;">
                 <li class="nav-item">
-                    <NavLink class="nav-link" href="security">
+                    <NavLink class="nav-link" href="security" aria-label="Security">
                         <span class="nav-icon"><Icon Name="shield" /></span>
                         <span>Security</span>
                     </NavLink>
                 </li>
                 <li class="nav-item">
-                    <NavLink class="nav-link" href="repositories">
+                    <NavLink class="nav-link" href="repositories" aria-label="Repositories">
                         <span class="nav-icon"><Icon Name="database" /></span>
                         <span>Repositories</span>
                     </NavLink>

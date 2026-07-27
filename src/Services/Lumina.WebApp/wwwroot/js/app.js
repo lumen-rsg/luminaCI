@@ -116,6 +116,72 @@
         URL.revokeObjectURL(blobUrl);
     };
 
+    // --- Accessible dialogs -------------------------------------------------
+    // Blazor conditionally renders dialog nodes. This helper moves focus into
+    // the dialog, traps Tab/Shift+Tab, maps Escape to its close action, and
+    // restores focus to the opener when the node is removed.
+    window.activateAccessibleDialog = function (elementId) {
+        var dialog = document.getElementById(elementId);
+        if (!dialog || dialog.dataset.a11yActive === 'true') {
+            return;
+        }
+
+        dialog.dataset.a11yActive = 'true';
+        var opener = document.activeElement;
+        var focusableSelector =
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), ' +
+            'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+        dialog.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                var closeButton = dialog.querySelector('[data-dialog-close]');
+                if (closeButton && !closeButton.disabled) {
+                    closeButton.click();
+                }
+                return;
+            }
+
+            if (event.key !== 'Tab') {
+                return;
+            }
+
+            var focusable = Array.from(dialog.querySelectorAll(focusableSelector))
+                .filter(function (element) {
+                    return element.getClientRects().length > 0;
+                });
+            if (focusable.length === 0) {
+                event.preventDefault();
+                dialog.focus();
+                return;
+            }
+
+            var first = focusable[0];
+            var last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        });
+
+        var observer = new MutationObserver(function () {
+            if (!document.body.contains(dialog)) {
+                observer.disconnect();
+                if (opener && document.body.contains(opener)) {
+                    opener.focus();
+                }
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        var firstFocusable = dialog.querySelector('[autofocus]') || dialog.querySelector(focusableSelector);
+        dialog.setAttribute('tabindex', '-1');
+        (firstFocusable || dialog).focus();
+    };
+
     // --- Authenticated file download ----------------------------------------
     // Cookies are attached automatically; no token in JS, no Authorization header.
     window.downloadFileWithAuth = async function (url, fallbackName) {

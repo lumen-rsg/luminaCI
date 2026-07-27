@@ -1149,14 +1149,91 @@ select optgroup { background: var(--bg-dark); color: var(--text-primary); }
 
 @media (max-width: 768px) {
     .col-md-2, .col-md-3, .col-md-4, .col-md-5, .col-md-6, .col-md-8, .col-md-9, .col-lg-4 { width: 100%; }
-    .sidebar { width: 60px; min-width: 60px; }
-    .sidebar-nav .nav-link { justify-content: center; padding: 12px; }
-    .sidebar-brand { justify-content: center; padding: 12px; }
-    .sidebar-section, .sidebar-footer, .nav-badge, .sidebar-nav .nav-link span:not(.nav-icon) { display: none; }
+    .layout { padding-bottom: 72px; }
+    .sidebar {
+        position: fixed;
+        inset: auto 0 0 0;
+        width: 100%;
+        min-width: 0;
+        height: 72px;
+        flex-direction: row;
+        border: 0;
+        border-top: 1px solid var(--border-color);
+    }
+    .sidebar-brand, .sidebar-section, .sidebar-footer small { display: none; }
+    .sidebar-nav {
+        display: flex;
+        flex: 1;
+        padding: 4px;
+        overflow-x: auto;
+        overflow-y: hidden;
+    }
+    .sidebar-nav .nav {
+        display: flex;
+        flex-direction: row !important;
+        flex-wrap: nowrap;
+    }
+    .sidebar-nav .nav-link {
+        min-width: 68px;
+        height: 62px;
+        justify-content: center;
+        flex-direction: column;
+        gap: 2px;
+        padding: 5px 7px;
+        margin: 0;
+        font-size: 0.66rem;
+    }
+    .sidebar-nav .nav-link span:not(.nav-icon):not(.nav-badge) { display: inline; }
+    .nav-badge {
+        position: absolute;
+        top: 3px;
+        right: 6px;
+        padding: 1px 5px;
+    }
+    .sidebar-footer {
+        display: flex;
+        width: 68px;
+        padding: 8px 5px;
+        border: 0;
+        border-left: 1px solid var(--border-color);
+        justify-content: center;
+    }
+    .sidebar-footer .btn {
+        width: 58px !important;
+        white-space: normal;
+        font-size: 0.65rem;
+        padding: 5px 3px;
+    }
     .page-header { flex-direction: column; align-items: flex-start; }
     .filter-bar { flex-wrap: wrap; }
     .pipeline-stages { flex-direction: column; }
     .stage-connector { display: none; }
+}
+
+.visually-hidden-file-input {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+.visually-hidden-file-input:focus + .btn {
+    outline: 3px solid rgba(124, 156, 245, 0.45);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }
 
 /* ========== Blazor Error ========== */

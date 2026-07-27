@@ -31,14 +31,15 @@ else if (_packages.Any())
 {
     <div class="table-responsive">
         <table class="table table-hover align-middle">
+            <caption class="visually-hidden">Configured source packages</caption>
             <thead>
                 <tr>
-                    <th>Package</th>
-                    <th>Source</th>
-                    <th>Type</th>
-                    <th>Branch</th>
-                    <th>Status</th>
-                    <th>Actions</th>
+                    <th scope="col">Package</th>
+                    <th scope="col">Source</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Branch</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -73,7 +74,7 @@ else if (_packages.Any())
                         </td>
                         <td>
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-primary" @onclick="() => FetchPackage(pkg.PackageName)" title="Fetch sources">
+                                <button class="btn btn-outline-primary" @onclick="() => FetchPackage(pkg.PackageName)" title="Fetch sources" aria-label="Fetch sources for @pkg.PackageName">
                                     <Icon Name="download" />
                                 </button>
                             </div>
@@ -98,7 +99,7 @@ else
 {
     <div class="alert alert-info alert-dismissible fade show mt-3" role="alert">
         @_statusMessage
-        <button type="button" class="btn-close" @onclick="() => _statusMessage = null"></button>
+        <button type="button" class="btn-close" @onclick="() => _statusMessage = null" aria-label="Dismiss status message"></button>
     </div>
 }
 
@@ -106,7 +107,7 @@ else
 {
     <div class="alert alert-danger alert-dismissible fade show mt-3" role="alert">
         @_errorMessage
-        <button type="button" class="btn-close" @onclick="() => _errorMessage = null"></button>
+        <button type="button" class="btn-close" @onclick="() => _errorMessage = null" aria-label="Dismiss error message"></button>
     </div>
 }
 

@@ -26,12 +26,12 @@
                     <div class="p-3 mb-3" style="background: var(--bg-input); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
                         <h6>Generate New PGP Key</h6>
                         <div class="mb-2">
-                            <label class="form-label small">Key Name</label>
-                            <input type="text" class="form-control form-control-sm" @bind="_keyName" placeholder="lumina-build-key" />
+                            <label class="form-label small" for="pgp-key-name">Key Name</label>
+                            <input id="pgp-key-name" type="text" class="form-control form-control-sm" @bind="_keyName" placeholder="lumina-build-key" />
                         </div>
                         <div class="mb-2">
-                            <label class="form-label small">Email</label>
-                            <input type="email" class="form-control form-control-sm" @bind="_keyEmail" placeholder="build@lumina-ci.local" />
+                            <label class="form-label small" for="pgp-key-email">Email</label>
+                            <input id="pgp-key-email" type="email" class="form-control form-control-sm" @bind="_keyEmail" placeholder="build@lumina-ci.local" />
                         </div>
                         <button class="btn btn-primary btn-sm" @onclick="GenerateKey" disabled="@(_generatingKey)">
                             @if (_generatingKey)
@@ -42,7 +42,7 @@
                         </button>
                         @if (_keyResult != null)
                         {
-                            <div class="alert @(string.IsNullOrEmpty(_keyResult.Error) ? "alert-success" : "alert-danger") mt-2 mb-0 py-1 px-2 small">
+                            <div class="alert @(string.IsNullOrEmpty(_keyResult.Error) ? "alert-success" : "alert-danger") mt-2 mb-0 py-1 px-2 small" role="status" aria-live="polite">
                                 @(string.IsNullOrEmpty(_keyResult.Error) ? (_keyResult.Message ?? "Key generated!") : _keyResult.Error)
                             </div>
                         }
@@ -67,11 +67,12 @@
                 @if (_hashes?.Data?.Hashes != null && _hashes.Data.Hashes.Any())
                 {
                     <table class="table table-hover table-striped">
+                        <caption class="visually-hidden">Artifact hash records</caption>
                         <thead>
                             <tr>
-                                <th>Artifact</th>
-                                <th>SHA256</th>
-                                <th>MD5</th>
+                                <th scope="col">Artifact</th>
+                                <th scope="col">SHA256</th>
+                                <th scope="col">MD5</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -123,16 +124,17 @@
         @if (_scans?.Data?.Scans != null && _scans.Data.Scans.Any())
         {
             <table class="table table-hover table-striped">
+                <caption class="visually-hidden">CVE scan reports</caption>
                 <thead>
                     <tr>
-                        <th>Scan ID</th>
-                        <th>Artifact</th>
-                        <th>Scanner</th>
-                        <th>Status</th>
-                        <th>Total</th>
-                        <th>Critical</th>
-                        <th>High</th>
-                        <th>Started</th>
+                        <th scope="col">Scan ID</th>
+                        <th scope="col">Artifact</th>
+                        <th scope="col">Scanner</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Total</th>
+                        <th scope="col">Critical</th>
+                        <th scope="col">High</th>
+                        <th scope="col">Started</th>
                     </tr>
                 </thead>
                 <tbody>

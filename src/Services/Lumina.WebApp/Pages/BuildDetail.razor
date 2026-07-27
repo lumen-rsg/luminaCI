@@ -86,7 +86,7 @@ else
                             </span>
                         }
                     </div>
-                    <table class="table table-sm" style="border-collapse:collapse;">
+                    <table class="table table-sm" role="presentation" style="border-collapse:collapse;">
                         <tr style="border:none;">
                             <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Spec Name:</td>
                             <td style="border:none;padding:4px 8px;"><strong class="text-bright">@build.SpecName</strong></td>
@@ -143,7 +143,7 @@ else
                                     }
                                     else
                                     {
-                                        <a href="@build.SourceUrl" target="_blank" class="text-break text-sm">@build.SourceUrl</a>
+                                        <a href="@build.SourceUrl" target="_blank" rel="noopener noreferrer" class="text-break text-sm">@build.SourceUrl</a>
                                     }
                                 </td>
                             </tr>
@@ -158,7 +158,7 @@ else
                     </table>
                 </div>
                 <div class="col-md-6">
-                    <table class="table table-sm" style="border-collapse:collapse;">
+                    <table class="table table-sm" role="presentation" style="border-collapse:collapse;">
                         <tr style="border:none;">
                             <td class="text-muted text-sm" style="width:130px;border:none;padding:4px 8px;">Created:</td>
                             <td style="border:none;padding:4px 8px;">@build.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
@@ -225,15 +225,16 @@ else
         <div class="card animate-slide-in">
             <div class="table-responsive">
                 <table class="table table-hover">
+                    <caption class="visually-hidden">Build artifacts</caption>
                     <thead>
                         <tr>
-                            <th>Artifact ID</th>
-                            <th>File Name</th>
-                            <th>Size</th>
-                            <th>SHA256</th>
-                            <th>Signature</th>
-                            <th>CVE Scan</th>
-                            <th>Actions</th>
+                            <th scope="col">Artifact ID</th>
+                            <th scope="col">File Name</th>
+                            <th scope="col">Size</th>
+                            <th scope="col">SHA256</th>
+                            <th scope="col">Signature</th>
+                            <th scope="col">CVE Scan</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -285,9 +286,9 @@ else
             <div class="card-body">
                 @if (_publishMessage != null)
                 {
-                    <div class="alert @(_publishSuccess ? "alert-success" : "alert-danger") alert-dismissible fade show py-2 px-3 mb-3">
+                    <div class="alert @(_publishSuccess ? "alert-success" : "alert-danger") alert-dismissible fade show py-2 px-3 mb-3" role="status" aria-live="polite">
                         @_publishMessage
-                        <button type="button" class="btn-close btn-sm" @onclick="() => _publishMessage = null" style="font-size:0.6em;"></button>
+                        <button type="button" class="btn-close btn-sm" @onclick="() => _publishMessage = null" aria-label="Dismiss publish message" style="font-size:0.6em;"></button>
                     </div>
                 }
                 @if (_reposLoadError != null)
@@ -306,8 +307,8 @@ else
                 {
                     <div class="row align-items-end">
                         <div class="col-md-5 mb-2">
-                            <label class="form-label text-sm">Repository</label>
-                            <select class="form-select form-select-sm" @bind="_selectedRepoId">
+                            <label class="form-label text-sm" for="publish-repository">Repository</label>
+                            <select id="publish-repository" class="form-select form-select-sm" @bind="_selectedRepoId">
                                 <option value="">-- Select repository --</option>
                                 @foreach (var repo in _repos.Data.Repositories)
                                 {
@@ -316,8 +317,8 @@ else
                             </select>
                         </div>
                         <div class="col-md-5 mb-2">
-                            <label class="form-label text-sm">Artifact</label>
-                            <select class="form-select form-select-sm" @bind="_selectedArtifactId">
+                            <label class="form-label text-sm" for="publish-artifact">Artifact</label>
+                            <select id="publish-artifact" class="form-select form-select-sm" @bind="_selectedArtifactId">
                                 @foreach (var artifact in build.Artifacts)
                                 {
                                     <option value="@artifact.Id">@artifact.FileName</option>
@@ -386,8 +387,8 @@ else
                        placeholder="Search logs"
                        @bind="_logSearch"
                        @bind:event="oninput" />
-                <label class="console-follow">
-                    <input type="checkbox" @bind="_followTail" />
+                <label class="console-follow" for="follow-build-logs">
+                    <input id="follow-build-logs" type="checkbox" @bind="_followTail" />
                     Follow tail
                 </label>
                 <span class="text-muted">@FilteredLogLines.Count / @_logLines.Count lines</span>

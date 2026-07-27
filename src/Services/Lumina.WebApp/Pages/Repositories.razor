@@ -2,6 +2,7 @@
 @using Lumina.Shared.DTOs
 @inject Lumina.WebApp.Services.LuminaApiService Api
 @inject ILogger<Repositories> Logger
+@inject IJSRuntime JS
 
 <PageTitle>Repositories — Lumina CI</PageTitle>
 
@@ -22,28 +23,28 @@
         <div class="card-body">
             <div class="row">
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Name</label>
-                    <input type="text" class="form-control" @bind="_newName" placeholder="el9-baseos" />
+                    <label class="form-label" for="repository-name">Name</label>
+                    <input id="repository-name" type="text" class="form-control" @bind="_newName" placeholder="el9-baseos" />
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Display Name</label>
-                    <input type="text" class="form-control" @bind="_newDisplayName" placeholder="Enterprise Linux 9 BaseOS" />
+                    <label class="form-label" for="repository-display-name">Display Name</label>
+                    <input id="repository-display-name" type="text" class="form-control" @bind="_newDisplayName" placeholder="Enterprise Linux 9 BaseOS" />
                 </div>
                 <div class="col-md-4 mb-3">
-                    <label class="form-label">Base Path</label>
-                    <input type="text" class="form-control" @bind="_newBasePath" placeholder="/el/9/baseos" />
+                    <label class="form-label" for="repository-base-path">Base Path</label>
+                    <input id="repository-base-path" type="text" class="form-control" @bind="_newBasePath" placeholder="/el/9/baseos" />
                 </div>
                 <div class="col-md-4 mb-3">
-                    <label class="form-label">Architecture</label>
-                    <select class="form-select" @bind="_newArch">
+                    <label class="form-label" for="repository-architecture">Architecture</label>
+                    <select id="repository-architecture" class="form-select" @bind="_newArch">
                         <option value="x86_64">x86_64</option>
                         <option value="aarch64">aarch64</option>
                         <option value="noarch">noarch</option>
                     </select>
                 </div>
                 <div class="col-md-4 mb-3">
-                    <label class="form-label">Distribution</label>
-                    <input type="text" class="form-control" @bind="_newDist" placeholder="el9" />
+                    <label class="form-label" for="repository-distribution">Distribution</label>
+                    <input id="repository-distribution" type="text" class="form-control" @bind="_newDist" placeholder="el9" />
                 </div>
             </div>
             <div class="d-flex gap-2">
@@ -56,9 +57,9 @@
 
 @if (_alertMessage != null)
 {
-    <div class="alert @_alertClass alert-dismissible fade show animate-slide-in">
+    <div class="alert @_alertClass alert-dismissible fade show animate-slide-in" role="status" aria-live="polite">
         @_alertMessage
-        <button type="button" class="btn-close" @onclick="() => _alertMessage = null"></button>
+        <button type="button" class="btn-close" @onclick="() => _alertMessage = null" aria-label="Dismiss repository message"></button>
     </div>
 }
 
@@ -137,20 +138,21 @@ else
 @* Upload Modal *@
 @if (_showUpload && _uploadRepoId.HasValue)
 {
-    <div class="modal-overlay" @onclick="() => _showUpload = false">
-        <div class="card modal-card" @onclick:stopPropagation="true" style="max-width:500px; width:90%;">
+    <div class="modal-overlay" @onclick="CloseUpload">
+        <div id="repository-upload-dialog" class="card modal-card" role="dialog" aria-modal="true"
+             aria-labelledby="repository-upload-title" @onclick:stopPropagation="true" style="max-width:500px; width:90%;">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h4 class="mb-0"><Icon Name="upload" /> Upload RPM Package</h4>
-                <button class="btn-close" @onclick="() => _showUpload = false" aria-label="Close"><Icon Name="x" /></button>
+                <h4 id="repository-upload-title" class="mb-0"><Icon Name="upload" /> Upload RPM Package</h4>
+                <button class="btn-close" data-dialog-close @onclick="CloseUpload" aria-label="Close upload dialog"><Icon Name="x" /></button>
             </div>
             <div class="card-body">
                 <div class="mb-3">
-                    <label class="form-label">Select RPM file</label>
-                    <InputFile OnChange="HandleFileSelected" accept=".rpm" />
+                    <label class="form-label" for="repository-rpm-file">Select RPM file</label>
+                    <InputFile id="repository-rpm-file" OnChange="HandleFileSelected" accept=".rpm" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Detached PGP signature (.asc) — required</label>
-                    <InputFile OnChange="HandleSignatureSelected" accept=".asc" />
+                    <label class="form-label" for="repository-signature-file">Detached PGP signature (.asc) — required</label>
+                    <InputFile id="repository-signature-file" OnChange="HandleSignatureSelected" accept=".asc" />
                     <small class="text-muted">Unsigned RPMs cannot be uploaded. The signature is verified against the active public key before publishing.</small>
                 </div>
                 @if (_selectedFileName != null)
@@ -168,7 +170,9 @@ else
                 {
                     <div class="mb-3">
                         <div class="progress">
-                            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%">Uploading & verifying...</div>
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+                                 aria-label="Uploading and verifying package" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"
+                                 style="width: 100%">Uploading & verifying...</div>
                         </div>
                     </div>
                 }
@@ -176,7 +180,7 @@ else
                     <button class="btn btn-success" @onclick="DoUpload" disabled="@(_selectedFile == null || _selectedSignature == null || _uploading)">
                         @(_uploading ? "Uploading..." : "Upload & Verify")
                     </button>
-                    <button class="btn btn-outline-secondary" @onclick="() => _showUpload = false" disabled="@_uploading">Cancel</button>
+                    <button class="btn btn-outline-secondary" data-dialog-close @onclick="CloseUpload" disabled="@_uploading">Cancel</button>
                 </div>
             </div>
         </div>
@@ -198,6 +202,7 @@ else
 
     // Upload state
     private bool _showUpload = false;
+    private bool _uploadDialogInitialized;
     private Guid? _uploadRepoId;
     private IBrowserFile? _selectedFile;
     private IBrowserFile? _selectedSignature;
@@ -263,7 +268,23 @@ else
         _selectedFileName = null;
         _selectedFileSize = 0;
         _uploading = false;
+        _uploadDialogInitialized = false;
         _showUpload = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_showUpload && !_uploadDialogInitialized)
+        {
+            _uploadDialogInitialized = true;
+            await JS.InvokeVoidAsync("activateAccessibleDialog", "repository-upload-dialog");
+        }
+    }
+
+    private void CloseUpload()
+    {
+        if (_uploading) return;
+        _showUpload = false;
     }
 
     private void HandleFileSelected(InputFileChangeEventArgs e)

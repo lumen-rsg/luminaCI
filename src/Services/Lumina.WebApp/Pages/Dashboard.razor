@@ -147,13 +147,14 @@
                 @if (_builds?.Data?.Builds != null && _builds.Data.Builds.Any())
                 {
                     <table class="table table-hover table-striped">
+                        <caption class="visually-hidden">Recent build history</caption>
                         <thead>
                             <tr>
-                                <th style="width:6px;padding:0;"></th>
-                                <th>Build</th>
-                                <th>Status</th>
-                                <th>Triggered By</th>
-                                <th>Time</th>
+                                <th scope="col" style="width:6px;padding:0;"><span class="visually-hidden">Status indicator</span></th>
+                                <th scope="col">Build</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Triggered By</th>
+                                <th scope="col">Time</th>
                             </tr>
                         </thead>
                         <tbody>
