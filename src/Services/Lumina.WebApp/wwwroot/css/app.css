@@ -453,6 +453,15 @@ code {
     transition: background 0.12s ease;
 }
 
+.table tbody tr.clickable-row {
+    cursor: pointer;
+}
+
+.table tbody tr.clickable-row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
 .table-hover tbody tr:hover {
     background: var(--tint-gray);
 }

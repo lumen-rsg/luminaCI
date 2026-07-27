@@ -3,6 +3,7 @@
 @using Lumina.Shared.Models.Enums
 @inject Lumina.WebApp.Services.LuminaApiService Api
 @inject ILogger<Dashboard> Logger
+@inject NavigationManager Navigation
 
 <PageTitle>Dashboard — Lumina CI</PageTitle>
 
@@ -154,7 +155,12 @@
                                     BuildStatus.Queued => "var(--accent-yellow)",
                                     _ => "var(--text-primary)"
                                 };
-                                <tr onclick="window.location.href='/builds/@build.Id'" style="cursor:pointer;">
+                                <tr class="clickable-row"
+                                    role="link"
+                                    tabindex="0"
+                                    aria-label="View build @build.Id"
+                                    @onclick="() => NavigateToBuild(build.Id)"
+                                    @onkeydown="args => HandleBuildRowKeyDown(args, build.Id)">
                                     <td style="width:6px;padding:0;background:@statusColor;border-radius:3px;"></td>
                                     <td>
                                         <code>@build.Id.ToString()[..8]</code>
@@ -314,6 +320,16 @@
         if (elapsed.TotalMinutes < 1) return $"{(int)elapsed.TotalSeconds}s";
         if (elapsed.TotalHours < 1) return $"{(int)elapsed.TotalMinutes}m {(int)elapsed.Seconds}s";
         return $"{(int)elapsed.TotalHours}h {(int)elapsed.Minutes}m";
+    }
+
+    private void NavigateToBuild(Guid buildId) => Navigation.NavigateTo($"/builds/{buildId}");
+
+    private void HandleBuildRowKeyDown(KeyboardEventArgs args, Guid buildId)
+    {
+        if (args.Key == "Enter")
+        {
+            NavigateToBuild(buildId);
+        }
     }
 
     private string GetStatusBadgeClass(BuildStatus status) => status switch
