@@ -10,6 +10,7 @@ public sealed record PackageSourceConfig(
     string Source,
     SourceType SourceType,
     string? SourceBranch,
+    string? ExpectedSha256,
     string? BuildImage,
     string? SpecPath);
 
@@ -35,6 +36,7 @@ public sealed class ConfigParserService
         "source",
         "source_type",
         "source_branch",
+        "source_sha256",
         "build_image",
         "spec_path"
     };
@@ -160,13 +162,31 @@ public sealed class ConfigParserService
             throw Error(sectionLine, "spec_path must be a confined relative path");
         }
 
+        var expectedSha256 = ParseSha256(
+            Optional(values, "source_sha256", sectionLine), sectionLine);
+        if (expectedSha256 is not null &&
+            sourceType is not (SourceType.Tar or SourceType.Http))
+        {
+            throw Error(sectionLine, "source_sha256 is only valid for archive sources");
+        }
+
         packages.Add(new PackageSourceConfig(
             name,
             source,
             sourceType,
             Optional(values, "source_branch", sectionLine),
+            expectedSha256,
             Optional(values, "build_image", sectionLine),
             specPath));
+    }
+
+    private static string? ParseSha256(string? value, int lineNumber)
+    {
+        if (value is null)
+            return null;
+        if (value.Length != 64 || value.Any(character => !Uri.IsHexDigit(character)))
+            throw Error(lineNumber, "source_sha256 must be exactly 64 hexadecimal characters");
+        return value.ToLowerInvariant();
     }
 
     private static string Required(
@@ -241,12 +261,8 @@ public sealed class ConfigParserService
         var scheme = uri.Scheme.ToLowerInvariant();
         var allowed = sourceType switch
         {
-            SourceType.Git => scheme is "http" or "https" or "git" or "ssh",
-            SourceType.Tar or SourceType.Http => scheme is "http" or "https",
-            SourceType.Ftp => scheme == "ftp",
-            SourceType.Rsync => scheme == "rsync",
-            SourceType.Svn => scheme is "http" or "https" or "svn" or "svn+ssh",
-            SourceType.Hg => scheme is "http" or "https" or "ssh",
+            SourceType.Git => scheme == "https",
+            SourceType.Tar or SourceType.Http => scheme == "https",
             _ => false
         };
 

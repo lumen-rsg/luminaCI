@@ -70,11 +70,28 @@ public record DashboardStatsResponse(int TotalPipelines, int ActiveBuilds, int C
 public record BuildQueueResponse(List<BuildJobSummaryResponse> Queued, List<BuildJobSummaryResponse> Running, int QueuedCount, int RunningCount);
 
 // Source Responses
-public record SourcePackageResponse(string PackageName, string SourceUrl, SourceType SourceType, string? SourceBranch, SourceStatus Status, string? ErrorMessage, long? FileSize, string? HashSha256, DateTime? LastFetchedAt);
+public record SourcePackageResponse(
+    string PackageName,
+    string SourceUrl,
+    SourceType SourceType,
+    string? SourceBranch,
+    SourceStatus Status,
+    string? ErrorMessage,
+    long? FileSize,
+    string? HashSha256,
+    DateTime? LastFetchedAt,
+    string? ResolvedRevision = null,
+    string? ResolvedUrl = null);
 
 public record SourceListResponse(List<SourcePackageResponse> Packages, int TotalCount);
 
-public record SourceFetchResponse(Guid JobId, string PackageName, SourceStatus Status, string? ErrorMessage);
+public record SourceFetchResponse(
+    Guid JobId,
+    string PackageName,
+    SourceStatus Status,
+    string? ErrorMessage,
+    string? ResolvedRevision = null,
+    string? ResolvedUrl = null);
 
 // Pre-signed download URL for a fetched source archive. Replaces the ad-hoc
 // `new { url, packageName, fileSize, hashSha256 }` shape that SourceController

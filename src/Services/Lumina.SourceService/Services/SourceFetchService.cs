@@ -7,8 +7,8 @@ using Microsoft.EntityFrameworkCore;
 namespace Lumina.SourceService.Services;
 
 /// <summary>
-/// Handles multi-protocol source fetching: git, tar, http, ftp, rsync, svn, hg, local.
-/// Downloads sources to a staging directory, then uploads to MinIO for persistence.
+/// Fetches pinned HTTPS Git/archive sources (or explicitly enabled confined
+/// local sources), then stores a verified content-addressed artifact.
 /// </summary>
 public class SourceFetchService
 {
@@ -16,24 +16,35 @@ public class SourceFetchService
     private readonly SourceStorageService _storage;
     private readonly ILogger<SourceFetchService> _logger;
     private readonly SourceUriValidator _uriValidator;
+    private readonly SourceIntegrityService _integrity;
     private readonly string _tempDir;
     private readonly string _sourcesDir;
     private readonly int _timeoutMinutes;
+    private readonly long _maxStagingBytes;
+    private readonly int _maxStagingEntries;
 
     public SourceFetchService(
         SourceDbContext db,
         SourceStorageService storage,
         ILogger<SourceFetchService> logger,
         IConfiguration config,
-        SourceUriValidator uriValidator)
+        SourceUriValidator uriValidator,
+        SourceIntegrityService integrity)
     {
         _db = db;
         _storage = storage;
         _logger = logger;
         _uriValidator = uriValidator;
+        _integrity = integrity;
         _tempDir = config["Source:TempDir"] ?? "/tmp/source-fetch";
         _sourcesDir = config["Source:SourcesDir"] ?? "/opt/lumina/sources";
         _timeoutMinutes = int.TryParse(config["Source:FetchTimeoutMinutes"] ?? "30", out var t) ? t : 30;
+        _maxStagingBytes = Math.Clamp(
+            config.GetValue("Source:MaxStagingBytes", 4_294_967_296L),
+            1_048_576L, 42_949_672_960L);
+        _maxStagingEntries = Math.Clamp(
+            config.GetValue("Source:MaxFileCount", 100_000) * 2,
+            2, 2_000_000);
     }
 
     /// <summary>Executes a job already leased by <see cref="SourceFetchWorker"/>.</summary>
@@ -73,11 +84,13 @@ public class SourceFetchService
                         job.PackageName, attempt + 1, job.MaxRetries + 1);
 
                     var result = await FetchByProtocolAsync(
-                        job.SourceUrl, job.SourceType, job.SourceBranch, stagingDir, cancellationToken);
+                        job.SourceUrl, job.SourceType, job.SourceBranch, job.ExpectedSha256,
+                        stagingDir, cancellationToken);
 
                     string archivePath;
                     if (result.IsDirectory)
                     {
+                        _integrity.ValidateTree(result.Path);
                         archivePath = await CreateTarballAsync(
                             result.Path, stagingDir, job.PackageName, cancellationToken);
                     }
@@ -90,12 +103,14 @@ public class SourceFetchService
                     var fileSize = new FileInfo(archivePath).Length;
                     cancellationToken.ThrowIfCancellationRequested();
                     var storagePath = await _storage.UploadAsync(
-                        job.PackageName, archivePath, cancellationToken);
+                        job.PackageName, archivePath, hash, cancellationToken);
 
                     job.Status = SourceStatus.Ready;
                     job.StoragePath = storagePath;
                     job.FileSize = fileSize;
                     job.HashSha256 = hash;
+                    job.ResolvedRevision = result.ResolvedRevision;
+                    job.ResolvedUrl = result.ResolvedUrl;
                     job.FetchCompletedAt = DateTime.UtcNow;
                     job.UpdatedAt = DateTime.UtcNow;
                     job.LeaseOwner = null;
@@ -177,7 +192,11 @@ public class SourceFetchService
     }
 
     private async Task<FetchResult> FetchByProtocolAsync(
-        string sourceUrl, SourceType sourceType, string? branch, string stagingDir,
+        string sourceUrl,
+        SourceType sourceType,
+        string? branch,
+        string? expectedSha256,
+        string stagingDir,
         CancellationToken cancellationToken)
     {
         // SECURITY: single choke point for SSRF / arbitrary-file-read defense.
@@ -191,12 +210,16 @@ public class SourceFetchService
 
         return sourceType switch
         {
-            SourceType.Git => await FetchGitAsync(safeUrl, safeBranch ?? "main", stagingDir, cancellationToken),
-            SourceType.Tar or SourceType.Http or SourceType.Ftp
-                => await FetchHttpAsync(safeUrl, stagingDir, cancellationToken),
-            SourceType.Rsync => await FetchRsyncAsync(safeUrl, stagingDir, cancellationToken),
-            SourceType.Svn => await FetchSvnAsync(safeUrl, safeBranch, stagingDir, cancellationToken),
-            SourceType.Hg => await FetchHgAsync(safeUrl, safeBranch, stagingDir, cancellationToken),
+            SourceType.Git => await FetchGitAsync(validated, safeBranch ?? "main", stagingDir, cancellationToken),
+            SourceType.Tar => await FetchHttpAsync(
+                safeUrl, expectedSha256, true, stagingDir, cancellationToken),
+            SourceType.Http => await FetchHttpAsync(
+                safeUrl, expectedSha256, false, stagingDir, cancellationToken),
+            SourceType.Ftp => throw new SourceValidationException(
+                "FTP sources are disabled because they cannot provide a pinned, authenticated transport."),
+            SourceType.Rsync or SourceType.Svn or SourceType.Hg =>
+                throw new SourceValidationException(
+                    $"{sourceType} sources are disabled because they cannot provide a pinned, authenticated transport."),
             SourceType.Local => await FetchLocalAsync(safeUrl, stagingDir, cancellationToken),
             _ => throw new NotSupportedException($"Source type {sourceType} is not supported")
         };
@@ -205,142 +228,109 @@ public class SourceFetchService
     // ─── Protocol implementations ───
 
     private async Task<FetchResult> FetchGitAsync(
-        string url, string branch, string stagingDir, CancellationToken cancellationToken)
+        ValidatedSource source,
+        string branch,
+        string stagingDir,
+        CancellationToken cancellationToken)
     {
         var cloneDir = Path.Combine(stagingDir, "repo");
+        var uri = new Uri(source.Url);
+        if (uri.Scheme is not "https")
+            throw new SourceValidationException("Git sources must use HTTPS.");
+        if (!string.IsNullOrEmpty(uri.Query))
+            throw new SourceValidationException("Git source URLs must not contain query credentials.");
 
-        _logger.LogInformation("git clone {Url} (branch: {Branch})", url, branch);
+        _logger.LogInformation(
+            "Cloning Git source {Url} (reference: {Reference})",
+            SourceIntegrityService.RedactUri(uri), branch);
 
         // SECURITY: build argv via ArgumentList — never interpolate url/branch
         // into a shell string. The trailing "--" prevents url/branch from being
         // parsed as options if they start with "-".
+        var gitArguments = BuildPinnedGitArguments(source);
+        gitArguments.AddRange(
+            ["clone", "--depth", "50", "--branch", branch, "--", source.Url, cloneDir]);
         var result = await RunCommandAsync("git",
-            new[] { "clone", "--depth", "50", "--branch", branch, "--", url, cloneDir },
+            gitArguments,
             stagingDir, _timeoutMinutes, cancellationToken);
 
         if (result.ExitCode != 0)
-            throw new Exception($"git clone failed (exit {result.ExitCode}): {result.Error}");
+            throw new Exception($"Git clone failed with exit code {result.ExitCode}.");
 
-        // Initialize submodules if present
         if (File.Exists(Path.Combine(cloneDir, ".gitmodules")))
+            throw new SourceValidationException(
+                "Git submodules are not permitted without an explicit pinned source manifest.");
+
+        var revision = await RunCommandAsync(
+            "git", ["rev-parse", "HEAD"], cloneDir, _timeoutMinutes, cancellationToken);
+        var commit = revision.Output.Trim();
+        if (revision.ExitCode != 0 ||
+            commit.Length is not (40 or 64) ||
+            commit.Any(character => !Uri.IsHexDigit(character)))
         {
-            await RunCommandAsync("git",
-                new[] { "submodule", "update", "--init", "--recursive" },
-                cloneDir, _timeoutMinutes, cancellationToken);
+            throw new InvalidDataException("Git did not return a valid resolved commit.");
         }
 
-        return new FetchResult(cloneDir, true);
+        Directory.Delete(Path.Combine(cloneDir, ".git"), recursive: true);
+        return new FetchResult(
+            cloneDir, true, commit.ToLowerInvariant(),
+            SourceIntegrityService.RedactUri(uri));
     }
 
     private async Task<FetchResult> FetchHttpAsync(
-        string url, string stagingDir, CancellationToken cancellationToken)
+        string url,
+        string? expectedSha256,
+        bool extractArchive,
+        string stagingDir,
+        CancellationToken cancellationToken)
     {
         var fileName = GetFileNameFromUrl(url);
         var targetPath = Path.Combine(stagingDir, fileName);
 
-        _logger.LogInformation("Downloading {Url} → {File}", url, fileName);
-
-        // SECURITY: url/targetPath are passed as discrete argv tokens; the URL
-        // has already passed SourceUriValidator (scheme/host/private-range).
-        // -L (follow redirects) is kept because legitimate upstreams (GitHub
-        // release assets, CDNs) redirect; the residual SSRF surface from a
-        // redirect to a private range is bounded by configuring a host
-        // allow-list (Source:AllowedHosts) for the initial resolution.
-        var result = await RunCommandAsync("curl",
-            new[] { "-L", "-f", "-o", targetPath, "--", url },
-            stagingDir, _timeoutMinutes, cancellationToken);
-
-        if (result.ExitCode != 0)
-        {
-            _logger.LogInformation("curl failed, trying wget...");
-            result = await RunCommandAsync("wget",
-                new[] { "-O", targetPath, "--", url },
-                stagingDir, _timeoutMinutes, cancellationToken);
-
-            if (result.ExitCode != 0)
-                throw new Exception($"Download failed: curl/wget both failed for {url}");
-        }
+        _logger.LogInformation(
+            "Downloading source {Url} to {File}",
+            SourceIntegrityService.RedactUri(new Uri(url)), fileName);
+        var resolvedUrl = await _integrity.DownloadHttpAsync(
+            url, targetPath, cancellationToken);
 
         if (!File.Exists(targetPath))
             throw new Exception($"Downloaded file not found: {targetPath}");
 
-        // Check if it's a tarball that needs extraction
-        if (IsTarball(fileName))
+        var downloadedHash = await ComputeSha256Async(targetPath, cancellationToken);
+        if (expectedSha256 is not null &&
+            !CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(downloadedHash),
+                Convert.FromHexString(expectedSha256)))
+        {
+            throw new SourceValidationException(
+                "Downloaded source does not match the expected SHA-256.");
+        }
+
+        if (extractArchive)
         {
             var extractDir = Path.Combine(stagingDir, "extracted");
             Directory.CreateDirectory(extractDir);
-            await ExtractTarballAsync(targetPath, extractDir, cancellationToken);
-            return new FetchResult(extractDir, true);
+            await _integrity.ExtractTarAsync(targetPath, extractDir, cancellationToken);
+            return new FetchResult(extractDir, true, null, resolvedUrl);
         }
 
-        return new FetchResult(targetPath, false);
+        return new FetchResult(targetPath, false, null, resolvedUrl);
     }
 
-    private async Task<FetchResult> FetchRsyncAsync(
-        string url, string stagingDir, CancellationToken cancellationToken)
+    private static List<string> BuildPinnedGitArguments(ValidatedSource source)
     {
-        _logger.LogInformation("rsync {Url}", url);
-
-        var result = await RunCommandAsync("rsync",
-            new[] { "-az", $"--timeout={_timeoutMinutes * 60}", "--", url, $"{stagingDir}/" },
-            stagingDir, _timeoutMinutes, cancellationToken);
-
-        if (result.ExitCode != 0)
-            throw new Exception($"rsync failed (exit {result.ExitCode}): {result.Error}");
-
-        return new FetchResult(stagingDir, true);
-    }
-
-    private async Task<FetchResult> FetchSvnAsync(
-        string url, string? branch, string stagingDir, CancellationToken cancellationToken)
-    {
-        var checkoutDir = Path.Combine(stagingDir, "checkout");
-
-        // If branch specified, append to URL. branch is already validated to
-        // contain no shell metacharacters and is composed into the URL before
-        // the validator-style argv passing — the resulting svnUrl is a single
-        // argv token so no injection is possible.
-        var svnUrl = url;
-        if (!string.IsNullOrWhiteSpace(branch))
-        {
-            svnUrl = $"{url}/branches/{branch}";
-        }
-
-        _logger.LogInformation("svn checkout {Url}", svnUrl);
-
-        var result = await RunCommandAsync("svn",
-            new[] { "checkout", "--non-interactive", svnUrl, checkoutDir },
-            stagingDir, _timeoutMinutes, cancellationToken);
-
-        if (result.ExitCode != 0)
-            throw new Exception($"svn checkout failed (exit {result.ExitCode}): {result.Error}");
-
-        return new FetchResult(checkoutDir, true);
-    }
-
-    private async Task<FetchResult> FetchHgAsync(
-        string url, string? branch, string stagingDir, CancellationToken cancellationToken)
-    {
-        var cloneDir = Path.Combine(stagingDir, "repo");
-
-        _logger.LogInformation("hg clone {Url}", url);
-
-        // SECURITY: argv tokens; branch is a discrete "-b" + value pair.
-        var args = new List<string> { "clone" };
-        if (!string.IsNullOrWhiteSpace(branch))
-        {
-            args.Add("-b");
-            args.Add(branch);
-        }
-        args.Add(url);
-        args.Add(cloneDir);
-
-        var result = await RunCommandAsync("hg", args, stagingDir, _timeoutMinutes, cancellationToken);
-
-        if (result.ExitCode != 0)
-            throw new Exception($"hg clone failed (exit {result.ExitCode}): {result.Error}");
-
-        return new FetchResult(cloneDir, true);
+        var uri = new Uri(source.Url);
+        var port = uri.IsDefaultPort ? 443 : uri.Port;
+        var addresses = string.Join(
+            ',', source.Addresses.Select(address =>
+                address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
+                    ? $"[{address}]"
+                    : address.ToString()));
+        return
+        [
+            "-c", "http.followRedirects=false",
+            "-c", $"http.curloptResolve={uri.Host}:{port}:{addresses}"
+        ];
     }
 
     private async Task<FetchResult> FetchLocalAsync(
@@ -353,11 +343,13 @@ public class SourceFetchService
 
         if (File.Exists(path))
         {
+            _integrity.ValidateFile(path);
             var destPath = Path.Combine(stagingDir, Path.GetFileName(path));
             File.Copy(path, destPath, true);
             return new FetchResult(destPath, false);
         }
 
+        _integrity.ValidateTree(path);
         // Copy directory
         foreach (var dir in Directory.GetDirectories(path, "*", SearchOption.AllDirectories))
         {
@@ -417,26 +409,6 @@ public class SourceFetchService
         return tarballPath;
     }
 
-    private async Task ExtractTarballAsync(
-        string tarballPath, string targetDir, CancellationToken cancellationToken)
-    {
-        var result = await RunCommandAsync("tar",
-            new[] { "-xf", tarballPath, "-C", targetDir },
-            Path.GetDirectoryName(tarballPath)!, _timeoutMinutes, cancellationToken);
-
-        if (result.ExitCode != 0)
-            throw new Exception($"Failed to extract tarball: {result.Error}");
-    }
-
-    private static bool IsTarball(string fileName)
-    {
-        var lower = fileName.ToLowerInvariant();
-        return lower.EndsWith(".tar.gz") || lower.EndsWith(".tgz") ||
-               lower.EndsWith(".tar.bz2") || lower.EndsWith(".tbz2") ||
-               lower.EndsWith(".tar.xz") || lower.EndsWith(".txz") ||
-               lower.EndsWith(".tar");
-    }
-
     private static string GetFileNameFromUrl(string url)
     {
         var uri = new Uri(url);
@@ -463,6 +435,8 @@ public class SourceFetchService
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(timeoutMinutes));
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, timeoutCts.Token);
+        using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(
+            linkedCts.Token);
 
         // SECURITY: Use ArgumentList (one token per element) instead of a single
         // Arguments string. With UseShellExecute=false there is no shell, but
@@ -488,7 +462,22 @@ public class SourceFetchService
         var stderrTask = process.StandardError.ReadToEndAsync();
         try
         {
-            await process.WaitForExitAsync(linkedCts.Token);
+            var waitTask = process.WaitForExitAsync(linkedCts.Token);
+            var monitorTask = MonitorStagingLimitsAsync(workingDir, monitorCts.Token);
+            var completed = await Task.WhenAny(waitTask, monitorTask);
+            if (completed == monitorTask)
+            {
+                var violation = await monitorTask;
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync(CancellationToken.None);
+                }
+                throw new SourceValidationException(violation);
+            }
+
+            await waitTask;
+            monitorCts.Cancel();
             return new CommandResult(process.ExitCode, await stdoutTask, await stderrTask);
         }
         catch (OperationCanceledException)
@@ -504,6 +493,52 @@ public class SourceFetchService
                 throw;
             throw new TimeoutException(
                 $"{command} exceeded the {timeoutMinutes}-minute source fetch timeout.");
+        }
+        finally
+        {
+            monitorCts.Cancel();
+        }
+    }
+
+    private async Task<string> MonitorStagingLimitsAsync(
+        string rootDirectory,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var pending = new Stack<DirectoryInfo>();
+                pending.Push(new DirectoryInfo(rootDirectory));
+                long totalBytes = 0;
+                var entries = 0;
+
+                while (pending.TryPop(out var directory))
+                {
+                    foreach (var entry in directory.EnumerateFileSystemInfos())
+                    {
+                        entries++;
+                        if (entries > _maxStagingEntries)
+                            return "Source staging exceeded the maximum file count.";
+                        if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
+                            continue;
+                        if (entry is DirectoryInfo child)
+                            pending.Push(child);
+                        else
+                            totalBytes = checked(totalBytes + ((FileInfo)entry).Length);
+                        if (totalBytes > _maxStagingBytes)
+                            return "Source staging exceeded the maximum byte limit.";
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // The process may be renaming files while they are enumerated.
+                // Retry on the next sampling interval.
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
         }
     }
 
@@ -554,12 +589,13 @@ public class SourceFetchService
 
         // 1. Fetch sources
         var result = await FetchByProtocolAsync(
-            sourceUrl, sourceType, branch, stagingDir, CancellationToken.None);
+            sourceUrl, sourceType, branch, null, stagingDir, CancellationToken.None);
 
         // 2. Determine the source directory
         string sourceContentDir;
         if (result.IsDirectory)
         {
+            _integrity.ValidateTree(result.Path);
             sourceContentDir = result.Path;
         }
         else
@@ -615,6 +651,10 @@ public class SourceFetchService
     }
 
     public record SourcePrepareResult(string SourceDir, string TarballPath, string SpecPath);
-    private record FetchResult(string Path, bool IsDirectory);
+    private record FetchResult(
+        string Path,
+        bool IsDirectory,
+        string? ResolvedRevision = null,
+        string? ResolvedUrl = null);
     private record CommandResult(int ExitCode, string Output, string Error);
 }

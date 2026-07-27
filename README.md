@@ -38,7 +38,7 @@ files** safely.
 
 Lumina CI automates the RPM release pipeline end to end:
 
-1. **Source** — pull from a Git repo, a tarball URL, or `rsync`.
+1. **Source** — resolve a pinned HTTPS Git repository or tarball URL.
 2. **Build** — run `dnf builddep` + `rpmbuild` (or `dotnet build`) inside an
    ephemeral, isolated container.
 3. **Sign** — attach a PGP signature (security-service, GPG).
@@ -89,7 +89,7 @@ primary UI; a REST API is available for automation and integrations.
    └─────────────────────────┘
 
    Shared infrastructure (lumina-network): postgres · redis · rabbitmq · minio
-   source-service pulls sources from git/tar/rsync into /opt/lumina/sources
+   source-service pulls HTTPS Git/tar sources into /opt/lumina/sources
 ```
 
 **Services**
@@ -102,7 +102,7 @@ primary UI; a REST API is available for automation and integrations.
 | `security-service` | 5002 | PGP key management, signing, hashing |
 | `scanner-service` | 5003 | Trivy CVE scanning |
 | `repository-service` | 5004 | RPM repository management & publishing |
-| `source-service` | 5006 | Source fetching (git/tar/rsync), `conf.ini`-driven |
+| `source-service` | 5006 | Pinned HTTPS source fetching (Git/tar), `conf.ini`-driven |
 | `webapp` | 5005 | Blazor WASM UI |
 | `docker-socket-proxy` | 2375 (internal) | Least-privilege Docker API for build-service |
 | `trivy` | 8080 (internal) | CVE database & scan server |
@@ -118,13 +118,13 @@ primary UI; a REST API is available for automation and integrations.
 
 - **Pipeline-driven builds** — name, describe, tag, and trigger builds; each
   pipeline optionally wires up Git integration and a webhook secret.
-- **Multiple source types** — Git, tarball, and `rsync`, declared in `conf.ini`
+- **Multiple source types** — HTTPS Git and tarball sources, declared in `conf.ini`
   or managed via the API/UI. Each fetch is a durable attempt processed by a
   bounded worker with leases, heartbeats, cancellation, and restart recovery.
 - **Isolated build containers** — every `rpmbuild`/`dotnet build` runs in a
   throwaway container on a dedicated network, with caps, limits, and a
   non-root user (see [Build security model](#build-security-model)).
-- **PGP signing** — generate/manage signing keys and attach detached signatures.
+- **PGP signing** — generate/manage signing keys and embed verified RPM signatures.
 - **CVE scanning** — Trivy integration with results stored per-artifact.
 - **Managed RPM repository** — verify and stage packages privately, then
   atomically publish each architecture’s RPM set and `createrepo_c` metadata
@@ -364,7 +364,7 @@ Target URL as above, secret = webhook secret, trigger = *Push events*.
 ### Sources (`conf.ini`)
 
 Source packages are declared in `conf.ini` at the repo root and surfaced in the
-**Sources** page. Each `[package]` block supports `git`, `tar`, and `rsync`
+**Sources** page. Each `[package]` block supports pinned HTTPS `git` and `tar`
 sources:
 
 ```ini
@@ -377,12 +377,16 @@ build_image="lumina-dotnet-build:latest"
 
 [package]
 name="testpkg"
-source="cdn.example.org/testpackage.tar.gz"
+source="https://cdn.example.org/testpackage.tar.gz"
 source_type="tar"
+source_sha256="<64-character expected SHA-256>"
 ```
 
 From the Sources page you can fetch, check status, download, or build any
-configured package; the running config can also be edited live via the API.
+configured package. `source_sha256` pins an archive when an upstream digest is
+available. Fetches record the final redirect URL or Git commit and store the
+result under a content-addressed object key. Git submodules and legacy
+unauthenticated transports are rejected at the trust boundary.
 
 ---
 

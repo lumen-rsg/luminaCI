@@ -22,14 +22,12 @@ RUN dotnet publish src/Services/Lumina.SourceService/Lumina.SourceService.csproj
 # Runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 
-# Install tools needed for source fetching (git, curl, wget, rsync, svn, hg)
+# Only Git and archive creation remain external; network downloads and archive
+# extraction run through the managed integrity boundary.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    curl \
-    wget \
-    rsync \
-    subversion \
-    mercurial \
+    tar \
+    gzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

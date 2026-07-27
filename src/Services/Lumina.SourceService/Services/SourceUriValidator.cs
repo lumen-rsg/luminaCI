@@ -21,10 +21,16 @@ public class SourceValidationException : Exception
 /// For host-based sources this is the canonical URI string; for local sources
 /// it is the path already confined to the trusted root.
 /// </summary>
-public record ValidatedSource(string Url, SourceType SourceType, string? Branch, string? LocalPath);
+public record ValidatedSource(
+    string Url,
+    SourceType SourceType,
+    string? Branch,
+    string? LocalPath,
+    IReadOnlyList<IPAddress> Addresses);
 
 /// <summary>
-/// Validates a source before it is handed to git/curl/rsync/svn/hg/file-copy.
+/// Validates a source before it is handed to pinned Git/HTTP retrieval or a
+/// confined local-file copy.
 /// This is the central SSRF and arbitrary-file-read defense for the source
 /// pipeline: <c>conf.ini</c> is user-writable via PUT/POST endpoints, so the
 /// raw <c>source</c>/<c>source_type</c> values can never be trusted as-is.
@@ -77,7 +83,11 @@ public class SourceUriValidator
     /// Validate a source. Throws <see cref="SourceValidationException"/> on any
     /// policy violation; otherwise returns the canonicalized value to use.
     /// </summary>
-    public async Task<ValidatedSource> ValidateAsync(string url, SourceType type, string? branch)
+    public async Task<ValidatedSource> ValidateAsync(
+        string url,
+        SourceType type,
+        string? branch,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(url))
             throw new SourceValidationException("Source URL/path is empty.");
@@ -104,17 +114,19 @@ public class SourceUriValidator
         AssertNoControlCharacters(url, "Source URL");
 
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            throw new SourceValidationException(
-                $"Source must be an absolute URI. Got: {url}");
+            throw new SourceValidationException("Source must be an absolute URI.");
 
         var scheme = uri.Scheme.ToLowerInvariant();
         if (!IsSchemeAllowed(type, scheme))
             throw new SourceValidationException(
                 $"Scheme '{scheme}' is not permitted for source type {type}.");
+        if (!string.IsNullOrEmpty(uri.UserInfo))
+            throw new SourceValidationException(
+                "Source URI must not contain embedded credentials.");
 
         var host = uri.Host;
         if (string.IsNullOrEmpty(host))
-            throw new SourceValidationException($"Source URI is missing a host: {url}");
+            throw new SourceValidationException("Source URI is missing a host.");
 
         // Host allow-list — exact, case-insensitive match.
         if (_allowedHosts.Count > 0 && !_allowedHosts.Contains(host.ToLowerInvariant()))
@@ -122,10 +134,11 @@ public class SourceUriValidator
                 $"Source host '{host}' is not in the allow-list.");
 
         // Resolve and block private/loopback/link-local ranges.
+        var addresses = await ResolveAddressesAsync(host, cancellationToken);
         if (_blockPrivateRanges)
-            await AssertHostPublicAsync(host, url);
+            AssertAddressesPublic(host, addresses);
 
-        return new ValidatedSource(uri.ToString(), type, safeBranch, null);
+        return new ValidatedSource(uri.ToString(), type, safeBranch, null, addresses);
     }
 
     private ValidatedSource ValidateLocal(string path)
@@ -133,40 +146,39 @@ public class SourceUriValidator
         if (!_allowLocalSources)
             throw new SourceValidationException(
                 "Local sources are disabled (Source:AllowLocalSources=false). " +
-                "Use a host-based source type (git/http/rsync/...) instead.");
+                "Use a pinned HTTPS Git or archive source instead.");
 
         // Confine to the trusted root so a client cannot read /etc, /app/.gnupg,
         // or any other host path by copy->tarball->upload->download.
         var confined = ProcessArgumentSanitizer.ResolveConfinedPath(path, _localSourcesRoot);
-        return new ValidatedSource(confined, SourceType.Local, null, confined);
+        return new ValidatedSource(confined, SourceType.Local, null, confined, []);
     }
 
     private static bool IsSchemeAllowed(SourceType type, string scheme) => type switch
     {
-        SourceType.Git => scheme is "http" or "https" or "git" or "ssh",
-        SourceType.Tar or SourceType.Http or SourceType.Ftp
-            => scheme is "http" or "https" or "ftp",
-        SourceType.Rsync => scheme is "rsync",
-        SourceType.Svn => scheme is "http" or "https" or "svn" or "svn+ssh",
-        SourceType.Hg => scheme is "http" or "https" or "ssh",
+        SourceType.Git => scheme is "https",
+        SourceType.Tar or SourceType.Http => scheme is "https",
         _ => false
     };
 
-    private async Task AssertHostPublicAsync(string host, string originalUrl)
+    private static async Task<IPAddress[]> ResolveAddressesAsync(
+        string host,
+        CancellationToken cancellationToken)
     {
         // Literal IP in the host: validate directly without DNS.
         if (IPAddress.TryParse(host, out var literal))
         {
-            if (IsBlockedAddress(literal))
-                throw new SourceValidationException(
-                    $"Source host '{host}' resolves to a private/loopback/link-local address.");
-            return;
+            return [literal];
         }
 
         IPAddress[] addresses;
         try
         {
-            addresses = await Dns.GetHostAddressesAsync(host);
+            addresses = await Dns.GetHostAddressesAsync(host, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -177,12 +189,17 @@ public class SourceUriValidator
         if (addresses.Length == 0)
             throw new SourceValidationException($"Source host '{host}' did not resolve.");
 
+        return addresses;
+    }
+
+    private static void AssertAddressesPublic(string host, IEnumerable<IPAddress> addresses)
+    {
         foreach (var addr in addresses)
         {
             if (IsBlockedAddress(addr))
                 throw new SourceValidationException(
                     $"Source host '{host}' resolves to a private/loopback/link-local " +
-                    $"address ({addr}). URL: {originalUrl}");
+                    $"address ({addr}).");
         }
     }
 

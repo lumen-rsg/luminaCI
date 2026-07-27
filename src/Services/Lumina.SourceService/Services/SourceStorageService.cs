@@ -6,7 +6,7 @@ namespace Lumina.SourceService.Services;
 /// <summary>
 /// Manages storage of fetched source archives in MinIO.
 /// Bucket: "lumina-sources"
-/// Path pattern: {packageName}/{filename}
+/// Content-addressed path pattern: {packageName}/{sha256}/{filename}
 /// </summary>
 public class SourceStorageService
 {
@@ -34,12 +34,13 @@ public class SourceStorageService
     public async Task<string> UploadAsync(
         string packageName,
         string filePath,
+        string sha256,
         CancellationToken cancellationToken = default)
     {
         await EnsureBucketAsync(cancellationToken);
 
         var fileName = Path.GetFileName(filePath);
-        var objectName = $"{packageName}/{fileName}";
+        var objectName = $"{packageName}/{sha256}/{fileName}";
 
         _logger.LogInformation("Uploading {File} to MinIO: {Object}", fileName, objectName);
 
@@ -58,96 +59,64 @@ public class SourceStorageService
     /// <summary>
     /// Download a source archive from MinIO to a local path. Returns the local file path.
     /// </summary>
-    public async Task<string> DownloadAsync(string packageName, string localDir)
+    public async Task<string> DownloadAsync(
+        string storagePath,
+        string localDir,
+        CancellationToken cancellationToken = default)
     {
-        await EnsureBucketAsync();
-
-        // Find the latest archive for this package
-        var listArgs = new ListObjectsArgs()
-            .WithBucket(BucketName)
-            .WithPrefix($"{packageName}/")
-            .WithRecursive(false);
-
-        string? latestObject = null;
-        DateTime? latestTime = null;
-
-        await foreach (var item in _minio.ListObjectsEnumAsync(listArgs))
-        {
-            if (latestTime == null || item.LastModifiedDateTime > latestTime)
-            {
-                latestObject = item.Key;
-                latestTime = item.LastModifiedDateTime;
-            }
-        }
-
-        if (latestObject == null)
-            throw new Exception($"No source archive found for package: {packageName}");
+        await EnsureBucketAsync(cancellationToken);
 
         Directory.CreateDirectory(localDir);
-        var localPath = Path.Combine(localDir, Path.GetFileName(latestObject));
+        var localPath = Path.Combine(localDir, Path.GetFileName(storagePath));
 
         var getArgs = new GetObjectArgs()
             .WithBucket(BucketName)
-            .WithObject(latestObject)
+            .WithObject(storagePath)
             .WithFile(localPath);
 
-        await _minio.GetObjectAsync(getArgs);
+        await _minio.GetObjectAsync(getArgs, cancellationToken);
 
-        _logger.LogInformation("Downloaded {Object} from MinIO to {Path}", latestObject, localPath);
+        _logger.LogInformation("Downloaded {Object} from MinIO to {Path}", storagePath, localPath);
         return localPath;
     }
 
     /// <summary>
     /// Get a presigned URL for downloading the source archive (valid for 1 hour).
     /// </summary>
-    public async Task<string?> GetDownloadUrlAsync(string packageName)
+    public async Task<string> GetDownloadUrlAsync(
+        string storagePath,
+        CancellationToken cancellationToken = default)
     {
-        await EnsureBucketAsync();
-
-        // Find the latest archive for this package
-        var listArgs = new ListObjectsArgs()
-            .WithBucket(BucketName)
-            .WithPrefix($"{packageName}/")
-            .WithRecursive(false);
-
-        string? latestObject = null;
-
-        await foreach (var item in _minio.ListObjectsEnumAsync(listArgs))
-        {
-            latestObject = item.Key; // Last item from listing
-        }
-
-        if (latestObject == null)
-            return null;
+        await EnsureBucketAsync(cancellationToken);
 
         var presignArgs = new PresignedGetObjectArgs()
             .WithBucket(BucketName)
-            .WithObject(latestObject)
+            .WithObject(storagePath)
             .WithExpiry(3600);
 
         return await _minio.PresignedGetObjectAsync(presignArgs);
     }
 
     /// <summary>
-    /// Check if a source archive exists for a package
+    /// Check whether the exact content-addressed source object exists.
     /// </summary>
-    public async Task<bool> ExistsAsync(string packageName)
+    public async Task<bool> ExistsAsync(
+        string storagePath,
+        CancellationToken cancellationToken = default)
     {
-        await EnsureBucketAsync();
+        await EnsureBucketAsync(cancellationToken);
 
         try
         {
-            var listArgs = new ListObjectsArgs()
+            var statArgs = new StatObjectArgs()
                 .WithBucket(BucketName)
-                .WithPrefix($"{packageName}/")
-                .WithRecursive(false);
-
-            await foreach (var _ in _minio.ListObjectsEnumAsync(listArgs))
-            {
-                return true;
-            }
-
-            return false;
+                .WithObject(storagePath);
+            await _minio.StatObjectAsync(statArgs, cancellationToken);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {

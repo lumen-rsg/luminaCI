@@ -63,6 +63,7 @@ public sealed class ConfigParserServiceTests : IDisposable
         Assert.Equal("https://example.com/repo.git", package.Source);
         Assert.Equal(SourceType.Git, package.SourceType);
         Assert.Equal("main", package.SourceBranch);
+        Assert.Null(package.ExpectedSha256);
         Assert.Equal("fedora:44", package.BuildImage);
         Assert.Equal("packaging/my-package.spec", package.SpecPath);
     }
@@ -83,8 +84,22 @@ public sealed class ConfigParserServiceTests : IDisposable
             configuration);
 
         var packages = service.ParsePackages();
-        Assert.Equal(6, packages.Count);
+        Assert.Equal(5, packages.Count);
         Assert.Contains(packages, package => package.SpecPath == "Test/test_package.spec");
+    }
+
+    [Fact]
+    public void ParsePackages_ParsesExpectedArchiveSha256()
+    {
+        var service = NewService($"""
+            [package]
+            name=archive
+            source=https://example.com/archive.tar.gz
+            source_type=tar
+            source_sha256={new string('a', 64)}
+            """, out _);
+
+        Assert.Equal(new string('a', 64), Assert.Single(service.ParsePackages()).ExpectedSha256);
     }
 
     [Fact]
@@ -216,6 +231,18 @@ public sealed class ConfigParserServiceTests : IDisposable
     [InlineData("""
         [package]
         name=pkg
+        source=rsync://example.com/pkg
+        source_type=rsync
+        """)]
+    [InlineData("""
+        [package]
+        name=pkg
+        source=ssh://example.com/pkg
+        source_type=hg
+        """)]
+    [InlineData("""
+        [package]
+        name=pkg
         source=https://user:secret@example.com/repo.git
         source_type=git
         """)]
@@ -231,6 +258,13 @@ public sealed class ConfigParserServiceTests : IDisposable
         name=../pkg
         source=https://example.com/repo.git
         source_type=git
+        """)]
+    [InlineData("""
+        [package]
+        name=pkg
+        source=https://example.com/repo.git
+        source_type=git
+        source_sha256=not-a-sha
         """)]
     [InlineData("""
         [package]
@@ -276,10 +310,6 @@ public sealed class ConfigParserServiceTests : IDisposable
     [InlineData("git", "https://example.com/repo.git", SourceType.Git)]
     [InlineData("tar.gz", "https://example.com/pkg.tar.gz", SourceType.Tar)]
     [InlineData("https", "https://example.com/pkg.rpm", SourceType.Http)]
-    [InlineData("ftp", "ftp://example.com/pkg.tar.gz", SourceType.Ftp)]
-    [InlineData("rsync", "rsync://example.com/pkg", SourceType.Rsync)]
-    [InlineData("subversion", "svn+ssh://example.com/pkg", SourceType.Svn)]
-    [InlineData("mercurial", "ssh://example.com/pkg", SourceType.Hg)]
     [InlineData("local", "fixtures/pkg", SourceType.Local)]
     public void ParsePackages_MapsSupportedSourceTypes(
         string sourceType,

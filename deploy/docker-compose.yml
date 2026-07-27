@@ -424,6 +424,12 @@ services:
       - Source__ConfigPath=/app/conf.ini
       - Source__MaxRetries=3
       - Source__FetchTimeoutMinutes=30
+      - Source__MaxDownloadBytes=${SOURCE_MAX_DOWNLOAD_BYTES:-1073741824}
+      - Source__MaxExpandedBytes=${SOURCE_MAX_EXPANDED_BYTES:-2147483648}
+      - Source__MaxStagingBytes=${SOURCE_MAX_STAGING_BYTES:-4294967296}
+      - Source__MaxFileCount=${SOURCE_MAX_FILE_COUNT:-100000}
+      - Source__MaxCompressionRatio=${SOURCE_MAX_COMPRESSION_RATIO:-100}
+      - Source__MaxRedirects=${SOURCE_MAX_REDIRECTS:-5}
       - Source__WorkerConcurrency=${SOURCE_WORKER_CONCURRENCY:-2}
       - Source__WorkerPollSeconds=${SOURCE_WORKER_POLL_SECONDS:-2}
       - Source__LeaseSeconds=${SOURCE_LEASE_SECONDS:-60}

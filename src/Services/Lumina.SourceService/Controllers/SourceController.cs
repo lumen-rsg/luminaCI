@@ -72,7 +72,9 @@ public class SourceController : ControllerBase
                 job?.ErrorMessage,
                 job?.FileSize,
                 job?.HashSha256,
-                job?.FetchCompletedAt
+                job?.FetchCompletedAt,
+                job?.ResolvedRevision,
+                job?.ResolvedUrl
             );
         }).ToList();
 
@@ -105,7 +107,9 @@ public class SourceController : ControllerBase
                 job?.ErrorMessage,
                 job?.FileSize,
                 job?.HashSha256,
-                job?.FetchCompletedAt
+                job?.FetchCompletedAt,
+                job?.ResolvedRevision,
+                job?.ResolvedUrl
             ),
             null,
             null));
@@ -133,6 +137,7 @@ public class SourceController : ControllerBase
                 pkg.Source,
                 pkg.SourceType,
                 pkg.SourceBranch,
+                pkg.ExpectedSha256,
                 request?.MaxRetries ?? 3);
 
             return Accepted(new ApiResponse<SourceFetchResponse>(
@@ -191,7 +196,9 @@ public class SourceController : ControllerBase
 
         return Ok(new ApiResponse<SourceFetchResponse>(
             true,
-            new SourceFetchResponse(job.Id, job.PackageName, job.Status, job.ErrorMessage),
+            new SourceFetchResponse(
+                job.Id, job.PackageName, job.Status, job.ErrorMessage,
+                job.ResolvedRevision, job.ResolvedUrl),
             null,
             null));
     }
@@ -247,9 +254,10 @@ public class SourceController : ControllerBase
 
         try
         {
-            var url = await _storageService.GetDownloadUrlAsync(name);
-            if (url == null)
+            if (string.IsNullOrWhiteSpace(job.StoragePath) ||
+                !await _storageService.ExistsAsync(job.StoragePath))
                 return NotFound(new ApiResponse<SourceDownloadResponse>(false, null, "Source archive not found in storage", null));
+            var url = await _storageService.GetDownloadUrlAsync(job.StoragePath);
 
             return Ok(new ApiResponse<SourceDownloadResponse>(
                 true,

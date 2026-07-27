@@ -17,14 +17,16 @@ public sealed class SourceFetchQueueTests
         var queue = CreateQueue(db);
 
         var first = await queue.EnqueueAsync(
-            "demo", "https://example.com/demo.git", SourceType.Git, "main");
+            "demo", "https://example.com/demo.tar.gz", SourceType.Tar,
+            expectedSha256: new string('a', 64));
         var second = await queue.EnqueueAsync(
-            "demo", "https://example.com/demo.git", SourceType.Git, "main");
+            "demo", "https://example.com/demo.tar.gz", SourceType.Tar);
 
         Assert.NotEqual(first.Id, second.Id);
         Assert.Equal(SourceStatus.Pending, first.Status);
         Assert.Equal(SourceStatus.Pending, second.Status);
         Assert.Equal(3, first.MaxRetries);
+        Assert.Equal(new string('a', 64), first.ExpectedSha256);
         Assert.Equal(2, await db.SourceJobs.CountAsync(j => j.PackageName == "demo"));
     }
 

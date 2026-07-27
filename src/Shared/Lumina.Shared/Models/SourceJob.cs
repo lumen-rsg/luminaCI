@@ -9,6 +9,9 @@ public class SourceJob
     public string SourceUrl { get; set; } = string.Empty;
     public SourceType SourceType { get; set; }
     public string? SourceBranch { get; set; }
+    public string? ExpectedSha256 { get; set; }
+    public string? ResolvedRevision { get; set; }
+    public string? ResolvedUrl { get; set; }
     public SourceStatus Status { get; set; } = SourceStatus.Pending;
     public string? StoragePath { get; set; }
     public string? ErrorMessage { get; set; }

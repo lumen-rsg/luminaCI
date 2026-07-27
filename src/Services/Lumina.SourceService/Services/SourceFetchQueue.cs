@@ -27,9 +27,23 @@ public sealed class SourceFetchQueue
         string sourceUrl,
         SourceType sourceType,
         string? branch = null,
+        string? expectedSha256 = null,
         int? maxRetries = null,
         CancellationToken cancellationToken = default)
     {
+        if (expectedSha256 is not null)
+        {
+            if (sourceType is not (SourceType.Tar or SourceType.Http) ||
+                expectedSha256.Length != 64 ||
+                expectedSha256.Any(character => !Uri.IsHexDigit(character)))
+            {
+                throw new ArgumentException(
+                    "Expected SHA-256 is only valid for archive sources and must contain 64 hexadecimal characters.",
+                    nameof(expectedSha256));
+            }
+            expectedSha256 = expectedSha256.ToLowerInvariant();
+        }
+
         var effectiveRetries = Math.Clamp(
             maxRetries ?? _defaultMaxRetries, 0, 10);
         var now = DateTime.UtcNow;
@@ -40,6 +54,7 @@ public sealed class SourceFetchQueue
             SourceUrl = sourceUrl,
             SourceType = sourceType,
             SourceBranch = branch,
+            ExpectedSha256 = expectedSha256,
             Status = SourceStatus.Pending,
             MaxRetries = effectiveRetries,
             CreatedAt = now,
@@ -64,6 +79,7 @@ public sealed class SourceFetchQueue
                 package.Source,
                 package.SourceType,
                 package.SourceBranch,
+                package.ExpectedSha256,
                 maxRetries,
                 cancellationToken));
         }

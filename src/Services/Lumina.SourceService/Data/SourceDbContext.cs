@@ -19,6 +19,9 @@ public class SourceDbContext : DbContext
             entity.Property(e => e.PackageName).IsRequired().HasMaxLength(256);
             entity.Property(e => e.SourceUrl).IsRequired().HasMaxLength(2048);
             entity.Property(e => e.SourceBranch).HasMaxLength(256);
+            entity.Property(e => e.ExpectedSha256).HasMaxLength(64);
+            entity.Property(e => e.ResolvedRevision).HasMaxLength(128);
+            entity.Property(e => e.ResolvedUrl).HasMaxLength(2048);
             entity.Property(e => e.StoragePath).HasMaxLength(1024);
             entity.Property(e => e.ErrorMessage).HasMaxLength(4096);
             entity.Property(e => e.LeaseOwner).HasMaxLength(128).IsConcurrencyToken();
