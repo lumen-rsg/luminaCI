@@ -3,6 +3,7 @@ using Lumina.ScannerService.Data;
 using Lumina.ScannerService.Services;
 using Lumina.Shared.Extensions;
 using Lumina.Web.Shared;
+using Lumina.Web.Shared.Health;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -40,6 +41,8 @@ try
     // MassTransit with RabbitMQ
     builder.Services.AddMassTransit(x =>
     {
+        x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
+
         x.AddConsumer<CveScanRequestedConsumer>();
 
         x.UsingRabbitMq((ctx, cfg) =>
@@ -64,7 +67,9 @@ try
     builder.Services.AddLuminaAuthorization();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
-    builder.Services.AddHealthChecks();
+    builder.Services.AddLuminaCoreReadiness<ScannerDbContext>()
+        .AddConfiguredHttpReadiness("trivy", "Trivy:ServerUrl", "http://trivy:8080", "/healthz")
+        .AddWritableDirectoriesReadiness("/app/builds");
 
     var app = builder.Build();
 
@@ -87,7 +92,7 @@ try
     app.UseAuthorization();
 
     app.MapControllers();
-    app.MapHealthChecks("/health");
+    app.MapLuminaHealthChecks();
     app.Run();
 }
 catch (Exception ex)

@@ -20,7 +20,7 @@ WORKDIR /app
 EXPOSE 5002
 
 # GnuPG owns the private key; rpm/rpmsign embeds and verifies package signatures.
-RUN apt-get update && apt-get install -y gnupg2 pinentry-tty rpm && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl gnupg2 pinentry-tty rpm && rm -rf /var/lib/apt/lists/*
 
 COPY --from=publish /app/publish .
 RUN mkdir -p /app/keys /app/.gnupg && chmod 700 /app/.gnupg

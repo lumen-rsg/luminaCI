@@ -7,6 +7,7 @@ using Lumina.ApiGateway.Services;
 using Lumina.Shared.Models;
 using Lumina.Web.Shared;
 using Lumina.Web.Shared.Authorization;
+using Lumina.Web.Shared.Health;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -171,7 +172,12 @@ try
         };
     });
 
-    builder.Services.AddHealthChecks();
+    builder.Services.AddLuminaCoreReadiness<AuthDbContext>()
+        .AddConfiguredHttpReadiness("build-service", "Services:BuildService", "http://build-service:5001", "/health/ready")
+        .AddConfiguredHttpReadiness("security-service", "Services:SecurityService", "http://security-service:5002", "/health/ready")
+        .AddConfiguredHttpReadiness("scanner-service", "Services:ScannerService", "http://scanner-service:5003", "/health/ready")
+        .AddConfiguredHttpReadiness("repository-service", "Services:RepositoryService", "http://repository-service:5004", "/health/ready")
+        .AddConfiguredHttpReadiness("source-service", "Services:SourceService", "http://source-service:5006", "/health/ready");
 
     var app = builder.Build();
 
@@ -257,7 +263,7 @@ try
     });
 
     app.MapReverseProxy();
-    app.MapHealthChecks("/health");
+    app.MapLuminaHealthChecks();
 
     // Login endpoint — verifies against the DB credential store and issues:
     //   • a short-lived access JWT inside the lumina_access HttpOnly cookie, and

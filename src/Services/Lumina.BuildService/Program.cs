@@ -1,10 +1,12 @@
 using Lumina.BuildService.Consumers;
 using Lumina.BuildService.Data;
+using Lumina.BuildService.Health;
 using Lumina.BuildService.Services;
 using Lumina.Shared.Events;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Security;
 using Lumina.Web.Shared;
+using Lumina.Web.Shared.Health;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Minio;
@@ -63,6 +65,8 @@ try
     // MassTransit with RabbitMQ
     builder.Services.AddMassTransit(x =>
     {
+        x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
+
         x.AddConsumer<CveScanCompletedConsumer>();
         x.AddConsumer<PackageSignedConsumer>();
         x.AddConsumer<PackageSigningFaultConsumer>();
@@ -108,7 +112,14 @@ try
         options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(30);
     });
     builder.Services.AddSwaggerGen();
-    builder.Services.AddHealthChecks();
+    builder.Services.AddLuminaCoreReadiness<BuildDbContext>()
+        .AddCheck<DockerReadinessHealthCheck>("docker-and-runners", tags: ["ready"], timeout: TimeSpan.FromSeconds(10))
+        .AddConfiguredHttpReadiness("minio", "MinIO:Endpoint", "minio:9000", "/minio/health/ready")
+        .AddWritableDirectoriesReadiness(
+            "/app/builds",
+            "/opt/lumina/builds",
+            "/opt/lumina/sources",
+            "/opt/lumina/extra-sources/pipelines");
 
     var app = builder.Build();
 
@@ -157,7 +168,7 @@ try
     app.UseAuthorization();
 
     app.MapControllers();
-    app.MapHealthChecks("/health");
+    app.MapLuminaHealthChecks();
     app.Run();
 }
 catch (Exception ex)

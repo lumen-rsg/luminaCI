@@ -21,7 +21,7 @@ EXPOSE 5001
 
 # Install Docker CLI for container management and rpm for artifact validation.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends docker.io rpm \
+    && apt-get install -y --no-install-recommends curl docker.io rpm \
     && rm -rf /var/lib/apt/lists/*
 
 USER app

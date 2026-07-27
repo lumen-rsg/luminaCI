@@ -1,8 +1,10 @@
 using Lumina.SecurityService.Consumers;
 using Lumina.SecurityService.Data;
+using Lumina.SecurityService.Health;
 using Lumina.SecurityService.Services;
 using Lumina.Shared.Extensions;
 using Lumina.Web.Shared;
+using Lumina.Web.Shared.Health;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -38,6 +40,8 @@ try
     // MassTransit with RabbitMQ
     builder.Services.AddMassTransit(x =>
     {
+        x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
+
         x.AddConsumer<HashStoreRequestedConsumer>();
         x.AddConsumer<PackageSigningRequestedConsumer>();
         x.AddConsumer<GetActiveSigningKeyConsumer>();
@@ -70,7 +74,11 @@ try
     builder.Services.AddLuminaAuthorization();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
-    builder.Services.AddHealthChecks();
+    builder.Services.AddLuminaCoreReadiness<SecurityDbContext>()
+        .AddCheck<SigningReadinessHealthCheck>("signing-key", tags: ["ready"])
+        .AddWritableDirectoriesReadiness(
+            builder.Configuration["Gpg:KeyDirectory"] ?? "/app/keys",
+            Environment.GetEnvironmentVariable("GNUPGHOME") ?? "/app/.gnupg");
 
     var app = builder.Build();
 
@@ -108,7 +116,7 @@ try
     app.UseAuthorization();
 
     app.MapControllers();
-    app.MapHealthChecks("/health");
+    app.MapLuminaHealthChecks();
     app.Run();
 }
 catch (Exception ex)

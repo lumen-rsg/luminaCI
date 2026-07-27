@@ -220,9 +220,14 @@ pulling base images).
 # Everything should be Up / Healthy
 docker compose ps
 
-# API health
-curl -sk https://localhost/health && echo
+# Full dependency readiness report
+curl -sk https://localhost/health/ready | jq
 ```
+
+Each application service also exposes `/health/startup`, `/health/live`, and
+`/health/ready`. The readiness response names each dependency and returns HTTP
+503 until every required database, cache, broker, storage, tool, key, runner,
+and writable volume check succeeds.
 
 Open the console at **`https://localhost`** (or `https://console.lumina.1t.ru`
 if you added a hosts/DNS entry) and log in with the admin account you seeded.

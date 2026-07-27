@@ -2,6 +2,7 @@ using Lumina.RepositoryService.Data;
 using Lumina.RepositoryService.Services;
 using Lumina.Shared.Extensions;
 using Lumina.Web.Shared;
+using Lumina.Web.Shared.Health;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Minio;
@@ -46,6 +47,8 @@ try
     // MassTransit — RepositoryService only publishes, no consumers
     builder.Services.AddMassTransit(x =>
     {
+        x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
+
         x.UsingRabbitMq((ctx, cfg) =>
         {
             cfg.Host(builder.Configuration["RabbitMQ:Host"] ?? "rabbitmq", "/", h =>
@@ -67,7 +70,10 @@ try
     builder.Services.AddSwaggerGen();
     builder.Services.AddLuminaJwtAuthentication(builder.Configuration);
     builder.Services.AddLuminaAuthorization();
-    builder.Services.AddHealthChecks();
+    builder.Services.AddLuminaCoreReadiness<RepositoryDbContext>()
+        .AddConfiguredHttpReadiness("minio", "Minio:Endpoint", "minio:9000", "/minio/health/ready")
+        .AddWritableDirectoriesReadiness(
+            builder.Configuration["Repository:BasePath"] ?? "/app/repos");
 
     // Allow large file uploads (up to 500MB)
     builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
@@ -102,7 +108,7 @@ try
     app.UseAuthorization();
 
     app.MapControllers();
-    app.MapHealthChecks("/health");
+    app.MapLuminaHealthChecks();
     app.Run();
 }
 catch (Exception ex)

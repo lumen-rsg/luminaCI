@@ -109,7 +109,7 @@ services:
       dockerfile: deploy/docker/Lumina.ApiGateway.Dockerfile
     container_name: lumina-api-gateway
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5000
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
@@ -147,6 +147,12 @@ services:
       - RateLimit__Login__QueueLimit=${RATE_LIMIT_LOGIN_QUEUE:-0}
     ports:
       - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:5000/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -169,7 +175,7 @@ services:
     # build-service can only call the whitelisted Docker API endpoints the proxy
     # exposes (containers create/start/logs/wait/stop/remove + images list/create).
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5001
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
@@ -213,10 +219,22 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       minio:
         condition: service_healthy
       docker-socket-proxy:
         condition: service_started
+      rpm-build-image:
+        condition: service_completed_successfully
+      dotnet-build-image:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:5001/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - lumina-network
       - lumina-buildnet
@@ -247,6 +265,7 @@ services:
       CONFIGS: "0"
       SYSTEM: "0"
       INFO: "1"
+      PING: "1"
       AUTH: "0"
       BUILD: "0"
       SWARM: "0"
@@ -280,7 +299,7 @@ services:
       dockerfile: deploy/docker/Lumina.SecurityService.Dockerfile
     container_name: lumina-security-service
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5002
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
@@ -311,8 +330,16 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       minio:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:5002/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - lumina-network
 
@@ -322,7 +349,7 @@ services:
       dockerfile: deploy/docker/Lumina.ScannerService.Dockerfile
     container_name: lumina-scanner-service
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5003
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
@@ -348,6 +375,16 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      trivy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:5003/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - lumina-network
 
@@ -368,6 +405,12 @@ services:
     depends_on:
       volume-init:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=/dev/null", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - lumina-network
 
@@ -377,7 +420,7 @@ services:
       dockerfile: deploy/docker/Lumina.RepositoryService.Dockerfile
     container_name: lumina-repository-service
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5004
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
@@ -400,8 +443,16 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       minio:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:5004/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - lumina-network
 
@@ -411,7 +462,7 @@ services:
       dockerfile: deploy/docker/Lumina.SourceService.Dockerfile
     container_name: lumina-source-service
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5006
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=lumina_ci;Username=lumina;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (see deploy/.env.example)}
       - Redis__ConnectionString=redis:6379
@@ -452,8 +503,16 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       minio:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:5006/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - lumina-network
 
@@ -465,7 +524,13 @@ services:
     ports:
       - "5005:80"
     depends_on:
-      - api-gateway
+      api-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     networks:
       - lumina-network
 
@@ -508,8 +573,10 @@ services:
       - ../deploy/nginx/certs:/etc/nginx/certs:ro,z
       - repo_data:/srv/packages:ro
     depends_on:
-      - api-gateway
-      - webapp
+      api-gateway:
+        condition: service_healthy
+      webapp:
+        condition: service_healthy
     networks:
       - lumina-network
 

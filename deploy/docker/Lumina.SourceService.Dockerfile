@@ -25,6 +25,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 # Only Git and archive creation remain external; network downloads and archive
 # extraction run through the managed integrity boundary.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     git \
     tar \
     gzip \

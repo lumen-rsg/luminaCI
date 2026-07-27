@@ -2,6 +2,7 @@ using Lumina.SourceService.Data;
 using Lumina.SourceService.Services;
 using Lumina.Shared.Extensions;
 using Lumina.Web.Shared;
+using Lumina.Web.Shared.Health;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -44,6 +45,8 @@ try
     // MassTransit — SourceService only publishes, no consumers
     builder.Services.AddMassTransit(x =>
     {
+        x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
+
         x.UsingRabbitMq((ctx, cfg) =>
         {
             cfg.Host(builder.Configuration["RabbitMQ:Host"] ?? "rabbitmq", "/", h =>
@@ -61,7 +64,11 @@ try
     builder.Services.AddLuminaAuthorization();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
-    builder.Services.AddHealthChecks();
+    builder.Services.AddLuminaCoreReadiness<SourceDbContext>()
+        .AddConfiguredHttpReadiness("minio", "MinIO:Endpoint", "minio:9000", "/minio/health/ready")
+        .AddWritableDirectoriesReadiness(
+            builder.Configuration["Source:TempDir"] ?? "/tmp/source-fetch",
+            builder.Configuration["Source:SourcesDir"] ?? "/opt/lumina/sources");
 
     var app = builder.Build();
 
@@ -84,7 +91,7 @@ try
     app.UseAuthorization();
 
     app.MapControllers();
-    app.MapHealthChecks("/health");
+    app.MapLuminaHealthChecks();
     app.Run();
 }
 catch (Exception ex)

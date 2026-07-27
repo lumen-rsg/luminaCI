@@ -21,7 +21,7 @@ EXPOSE 5004
 
 # Install createrepo_c and rpm tools for RPM repository management, and gnupg2
 # for verifying detached PGP signatures on uploaded RPMs (SignatureVerificationService).
-RUN apt-get update && apt-get install -y createrepo-c rpm gnupg2 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl createrepo-c rpm gnupg2 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=publish /app/publish .
 RUN mkdir -p /app/repos && chmod 777 /app/repos
