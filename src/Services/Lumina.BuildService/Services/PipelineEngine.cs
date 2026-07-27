@@ -364,6 +364,12 @@ public class PipelineEngine
         if (pipeline == null)
             throw new NotFoundException($"Pipeline {id} not found");
 
+        if (!request.ExpectedUpdatedAt.HasValue)
+            throw new ValidationException("The pipeline version is required");
+
+        if (pipeline.UpdatedAt != request.ExpectedUpdatedAt.Value)
+            throw new ConflictException("The pipeline was modified by another user. Reload it before saving.");
+
         pipeline.Name = request.Name;
         pipeline.Description = request.Description;
         pipeline.Tags = request.Tags;
@@ -392,7 +398,14 @@ public class PipelineEngine
         }).ToList();
 
         _db.Pipelines.Update(pipeline);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictException("The pipeline was modified by another user. Reload it before saving.", ex);
+        }
 
         // Invalidate cache so changes appear immediately
         await InvalidatePipelineCacheAsync(id);

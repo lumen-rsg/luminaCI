@@ -170,55 +170,71 @@ Version: 1.0
 }
 
 <!-- Edit Pipeline Dialog -->
-@if (_showEdit)
+@if (_editLoading)
+{
+    <div class="card mb-4 animate-slide-in">
+        <div class="card-body d-flex align-items-center gap-2">
+            <span class="spinner-border spinner-border-sm"></span>
+            <span>Loading pipeline details...</span>
+        </div>
+    </div>
+}
+else if (_editLoadError != null)
+{
+    <div class="alert alert-danger d-flex justify-content-between align-items-center">
+        <span>@_editLoadError</span>
+        <button class="btn btn-sm btn-outline-danger" @onclick="DismissEdit">Dismiss</button>
+    </div>
+}
+else if (_showEdit && _edit != null)
 {
     <div class="card mb-4 animate-slide-in">
         <div class="card-header">
-            <h4 class="mb-0">Edit Pipeline — @_editName</h4>
+            <h4 class="mb-0">Edit Pipeline — @_edit.Name</h4>
         </div>
         <div class="card-body">
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label class="form-label">Name</label>
-                    <input type="text" class="form-control" @bind="_editName" />
+                    <input type="text" class="form-control" @bind="_edit.Name" />
                 </div>
                 <div class="col-md-6 mb-3">
                     <label class="form-label">Description</label>
-                    <input type="text" class="form-control" @bind="_editDescription" />
+                    <input type="text" class="form-control" @bind="_edit.Description" />
                 </div>
             </div>
             <div class="mb-3">
                 <label class="form-label">Tags (comma-separated)</label>
-                <input type="text" class="form-control" @bind="_editTags" />
+                <input type="text" class="form-control" @bind="_edit.Tags" />
             </div>
             <div class="section-title mt-4">Git Integration</div>
             <div class="mb-3">
                 <label class="form-label">Git Repository URL</label>
-                <input type="text" class="form-control" @bind="_editGitRepoUrl" />
+                <input type="text" class="form-control" @bind="_edit.GitRepoUrl" />
             </div>
             <div class="row mb-3">
                 <div class="col-md-6">
                     <label class="form-label">Branch</label>
-                    <input type="text" class="form-control" @bind="_editGitBranch" />
+                    <input type="text" class="form-control" @bind="_edit.GitBranch" />
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Spec File Path</label>
-                    <input type="text" class="form-control" @bind="_editSpecPath" />
+                    <input type="text" class="form-control" @bind="_edit.SpecPath" />
                 </div>
             </div>
             <div class="row mb-3">
                 <div class="col-md-6">
                     <label class="form-label">Git Username</label>
-                    <input type="text" class="form-control" @bind="_editGitUsername" />
+                    <input type="text" class="form-control" @bind="_edit.GitUsername" />
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Git Token / Password</label>
-                    <input type="password" class="form-control" @bind="_editGitToken" placeholder="Leave empty to keep current" />
+                    <input type="password" class="form-control" @bind="_edit.GitToken" placeholder="Leave empty to keep current" />
                 </div>
             </div>
             <div class="mb-3">
                 <label class="form-label">Build Image</label>
-                <select class="form-select" @bind="_editBuildImage">
+                <select class="form-select" @bind="_edit.BuildImage">
                     <option value="">Default (rpm-build)</option>
                     <option value="lumina-dotnet-build:latest">.NET / NativeAOT</option>
                 </select>
@@ -230,17 +246,19 @@ Version: 1.0
                         Upload .spec file
                         <InputFile OnChange="@OnEditSpecFileUploaded" Accept=".spec,.spec.in" style="display:none" />
                     </label>
-                    @if (!string.IsNullOrEmpty(_editSpecFileName))
+                    @if (!string.IsNullOrEmpty(_edit.SpecFileName))
                     {
-                        <span class="text-sm text-muted">@_editSpecFileName</span>
-                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _editSpecContent = ""; _editSpecFileName = ""; })" title="Clear"><Icon Name="x" /></button>
+                        <span class="text-sm text-muted">@_edit.SpecFileName</span>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="@(() => { _edit.SpecContent = ""; _edit.SpecFileName = ""; })" title="Clear"><Icon Name="x" /></button>
                     }
                 </div>
-                <textarea class="form-control font-monospace" rows="6" @bind="_editSpecContent" style="font-size:0.82rem;"></textarea>
+                <textarea class="form-control font-monospace" rows="6" @bind="_edit.SpecContent" style="font-size:0.82rem;"></textarea>
             </div>
             <div class="d-flex gap-2 mt-3">
-                <button class="btn btn-warning" @onclick="SaveEditPipeline">Save Changes</button>
-                <button class="btn btn-outline-secondary" @onclick="() => _showEdit = false">Cancel</button>
+                <button class="btn btn-warning" @onclick="SaveEditPipeline" disabled="@_savingEdit">
+                    @(_savingEdit ? "Saving..." : "Save Changes")
+                </button>
+                <button class="btn btn-outline-secondary" @onclick="DismissEdit" disabled="@_savingEdit">Cancel</button>
             </div>
         </div>
     </div>
@@ -488,18 +506,11 @@ else
 
     // Edit dialog
     private bool _showEdit = false;
-    private Guid _editId;
-    private string _editName = "";
-    private string _editDescription = "";
-    private string _editTags = "";
-    private string _editGitRepoUrl = "";
-    private string _editGitBranch = "main";
-    private string _editSpecPath = "";
-    private string _editBuildImage = "";
-    private string _editGitUsername = "";
-    private string _editGitToken = "";
-    private string _editSpecContent = "";
-    private string _editSpecFileName = "";
+    private bool _editLoading;
+    private bool _savingEdit;
+    private int _editRequestVersion;
+    private string? _editLoadError;
+    private EditPipelineModel? _edit;
 
     // Delete dialog
     private bool _showDeleteConfirm = false;
@@ -785,39 +796,54 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
 
     private async Task ShowEditDialog(PipelineSummaryResponse pipeline)
     {
-        _editId = pipeline.Id;
-        _editName = pipeline.Name;
-        _editDescription = pipeline.Description;
-        _editGitRepoUrl = pipeline.GitRepoUrl ?? "";
-        _editGitBranch = pipeline.GitBranch ?? "main";
-        _editSpecFileName = "";
-        _showEdit = true;
+        var requestVersion = ++_editRequestVersion;
+        _showEdit = false;
+        _edit = null;
+        _editLoadError = null;
+        _editLoading = true;
+        StateHasChanged();
 
-        // Load full details
         try
         {
             var detail = await Api.GetPipelineAsync(pipeline.Id);
-            if (detail?.Data != null)
+            if (requestVersion != _editRequestVersion)
+                return;
+
+            if (detail?.Success != true || detail.Data == null)
             {
-                _editTags = detail.Data.Tags != null ? string.Join(", ", detail.Data.Tags) : "";
-                _editSpecPath = detail.Data.SpecPath ?? "";
-                _editBuildImage = detail.Data.BuildImage ?? "";
-                _editGitUsername = detail.Data.GitUsername ?? "";
-                _editSpecContent = detail.Data.SpecContent ?? "";
-                StateHasChanged();
+                _editLoadError = $"Could not load pipeline details: {detail?.Error ?? "Unknown error"}";
+                return;
             }
+
+            _edit = EditPipelineModel.From(detail.Data);
+            _showEdit = true;
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Failed to load pipeline details for edit");
+            if (requestVersion == _editRequestVersion)
+                _editLoadError = "Could not load pipeline details. Please try again.";
+            Logger.LogWarning(ex, "Failed to load pipeline details for edit {PipelineId}", pipeline.Id);
+        }
+        finally
+        {
+            if (requestVersion == _editRequestVersion)
+            {
+                _editLoading = false;
+                StateHasChanged();
+            }
         }
     }
 
     private async Task SaveEditPipeline()
     {
+        var edit = _edit;
+        if (!_showEdit || edit == null || _savingEdit)
+            return;
+
+        _savingEdit = true;
         try
         {
-            var tags = _editTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            var tags = edit.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
             var steps = new List<CreatePipelineStepRequest>
             {
                 new(StepType.Build, "Build RPM", 1, new Dictionary<string, string>()),
@@ -826,16 +852,17 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
                 new(StepType.Publish, "Publish", 4, new Dictionary<string, string>())
             };
 
-            var result = await Api.UpdatePipelineAsync(_editId, new UpdatePipelineRequest(
-                _editName, _editDescription, steps, tags,
-                _editGitRepoUrl, _editGitBranch, _editSpecPath, _editBuildImage,
-                _editGitUsername,
-                string.IsNullOrWhiteSpace(_editGitToken) ? null : _editGitToken,
-                string.IsNullOrWhiteSpace(_editSpecContent) ? null : _editSpecContent));
+            var result = await Api.UpdatePipelineAsync(edit.Id, new UpdatePipelineRequest(
+                edit.Name, edit.Description, steps, tags,
+                edit.GitRepoUrl, edit.GitBranch, edit.SpecPath, edit.BuildImage,
+                edit.GitUsername,
+                string.IsNullOrWhiteSpace(edit.GitToken) ? null : edit.GitToken,
+                string.IsNullOrWhiteSpace(edit.SpecContent) ? null : edit.SpecContent,
+                edit.ExpectedUpdatedAt));
 
             if (result?.Success == true)
             {
-                _showEdit = false;
+                DismissEdit();
                 _triggerMessage = "Pipeline updated successfully!";
                 IsSuccess = true;
                 _pipelines = await Api.GetPipelinesAsync(1, 50);
@@ -851,6 +878,19 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             _triggerMessage = $"Error: {ex.Message}";
             IsSuccess = false;
         }
+        finally
+        {
+            _savingEdit = false;
+        }
+    }
+
+    private void DismissEdit()
+    {
+        _editRequestVersion++;
+        _showEdit = false;
+        _editLoading = false;
+        _editLoadError = null;
+        _edit = null;
     }
 
     private void ConfirmDelete(PipelineSummaryResponse pipeline)
@@ -923,14 +963,17 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
 
     private async Task OnEditSpecFileUploaded(InputFileChangeEventArgs e)
     {
+        var edit = _edit;
+        if (edit == null) return;
+
         var file = e.File;
         if (file == null) return;
         try
         {
             using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
             using var reader = new StreamReader(stream);
-            _editSpecContent = await reader.ReadToEndAsync();
-            _editSpecFileName = file.Name;
+            edit.SpecContent = await reader.ReadToEndAsync();
+            edit.SpecFileName = file.Name;
             StateHasChanged();
         }
         catch (Exception ex)
@@ -947,6 +990,38 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
         PipelineStatus.Archived => "badge bg-dark",
         _ => "badge bg-secondary"
     };
+
+    private sealed class EditPipelineModel
+    {
+        public Guid Id { get; init; }
+        public DateTime ExpectedUpdatedAt { get; init; }
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Tags { get; set; } = "";
+        public string GitRepoUrl { get; set; } = "";
+        public string GitBranch { get; set; } = "main";
+        public string SpecPath { get; set; } = "";
+        public string BuildImage { get; set; } = "";
+        public string GitUsername { get; set; } = "";
+        public string GitToken { get; set; } = "";
+        public string SpecContent { get; set; } = "";
+        public string SpecFileName { get; set; } = "";
+
+        public static EditPipelineModel From(PipelineResponse pipeline) => new()
+        {
+            Id = pipeline.Id,
+            ExpectedUpdatedAt = pipeline.UpdatedAt,
+            Name = pipeline.Name,
+            Description = pipeline.Description,
+            Tags = string.Join(", ", pipeline.Tags),
+            GitRepoUrl = pipeline.GitRepoUrl ?? "",
+            GitBranch = pipeline.GitBranch ?? "main",
+            SpecPath = pipeline.SpecPath ?? "",
+            BuildImage = pipeline.BuildImage ?? "",
+            GitUsername = pipeline.GitUsername ?? "",
+            SpecContent = pipeline.SpecContent ?? ""
+        };
+    }
 
     // === Extra Sources Methods ===
     private bool IsSourcesExpanded(Guid pipelineId) => _expandedSources.Contains(pipelineId);

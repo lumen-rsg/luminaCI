@@ -35,6 +35,7 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.CreatedBy).IsRequired().HasMaxLength(256);
             entity.Property(e => e.GitUsername).HasMaxLength(256);
             entity.Property(e => e.Tags).HasColumnType("text[]");
+            entity.Property(e => e.UpdatedAt).IsConcurrencyToken();
 
             // Encrypted secret columns. Stored as `text` because the ciphertext
             // (Base64 of nonce|ciphertext|tag with an "enc1:" prefix) is variable

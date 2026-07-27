@@ -28,7 +28,8 @@ public record UpdatePipelineRequest(
     string? BuildImage = null,
     string? GitUsername = null,
     string? GitToken = null,
-    string? SpecContent = null);
+    string? SpecContent = null,
+    DateTime? ExpectedUpdatedAt = null);
 
 public record CreatePipelineStepRequest(StepType Type, string Name, int Order, Dictionary<string, string> Configuration);
 

@@ -127,6 +127,55 @@ public class PipelineEngineTests
         Assert.Equal("s3cret", fromDb.WebhookSecret);
     }
 
+    [Fact]
+    public async Task UpdatePipelineAsync_RejectsStaleVersion()
+    {
+        await using var sp = BuildServiceProvider(nameof(UpdatePipelineAsync_RejectsStaleVersion));
+        var engine = await NewEngineAsync(sp);
+        var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
+        var staleVersion = pipeline.UpdatedAt.AddSeconds(-1);
+
+        var request = new UpdatePipelineRequest(
+            "changed", "d", [], [],
+            ExpectedUpdatedAt: staleVersion);
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            engine.UpdatePipelineAsync(pipeline.Id, request));
+
+        Assert.Equal("test-pipeline", pipeline.Name);
+    }
+
+    [Fact]
+    public async Task UpdatePipelineAsync_RejectsMissingVersion()
+    {
+        await using var sp = BuildServiceProvider(nameof(UpdatePipelineAsync_RejectsMissingVersion));
+        var engine = await NewEngineAsync(sp);
+        var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
+
+        var request = new UpdatePipelineRequest("changed", "d", [], []);
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            engine.UpdatePipelineAsync(pipeline.Id, request));
+    }
+
+    [Fact]
+    public async Task UpdatePipelineAsync_AcceptsCurrentVersion()
+    {
+        await using var sp = BuildServiceProvider(nameof(UpdatePipelineAsync_AcceptsCurrentVersion));
+        var engine = await NewEngineAsync(sp);
+        var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
+
+        var request = new UpdatePipelineRequest(
+            "changed", "updated", [], [],
+            ExpectedUpdatedAt: pipeline.UpdatedAt);
+
+        var updated = await engine.UpdatePipelineAsync(pipeline.Id, request);
+
+        Assert.Equal("changed", updated.Name);
+        Assert.Equal("updated", updated.Description);
+        Assert.True(updated.UpdatedAt > request.ExpectedUpdatedAt);
+    }
+
     // ─── TriggerBuildAsync: Sign-step key gate ───────────────────────────
 
     [Fact]

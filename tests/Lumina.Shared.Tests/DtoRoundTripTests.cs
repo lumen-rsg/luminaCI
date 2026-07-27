@@ -68,10 +68,11 @@ public class DtoRoundTripTests
     {
         var req = new UpdatePipelineRequest(
             "n", "d", new List<CreatePipelineStepRequest>(), new List<string>(),
-            GitRepoUrl: "u", SpecContent: "c");
+            GitRepoUrl: "u", SpecContent: "c", ExpectedUpdatedAt: DateTime.UtcNow);
         var rt = RoundTrip(req);
         Assert.Equal("n", rt.Name);
         Assert.Equal("u", rt.GitRepoUrl);
+        Assert.Equal(req.ExpectedUpdatedAt, rt.ExpectedUpdatedAt);
     }
 
     [Fact]
