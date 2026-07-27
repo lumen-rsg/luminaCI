@@ -40,7 +40,7 @@ public class PgpSigningService
         Directory.CreateDirectory(_keyDirectory);
 
         var uid = $"{safeKeyName} <{safeEmail}>";
-        var existingFingerprints = (await ListSecretKeyFingerprintsAsync(uid))
+        var existingFingerprints = (await ListSecretKeyFingerprintsAsync())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var generate = await RunProcessAsync("gpg", args =>
         {
@@ -57,7 +57,7 @@ public class PgpSigningService
         });
         EnsureSuccess(generate, "GPG key generation");
 
-        var fingerprint = (await ListSecretKeyFingerprintsAsync(uid))
+        var fingerprint = (await ListSecretKeyFingerprintsAsync())
             .SingleOrDefault(candidate => !existingFingerprints.Contains(candidate))
             ?? throw new InvalidOperationException("GPG did not expose the newly generated key fingerprint.");
         var export = await RunProcessAsync("gpg", args =>
@@ -308,7 +308,7 @@ public class PgpSigningService
             throw new InvalidOperationException($"RPM signature verification did not report a valid signature: {output.Trim()}");
     }
 
-    private async Task<List<string>> ListSecretKeyFingerprintsAsync(string selector)
+    private async Task<List<string>> ListSecretKeyFingerprintsAsync()
     {
         var result = await RunProcessAsync("gpg", args =>
         {
@@ -316,7 +316,6 @@ public class PgpSigningService
             args.Add("--with-colons");
             args.Add("--fingerprint");
             args.Add("--list-secret-keys");
-            args.Add(selector);
         });
         EnsureSuccess(result, "GPG fingerprint lookup");
 
