@@ -369,7 +369,7 @@ public class PipelineEngineTests
 
         public Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl,
             string? buildImage = null, string? gitUsername = null, string? gitToken = null,
-            string? sourceDir = null, string? extraSourcesPipelineDir = null)
+            string? extraSourcesPipelineDir = null)
         {
             WasLaunched = true;
             LastSourceUrl = sourceUrl;

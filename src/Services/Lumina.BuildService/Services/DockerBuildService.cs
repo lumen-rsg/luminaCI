@@ -362,9 +362,9 @@ public class DockerBuildService : IBuildLauncher
         }
     }
 
-    public virtual async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? sourceDir = null, string? extraSourcesPipelineDir = null)
+    public virtual async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? extraSourcesPipelineDir = null)
     {
-        var imageName = !string.IsNullOrWhiteSpace(buildImage) ? buildImage : "lumina-rpm-build:latest";
+        var imageName = BuildImagePolicy.Resolve(_config, buildImage);
         _logger.LogInformation("Starting Docker build for job {JobId} ({SpecName}) with image {Image}", job.Id, job.SpecName, imageName);
 
         try
@@ -405,10 +405,6 @@ public class DockerBuildService : IBuildLauncher
             if (!string.IsNullOrEmpty(sourceUrl))
                 envVars.Add($"SOURCE_URL={sourceUrl}");
 
-            // If pre-fetched source directory is provided, mount it into the container
-            if (!string.IsNullOrEmpty(sourceDir))
-                envVars.Add($"SOURCE_DIR=/sources");
-
             // Pass git credentials for private repositories
             if (!string.IsNullOrEmpty(gitUsername))
                 envVars.Add($"GIT_USERNAME={gitUsername}");
@@ -430,15 +426,8 @@ public class DockerBuildService : IBuildLauncher
             // Mount spec file into container at /specs/
             if (!string.IsNullOrEmpty(hostSpecDir) && Directory.Exists(hostSpecDir))
             {
-                binds.Add($"{hostSpecDir}:/specs:z");
+                binds.Add($"{hostSpecDir}:/specs:ro,z");
                 _logger.LogInformation("Mounting spec file from {SpecDir} to /specs", hostSpecDir);
-            }
-
-            // Mount pre-fetched sources if available
-            if (!string.IsNullOrEmpty(sourceDir) && Directory.Exists(sourceDir))
-            {
-                binds.Add($"{sourceDir}:/sources:z");
-                _logger.LogInformation("Mounting pre-fetched sources from {SourceDir}", sourceDir);
             }
 
             // Mount extra uploaded sources (pipeline-level only — uploaded via the
@@ -463,7 +452,7 @@ public class DockerBuildService : IBuildLauncher
                 }
                 _logger.LogInformation("Copied pipeline extra sources from {Dir}", extraSourcesPipelineDir);
 
-                binds.Add($"{hostExtraDir}:/extra-sources:z");
+                binds.Add($"{hostExtraDir}:/extra-sources:ro,z");
                 _logger.LogInformation("Mounted extra sources at /extra-sources for job {JobId}", job.Id);
             }
 

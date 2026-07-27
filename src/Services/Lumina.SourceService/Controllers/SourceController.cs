@@ -1,13 +1,11 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Lumina.Shared.DTOs;
-using Lumina.Shared.Events;
 using Lumina.Shared.Models.Enums;
 using Lumina.SourceService.Data;
 using Lumina.SourceService.Services;
 using Lumina.Web.Shared.Authorization;
 using Lumina.Web.Shared.Errors;
-using MassTransit;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -28,7 +26,6 @@ public class SourceController : ControllerBase
     private readonly SourceDbContext _db;
     private readonly ILogger<SourceController> _logger;
     private readonly IConfiguration _config;
-    private readonly IBus _bus;
 
     public SourceController(
         ConfigParserService configParser,
@@ -37,8 +34,7 @@ public class SourceController : ControllerBase
         SourceUriValidator uriValidator,
         SourceDbContext db,
         ILogger<SourceController> logger,
-        IConfiguration config,
-        IBus bus)
+        IConfiguration config)
     {
         _configParser = configParser;
         _fetchService = fetchService;
@@ -47,7 +43,6 @@ public class SourceController : ControllerBase
         _db = db;
         _logger = logger;
         _config = config;
-        _bus = bus;
     }
 
     /// <summary>
@@ -241,90 +236,6 @@ public class SourceController : ControllerBase
     }
 
     /// <summary>
-    /// Fetch sources and trigger RPM build for a package from conf.ini.
-    /// Reads conf.ini for source info, fetches, creates tarball, then calls BuildService.
-    /// </summary>
-    [HttpPost("{name}/build")]
-    public async Task<ActionResult<ApiResponse<object>>> BuildPackage(string name, [FromBody] BuildFromConfigRequest? request = null)
-    {
-        var pkg = _configParser.GetPackage(name);
-        if (pkg == null)
-            return NotFound(new ApiResponse<object>(false, null, $"Package '{name}' not found in configuration", null));
-
-        try
-        {
-            // SECURITY: validate the configured source before fetch/build.
-            await _uriValidator.ValidateAsync(pkg.Source, pkg.SourceType, pkg.SourceBranch);
-
-            // 1. Find spec content — look in /app/specs/{name}.*, or use request
-            var specContent = request?.SpecContent;
-            var specName = request?.SpecName ?? $"{name}.spec";
-
-            if (string.IsNullOrEmpty(specContent))
-            {
-                // Try to find spec file in known locations. Spec files must be
-                // supplied via the request body or placed under /app/specs/ —
-                // never load test/dev fixtures from the runtime image.
-                var specSearchPaths = new[]
-                {
-                    $"/app/specs/{name}.spec",
-                    $"/app/specs/{name}.txt",
-                    $"/app/specs/test_package.txt"
-                };
-
-                foreach (var specPath in specSearchPaths)
-                {
-                    if (System.IO.File.Exists(specPath))
-                    {
-                        specContent = await System.IO.File.ReadAllTextAsync(specPath);
-                        _logger.LogInformation("Found spec file at {Path}", specPath);
-                        break;
-                    }
-                }
-
-                if (string.IsNullOrEmpty(specContent))
-                    return BadRequest(new ApiResponse<object>(false, null, $"No spec file found for package '{name}'. Provide SpecContent in request or place spec file in /app/specs/", null));
-            }
-
-            // 2. Extract version from spec (Version: X.Y)
-            var versionLine = specContent.Split('\n')
-                .FirstOrDefault(l => l.TrimStart().StartsWith("Version:", StringComparison.OrdinalIgnoreCase));
-            var packageVersion = versionLine?.Split(':', 2).LastOrDefault()?.Trim()
-                ?? "1.0";
-
-            _logger.LogInformation("Building package {Package} v{Version} from conf.ini", name, packageVersion);
-
-            // 3. Fetch sources and prepare RPM-compatible tarball
-            var prepareResult = await _fetchService.FetchAndPrepareForBuildAsync(
-                name, pkg.Source, pkg.SourceType, pkg.SourceBranch,
-                packageVersion, specContent);
-
-            // 4. Publish BuildTriggerFromConfig event via MassTransit
-            await _bus.Publish(new BuildTriggerFromConfig(
-                name,
-                prepareResult.SourceDir,
-                specContent,
-                specName,
-                pkg.BuildImage ?? request?.BuildImage,
-                "source-service"
-            ));
-
-            _logger.LogInformation("Published BuildTriggerFromConfig for package {Package}", name);
-            return Ok(new ApiResponse<object>(true, new { package = name, version = packageVersion }, null, $"Build triggered for {name}"));
-        }
-        catch (SourceValidationException ex)
-        {
-            // Domain-authored message — safe to surface as the Error field.
-            return BadRequest(new ApiResponse<object>(false, null, ex.Message, null));
-        }
-        catch (Exception ex)
-        {
-            // Never return ex.Message — it can contain DB/stack hints (SEC-022).
-            return ApiResults.FromException<object>(ex, _logger, "Sources.BuildPackage", name);
-        }
-    }
-
-    /// <summary>
     /// Get the raw conf.ini content
     /// </summary>
     [HttpGet("config")]
@@ -457,8 +368,3 @@ public class SourceController : ControllerBase
             null));
     }
 }
-
-public record BuildFromConfigRequest(
-    string? SpecContent = null,
-    string? SpecName = null,
-    string? BuildImage = null);

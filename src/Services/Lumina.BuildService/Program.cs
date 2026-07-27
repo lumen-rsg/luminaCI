@@ -56,7 +56,6 @@ try
     {
         x.AddConsumer<CveScanCompletedConsumer>();
         x.AddConsumer<PackageSignedConsumer>();
-        x.AddConsumer<BuildTriggerFromConfigConsumer>();
         x.AddConsumer<GetArtifactSignatureConsumer>();
         x.AddConsumer<GetArtifactContentConsumer>();
 
@@ -72,7 +71,6 @@ try
             {
                 e.ConfigureConsumer<CveScanCompletedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSignedConsumer>(ctx);
-                e.ConfigureConsumer<BuildTriggerFromConfigConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactSignatureConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactContentConsumer>(ctx);
             });

@@ -19,6 +19,5 @@ public interface IBuildLauncher
         string? buildImage = null,
         string? gitUsername = null,
         string? gitToken = null,
-        string? sourceDir = null,
         string? extraSourcesPipelineDir = null);
 }

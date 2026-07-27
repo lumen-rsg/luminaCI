@@ -111,7 +111,6 @@ public class DtoRoundTripTests
         RoundTrip(new VerifySignatureRequest(Guid.NewGuid(), "sig"));
         RoundTrip(new ComputeHashRequest(Guid.NewGuid(), "/file"));
         RoundTrip(new StoreHashRequest(Guid.NewGuid(), "f.rpm", "sha", "md5", 123L));
-        RoundTrip(new UpdatePgpSignatureRequest(Guid.NewGuid(), "pgp-sig"));
     }
 
     [Fact]
@@ -122,7 +121,6 @@ public class DtoRoundTripTests
         RoundTrip(new SyncRepositoryRequest(Guid.NewGuid()));
         RoundTrip(new FetchSourceRequest("pkg"));
         RoundTrip(new FetchAllSourcesRequest());
-        RoundTrip(new TriggerFromConfigRequest("pkg", "/src", "spec", "pkg.spec"));
         RoundTrip(new UpdateConfigRequest("content"));
         RoundTrip(new AddPackageToConfigRequest("n", "src", "git", "main", "img", "spec"));
     }

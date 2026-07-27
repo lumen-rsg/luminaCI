@@ -1,5 +1,6 @@
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models.Enums;
+using Lumina.Web.Shared.Authorization;
 using Lumina.Web.Shared.Errors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -54,6 +55,7 @@ public class PipelinesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<PipelineResponse>>> Create([FromBody] CreatePipelineRequest request)
     {
         try
@@ -94,6 +96,7 @@ public class PipelinesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<PipelineResponse>>> Update(Guid id, [FromBody] UpdatePipelineRequest request)
     {
         try
@@ -115,6 +118,7 @@ public class PipelinesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<object>>> Delete(Guid id)
     {
         try

@@ -80,9 +80,7 @@ public class WebhooksController : ControllerBase
         // build — chaining into the git-clone-as-root and untrusted-spec risks
         // (SEC-02 / SEC-04). Pipelines are therefore required to carry a secret
         // at creation time (see PipelineEngine.CreatePipelineAsync); this gate
-        // is the defense-in-depth backstop for rows that predate that rule or
-        // were auto-created internally (TriggerBuildFromConfigAsync) and are not
-        // meant to be webhook-triggered at all.
+        // is the defense-in-depth backstop for rows that predate that rule.
         if (string.IsNullOrEmpty(pipeline.WebhookSecret))
         {
             _logger.LogWarning(

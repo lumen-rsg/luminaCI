@@ -12,18 +12,6 @@ public record BuildJobCompleted(Guid BuildJobId, BuildStatus Status, DateTime Co
 public record BuildJobFailed(Guid BuildJobId, string ErrorMessage, DateTime FailedAt);
 
 /// <summary>
-/// Sent by SourceService to trigger a build from conf.ini configuration.
-/// Consumed by BuildService.
-/// </summary>
-public record BuildTriggerFromConfig(
-    string PackageName,
-    string SourceDir,
-    string SpecContent,
-    string SpecName,
-    string? BuildImage,
-    string TriggeredBy = "source-service");
-
-/// <summary>
 /// Sent by BuildService after a successful build to request CVE scanning of artifacts.
 /// Consumed by ScannerService.
 /// </summary>

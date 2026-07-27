@@ -70,12 +70,7 @@ public record FetchSourceRequest(string PackageName, int MaxRetries = 3);
 
 public record FetchAllSourcesRequest(int MaxRetries = 3);
 
-// Build from config (conf.ini) DTOs
-public record TriggerFromConfigRequest(string PackageName, string SourceDir, string SpecContent, string SpecName, string? BuildImage = null);
-
 // Config management DTOs
 public record UpdateConfigRequest(string Content);
 
 public record AddPackageToConfigRequest(string Name, string Source, string SourceType, string? SourceBranch = null, string? BuildImage = null, string? SpecContent = null);
-
-public record UpdatePgpSignatureRequest(Guid ArtifactId, string PgpSignature);
