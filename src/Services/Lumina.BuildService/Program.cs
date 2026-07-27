@@ -40,6 +40,7 @@ try
     // AddScoped<IX>(sp => sp.GetRequiredService<X>()) keeps it a single scoped object.
     builder.Services.AddScoped<DockerBuildService>();
     builder.Services.AddScoped<IBuildLauncher>(sp => sp.GetRequiredService<DockerBuildService>());
+    builder.Services.AddSingleton<IRpmArtifactValidator, RpmArtifactValidator>();
     builder.Services.AddScoped<ISigningKeyGate, SigningKeyGate>();
     builder.Services.AddScoped<PipelineEngine>();
 

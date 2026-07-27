@@ -25,6 +25,7 @@ public class DockerBuildService : IBuildLauncher
     private readonly IConfiguration _config;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IBus _bus;
+    private readonly IRpmArtifactValidator _rpmArtifactValidator;
 
     /// <summary>
     /// Docker daemon endpoint (unix socket or HTTP proxy URL). When fronted by a
@@ -87,13 +88,15 @@ public class DockerBuildService : IBuildLauncher
         ILogger<DockerBuildService> logger,
         IConfiguration config,
         IServiceScopeFactory scopeFactory,
-        IBus bus)
+        IBus bus,
+        IRpmArtifactValidator rpmArtifactValidator)
     {
         _db = db;
         _logger = logger;
         _config = config;
         _scopeFactory = scopeFactory;
         _bus = bus;
+        _rpmArtifactValidator = rpmArtifactValidator;
 
         // The Docker endpoint may be a raw unix socket (unix:///var/run/docker.sock),
         // a host:port, or an http(s):// URL fronting a docker-socket-proxy. The proxy
@@ -712,17 +715,32 @@ public class DockerBuildService : IBuildLauncher
 
             if (waitResult.StatusCode == 0)
             {
-                dbJob.Status = BuildStatus.Success;
-                _logger.LogInformation("Build job {JobId} completed successfully", job.Id);
-
-                // Scan for built RPM artifacts
                 try
                 {
-                    await ScanArtifactsAsync(db, dbJob);
+                    var artifactCount = await ScanArtifactsAsync(db, dbJob);
+                    if (artifactCount == 0)
+                    {
+                        dbJob.Status = BuildStatus.Failed;
+                        _logger.LogWarning(
+                            "Build job {JobId} exited successfully but produced no valid RPM artifacts",
+                            job.Id);
+                        PublishLogLine(job.Id, "[BUILD FAILED - no valid RPM artifacts]");
+                        SaveFailedBuildLog(job.Id, job.SpecName, logs);
+                    }
+                    else
+                    {
+                        dbJob.Status = BuildStatus.Success;
+                        _logger.LogInformation(
+                            "Build job {JobId} completed successfully with {ArtifactCount} valid RPM artifact(s)",
+                            job.Id, artifactCount);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to scan artifacts for job {JobId}", job.Id);
+                    dbJob.Status = BuildStatus.Failed;
+                    _logger.LogError(ex, "Artifact validation failed for job {JobId}", job.Id);
+                    PublishLogLine(job.Id, "[BUILD FAILED - artifact validation error]");
+                    SaveFailedBuildLog(job.Id, job.SpecName, logs);
                 }
             }
             else
@@ -739,11 +757,11 @@ public class DockerBuildService : IBuildLauncher
             await db.SaveChangesAsync();
 
             // Notify SSE subscribers that build is complete
-            var buildResult = waitResult.StatusCode == 0 ? "SUCCESS" : "FAILED";
+            var buildResult = dbJob.Status == BuildStatus.Success ? "SUCCESS" : "FAILED";
             PublishLogLine(job.Id, $"[BUILD {buildResult}]");
 
             // Trigger CVE scan, hash storage, and PGP signing via MassTransit for all registered artifacts
-            if (waitResult.StatusCode == 0)
+            if (dbJob.Status == BuildStatus.Success)
             {
                 _ = PublishPostBuildEventsAsync(dbJob.Id);
             }
@@ -806,22 +824,31 @@ public class DockerBuildService : IBuildLauncher
     /// <summary>
     /// Scan the artifacts directory for built .rpm files and create BuildArtifact records.
     /// </summary>
-    private async Task ScanArtifactsAsync(BuildDbContext db, BuildJob job)
+    private async Task<int> ScanArtifactsAsync(BuildDbContext db, BuildJob job)
     {
         var artifactDir = $"/app/builds/{job.Id}";
         if (!Directory.Exists(artifactDir))
         {
             _logger.LogWarning("Artifact directory {Dir} does not exist for job {JobId}", artifactDir, job.Id);
-            return;
+            return 0;
         }
 
         var rpmFiles = Directory.GetFiles(artifactDir, "*.rpm", SearchOption.TopDirectoryOnly);
         _logger.LogInformation("Found {Count} RPM artifacts for job {JobId}", rpmFiles.Length, job.Id);
 
+        var registeredCount = 0;
         foreach (var rpmPath in rpmFiles)
         {
             var fileName = Path.GetFileName(rpmPath);
             var fileInfo = new FileInfo(rpmPath);
+            var validation = await _rpmArtifactValidator.ValidateAsync(rpmPath);
+            if (!validation.IsValid)
+            {
+                _logger.LogWarning(
+                    "Ignoring invalid RPM artifact {FileName} for job {JobId}: {ValidationError}",
+                    fileName, job.Id, validation.Error);
+                continue;
+            }
 
             // Compute SHA256 hash
             string hashSha256;
@@ -854,11 +881,14 @@ public class DockerBuildService : IBuildLauncher
             };
 
             db.BuildArtifacts.Add(artifact);
-            _logger.LogInformation("Registered artifact {FileName} ({Size} bytes, SHA256: {Hash}) for job {JobId}",
-                fileName, fileInfo.Length, hashSha256[..16] + "...", job.Id);
+            registeredCount++;
+            _logger.LogInformation(
+                "Registered RPM artifact {FileName} ({Nevra}, {Size} bytes, SHA256: {Hash}) for job {JobId}",
+                fileName, validation.Nevra, fileInfo.Length, hashSha256[..16] + "...", job.Id);
         }
 
         await db.SaveChangesAsync();
+        return registeredCount;
     }
 
     /// <summary>

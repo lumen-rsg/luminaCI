@@ -19,8 +19,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 EXPOSE 5001
 
-# Install Docker CLI for container management
-RUN apt-get update && apt-get install -y docker.io && rm -rf /var/lib/apt/lists/*
+# Install Docker CLI for container management and rpm for artifact validation.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends docker.io rpm \
+    && rm -rf /var/lib/apt/lists/*
 
 USER app
 
