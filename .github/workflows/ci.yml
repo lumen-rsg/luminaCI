@@ -1,14 +1,7 @@
 name: ci
 
-# Build + test the whole solution on every push and pull request.
-#
-# This is the gate that catches regressions in the security-critical
-# components — ProcessArgumentSanitizer, WebhookSignatureVerifier,
-# ConfigParserService, PipelineEngine, and Trivy response parsing — before they
-# reach staging.
-# The unit tests here are intentionally infrastructure-free (no Docker,
-# RabbitMQ, Redis, or Postgres required) so they run fast and deterministically
-# in CI exactly as they do locally.
+# Validate application code, deployment topology, production images, durable
+# infrastructure, and the complete RPM lifecycle on every protected branch.
 
 on:
   push:
@@ -21,9 +14,43 @@ permissions:
   checks: write
 
 jobs:
-  build-and-test:
-    name: build & test (net10.0)
+  deployment-validation:
+    name: deployment & shell validation
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+
+      - name: Lint shell entrypoints
+        run: shellcheck --severity=warning scripts/*.sh tests/ci/*.sh
+
+      - name: Lint workflow definitions
+        run: |
+          docker run --rm \
+            --volume "${PWD}:/repo:ro" \
+            --workdir /repo \
+            rhysd/actionlint:1.7.7
+
+      - name: Validate Compose and Dockerfiles
+        run: tests/ci/validate-deployment.sh
+
+      - name: Scan deployment configuration
+        run: |
+          docker run --rm \
+            --volume "${PWD}:/workspace:ro" \
+            aquasec/trivy:0.72.0 config \
+            --exit-code 1 \
+            --severity CRITICAL \
+            /workspace/deploy
+
+  build-and-test:
+    name: application & browser tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     # Match the SDK the rest of the toolchain targets. The solution uses
     # net10.0 + EF Core 10.0.0-preview.3, which requires the .NET 10 SDK.
     steps:
@@ -91,3 +118,161 @@ jobs:
           name: test-results
           path: '**/TestResults/*.trx'
           if-no-files-found: warn
+
+      - name: Publish browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: tests/Lumina.WebApp.E2E/test-results
+          if-no-files-found: ignore
+
+  production-images:
+    name: image ${{ matrix.name }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api-gateway
+            dockerfile: deploy/docker/Lumina.ApiGateway.Dockerfile
+            trivy: true
+          - name: build-service
+            dockerfile: deploy/docker/Lumina.BuildService.Dockerfile
+            trivy: true
+          - name: repository-service
+            dockerfile: deploy/docker/Lumina.RepositoryService.Dockerfile
+            trivy: true
+          - name: scanner-service
+            dockerfile: deploy/docker/Lumina.ScannerService.Dockerfile
+            trivy: true
+          - name: security-service
+            dockerfile: deploy/docker/Lumina.SecurityService.Dockerfile
+            trivy: true
+          - name: source-service
+            dockerfile: deploy/docker/Lumina.SourceService.Dockerfile
+            trivy: true
+          - name: webapp
+            dockerfile: deploy/docker/Lumina.WebApp.Dockerfile
+            trivy: true
+          - name: dotnet-build-runner
+            dockerfile: deploy/docker/dotnet-build.Dockerfile
+            trivy: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build production image
+        run: |
+          docker build \
+            --tag "lumina-ci/${{ matrix.name }}:${GITHUB_SHA}" \
+            --file "${{ matrix.dockerfile }}" \
+            .
+
+      - name: Inspect production image
+        run: |
+          docker image inspect \
+            "lumina-ci/${{ matrix.name }}:${GITHUB_SHA}" \
+            > image-inspect.json
+          jq -e '
+            .[0]
+            | (.Id | length > 0)
+              and (.Architecture | length > 0)
+              and (((.Config.Entrypoint // []) + (.Config.Cmd // [])) | length > 0)
+          ' image-inspect.json
+
+      - name: Scan production image
+        if: matrix.trivy
+        run: |
+          docker run --rm \
+            --security-opt label=disable \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume trivy-cache:/root/.cache \
+            aquasec/trivy:0.72.0 image \
+            --ignore-unfixed \
+            --quiet \
+            --scanners vuln \
+            --severity CRITICAL \
+            --format json \
+            "lumina-ci/${{ matrix.name }}:${GITHUB_SHA}" \
+            > trivy.json
+
+          jq '[
+            .Results[]? as $result
+            | $result.Vulnerabilities[]?
+            | select(.Severity == "CRITICAL")
+            | {
+                target: $result.Target,
+                id: .VulnerabilityID,
+                package: .PkgName,
+                installed: .InstalledVersion,
+                fixed: .FixedVersion
+              }
+          ]' trivy.json
+
+          jq -e '
+            (.Results | type == "array")
+            and (.Results | length > 0)
+            and ([
+              .Results[]?.Vulnerabilities[]?
+              | select(.Severity == "CRITICAL")
+            ] | length == 0)
+          ' trivy.json
+
+      # Trivy 0.72 does not provide Fedora 44 OS vulnerability records. Treating
+      # its empty report as a clean scan would recreate the false-confidence
+      # problem this workflow prevents, so the pinned runner gets an explicit
+      # identity/release check while service images remain Trivy-gated.
+      - name: Verify pinned Fedora build runner
+        if: ${{ !matrix.trivy }}
+        run: |
+          test "$(
+            docker image inspect \
+              "lumina-ci/${{ matrix.name }}:${GITHUB_SHA}" \
+              --format '{{ index .Config.Labels "io.lumina.build.distribution" }}-{{ index .Config.Labels "io.lumina.build.release" }}'
+          )" = "fedora-44"
+
+  infrastructure-durability:
+    name: infrastructure restart durability
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    needs: deployment-validation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify durable infrastructure
+        run: tests/ci/infrastructure-durability.sh
+
+  rpm-lifecycle:
+    name: rpm build, sign, publish & install
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    needs: deployment-validation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate RPM lifecycle
+        run: tests/ci/rpm-lifecycle.sh
+
+  required-ci-gate:
+    name: required CI gate
+    runs-on: ubuntu-24.04-arm
+    if: always()
+    needs:
+      - deployment-validation
+      - build-and-test
+      - production-images
+      - infrastructure-durability
+      - rpm-lifecycle
+    steps:
+      - name: Require every validation layer
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          jq -e '
+            [.[] | .result]
+            | length == 5 and all(. == "success")
+          ' <<<"$NEEDS_JSON"
