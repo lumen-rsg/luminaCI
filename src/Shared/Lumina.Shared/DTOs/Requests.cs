@@ -60,7 +60,12 @@ public record ComputeHashRequest(Guid ArtifactId, string FilePath = "");
 public record StoreHashRequest(Guid ArtifactId, string FileName, string Sha256, string Md5, long FileSize);
 
 // Scanner DTOs
-public record ScanRequest(Guid ArtifactId, string? ArtifactPath = null, string ScannerType = "Trivy");
+public record ScanRequest(
+    Guid ArtifactId,
+    string? ArtifactPath = null,
+    string ScannerType = "Trivy",
+    string? ExpectedSha256 = null,
+    long? ExpectedFileSize = null);
 
 // Repository DTOs
 public record CreateRepositoryRequest(string Name, string DisplayName, string BasePath, string Arch, string Distribution, string CreatedBy);

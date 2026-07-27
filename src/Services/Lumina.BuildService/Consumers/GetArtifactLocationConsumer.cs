@@ -25,6 +25,7 @@ public class GetArtifactLocationConsumer : IConsumer<GetArtifactLocation>
     public async Task Consume(ConsumeContext<GetArtifactLocation> context)
     {
         var artifactId = context.Message.ArtifactId;
+        var expectedSha256 = context.Message.ExpectedSha256;
 
         var artifact = await _db.BuildArtifacts
             .Where(a => a.Id == artifactId)
@@ -55,6 +56,12 @@ public class GetArtifactLocationConsumer : IConsumer<GetArtifactLocation>
                 artifactId);
             throw new InvalidOperationException(
                 $"Build artifact {artifactId} has no final signed object");
+        }
+
+        if (!string.Equals(artifact.HashSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Build artifact {artifactId} no longer matches requested digest {expectedSha256}");
         }
 
         await context.RespondAsync(new ArtifactLocation(

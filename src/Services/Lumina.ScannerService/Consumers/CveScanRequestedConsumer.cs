@@ -24,10 +24,15 @@ public class CveScanRequestedConsumer : IConsumer<CveScanRequested>
 
         try
         {
-            var report = await _scannerService.ScanArtifactAsync(msg.ArtifactId, msg.ArtifactPath, msg.ScannerType);
+            var report = await _scannerService.ScanArtifactAsync(
+                msg.ArtifactId,
+                msg.ArtifactPath,
+                msg.ScannerType,
+                msg.ExpectedSha256,
+                msg.ExpectedFileSize);
 
             await context.Publish(new CveScanCompleted(
-                msg.ArtifactId, report.Status, report.CriticalCount,
+                msg.ArtifactId, report.ArtifactSha256 ?? msg.ExpectedSha256, report.Status, report.CriticalCount,
                 report.HighCount, report.MediumCount, report.LowCount, report.UnknownCount, DateTime.UtcNow));
 
             _logger.LogInformation("CVE scan completed for {FileName}: status={Status}, {Critical} critical, {High} high, {Unknown} unknown",
@@ -39,7 +44,7 @@ public class CveScanRequestedConsumer : IConsumer<CveScanRequested>
             // Fail-closed: all counts zero is intentional here because we never
             // parsed anything. Status=Failed drives the signing gate to block.
             await context.Publish(new CveScanCompleted(
-                msg.ArtifactId, ScanStatus.Failed, 0, 0, 0, 0, 0, DateTime.UtcNow));
+                msg.ArtifactId, msg.ExpectedSha256, ScanStatus.Failed, 0, 0, 0, 0, 0, DateTime.UtcNow));
         }
     }
 }

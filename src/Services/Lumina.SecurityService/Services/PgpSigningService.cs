@@ -186,20 +186,23 @@ public class PgpSigningService
                 _db.SigningRequests.Add(request);
             await _db.SaveChangesAsync();
 
-            var actualSha256 = await ComputeSha256Async(safeArtifactPath);
-            if (!string.Equals(actualSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(
-                    $"Artifact digest mismatch before signing: expected {expectedSha256}, got {actualSha256}.");
-
             EnsurePassphraseFile();
-            var tempPath = Path.Combine(
+            var signingDirectory = Path.Combine(
+                Path.GetTempPath(), "lumina-signing", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(signingDirectory);
+            var tempPath = Path.Combine(signingDirectory, Path.GetFileName(safeArtifactPath));
+            var replacementPath = Path.Combine(
                 Path.GetDirectoryName(safeArtifactPath)!,
-                $".{Path.GetFileNameWithoutExtension(safeArtifactPath)}.{Guid.NewGuid():N}.rpm");
+                $".{Path.GetFileNameWithoutExtension(safeArtifactPath)}.signed-{Guid.NewGuid():N}.rpm");
             var verificationDirectory = Path.Combine(_keyDirectory, $"verify-{Guid.NewGuid():N}");
 
             try
             {
                 File.Copy(safeArtifactPath, tempPath, overwrite: false);
+                var snapshotSha256 = await ComputeSha256Async(tempPath);
+                if (!string.Equals(snapshotSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        $"Artifact digest mismatch before signing: expected {expectedSha256}, got {snapshotSha256}.");
 
                 var sign = await RunProcessAsync("rpmsign", args =>
                 {
@@ -218,7 +221,16 @@ public class PgpSigningService
 
                 request.SignedSha256 = await ComputeSha256Async(tempPath);
                 request.SignedFileSize = new FileInfo(tempPath).Length;
-                File.Move(tempPath, safeArtifactPath, overwrite: true);
+                File.Copy(tempPath, replacementPath, overwrite: false);
+                var replacementSha256 = await ComputeSha256Async(replacementPath);
+                if (!string.Equals(
+                        replacementSha256,
+                        request.SignedSha256,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("Signed RPM changed while preparing atomic replacement.");
+                }
+                File.Move(replacementPath, safeArtifactPath, overwrite: true);
 
                 request.Status = "Signed";
                 request.CompletedAt = DateTime.UtcNow;
@@ -231,7 +243,10 @@ public class PgpSigningService
             }
             finally
             {
-                if (File.Exists(tempPath)) File.Delete(tempPath);
+                if (Directory.Exists(signingDirectory))
+                    Directory.Delete(signingDirectory, recursive: true);
+                if (File.Exists(replacementPath))
+                    File.Delete(replacementPath);
                 if (Directory.Exists(verificationDirectory))
                     Directory.Delete(verificationDirectory, recursive: true);
             }

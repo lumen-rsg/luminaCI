@@ -31,7 +31,12 @@ public class ScannerController : ControllerBase
 
         try
         {
-            var report = await _scanner.ScanArtifactAsync(request.ArtifactId, request.ArtifactPath ?? "", request.ScannerType);
+            var report = await _scanner.ScanArtifactAsync(
+                request.ArtifactId,
+                request.ArtifactPath ?? "",
+                request.ScannerType,
+                request.ExpectedSha256,
+                request.ExpectedFileSize);
             return Accepted(new ApiResponse<CveReport>(true, report, null, "Scan started"));
         }
         catch (ArgumentException ex)

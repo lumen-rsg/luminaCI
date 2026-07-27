@@ -73,6 +73,7 @@ public class PipelineRunCoordinatorTests
 
         await coordinator.ReportScanAsync(new CveScanCompleted(
             job.Artifacts[0].Id,
+            job.Artifacts[0].HashSha256!,
             ScanStatus.Completed,
             0, 0, 0, 0, 0,
             DateTime.UtcNow));
@@ -123,6 +124,7 @@ public class PipelineRunCoordinatorTests
         var coordinator = provider.GetRequiredService<PipelineRunCoordinator>();
         await coordinator.ReportScanAsync(new CveScanCompleted(
             job.Artifacts[0].Id,
+            job.Artifacts[0].HashSha256!,
             ScanStatus.Completed,
             0, 1, 0, 0, 0,
             DateTime.UtcNow));
@@ -130,6 +132,37 @@ public class PipelineRunCoordinatorTests
         Assert.Equal(BuildStatus.Failed, job.Status);
         Assert.Equal(StepStatus.Failed, job.StepRuns[1].Status);
         Assert.Equal(StepStatus.Skipped, job.StepRuns[2].Status);
+        Assert.False(await harness.Published.Any<PackageSigningRequested>());
+    }
+
+    [Fact]
+    public async Task Scan_result_with_different_digest_stops_pipeline()
+    {
+        await using var provider = BuildProvider(
+            nameof(Scan_result_with_different_digest_stops_pipeline),
+            Guid.NewGuid());
+        var harness = provider.GetRequiredService<ITestHarness>();
+        await harness.Start();
+
+        var db = provider.GetRequiredService<BuildDbContext>();
+        var job = CreateJob(
+            Step(StepType.Build, 1, StepStatus.Success),
+            Step(StepType.Scan, 2, StepStatus.Running),
+            Step(StepType.Sign, 3));
+        db.BuildJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var coordinator = provider.GetRequiredService<PipelineRunCoordinator>();
+        await coordinator.ReportScanAsync(new CveScanCompleted(
+            job.Artifacts[0].Id,
+            new string('f', 64),
+            ScanStatus.Completed,
+            0, 0, 0, 0, 0,
+            DateTime.UtcNow));
+
+        Assert.Equal(BuildStatus.Failed, job.Status);
+        Assert.Equal(StepStatus.Failed, job.StepRuns[1].Status);
+        Assert.Contains("immutable SHA-256", job.StepRuns[1].Error);
         Assert.False(await harness.Published.Any<PackageSigningRequested>());
     }
 

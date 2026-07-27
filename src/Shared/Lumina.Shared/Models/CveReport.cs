@@ -6,6 +6,7 @@ public class CveReport
 {
     public Guid Id { get; set; }
     public Guid ArtifactId { get; set; }
+    public string? ArtifactSha256 { get; set; }
     public string ScannerType { get; set; } = string.Empty; // Trivy, Grype
     public ScanStatus Status { get; set; } = ScanStatus.Pending;
     public List<Vulnerability> Vulnerabilities { get; set; } = [];

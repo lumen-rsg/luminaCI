@@ -64,6 +64,19 @@ public sealed class PipelineRunCoordinator
         }
 
         var artifact = job.Artifacts.Single(item => item.Id == result.ArtifactId);
+        if (!string.Equals(
+                artifact.HashSha256,
+                result.ScannedSha256,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            await FailStepAsync(
+                job,
+                scanRun,
+                $"CVE scan result for '{artifact.FileName}' does not match its immutable SHA-256 digest.",
+                cancellationToken);
+            return;
+        }
+
         artifact.CveScanStatus = result.Status;
         await _db.SaveChangesAsync(cancellationToken);
 
@@ -218,6 +231,9 @@ public sealed class PipelineRunCoordinator
                         artifact.Id,
                         artifact.FilePath,
                         artifact.FileName,
+                        artifact.HashSha256
+                            ?? throw new InvalidOperationException($"Artifact {artifact.Id} has no SHA-256 digest."),
+                        artifact.FileSize,
                         "Trivy",
                         DateTime.UtcNow), cancellationToken);
                 }
@@ -251,6 +267,8 @@ public sealed class PipelineRunCoordinator
                     await _publishEndpoint.Publish(new PackagePublishRequested(
                         artifact.Id,
                         repositoryId,
+                        artifact.HashSha256
+                            ?? throw new InvalidOperationException($"Artifact {artifact.Id} has no signed SHA-256 digest."),
                         job.TriggeredBy,
                         DateTime.UtcNow), cancellationToken);
                 }

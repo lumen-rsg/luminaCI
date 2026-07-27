@@ -3,6 +3,7 @@ using System;
 using Lumina.ScannerService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Lumina.ScannerService.Data.Migrations
 {
     [DbContext(typeof(ScannerDbContext))]
-    partial class ScannerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260727204301_BindScansToArtifactDigest")]
+    partial class BindScansToArtifactDigest
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

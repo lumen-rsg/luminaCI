@@ -112,7 +112,24 @@ public class MinioStorageService
     /// Publishes a package by requesting only its immutable object reference
     /// over the message bus, then streaming the RPM from MinIO.
     /// </summary>
-    public async Task<Package> PublishPackageAsync(Guid artifactId, Guid repositoryId, string publishedBy)
+    public async Task<Package> PublishPackageAsync(
+        Guid artifactId,
+        Guid repositoryId,
+        string publishedBy)
+    {
+        var signing = await GetRequiredArtifactSigningAsync(artifactId);
+        return await PublishPackageAsync(
+            artifactId,
+            repositoryId,
+            signing.SignedSha256!,
+            publishedBy);
+    }
+
+    public async Task<Package> PublishPackageAsync(
+        Guid artifactId,
+        Guid repositoryId,
+        string expectedSha256,
+        string publishedBy)
     {
         var repo = await _db.Repositories.FindAsync(repositoryId)
             ?? throw new NotFoundException($"Repository {repositoryId} not found");
@@ -121,7 +138,7 @@ public class MinioStorageService
         try
         {
             var response = await _bus.Request<GetArtifactLocation, ArtifactLocation>(
-                new GetArtifactLocation(artifactId), timeout: TimeSpan.FromSeconds(10));
+                new GetArtifactLocation(artifactId, expectedSha256), timeout: TimeSpan.FromSeconds(10));
             artifact = response.Message;
         }
         catch (Exception ex)

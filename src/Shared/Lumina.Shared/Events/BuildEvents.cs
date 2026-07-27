@@ -13,9 +13,17 @@ public record BuildJobFailed(Guid BuildJobId, string ErrorMessage, DateTime Fail
 
 /// <summary>
 /// Sent by BuildService after a successful build to request CVE scanning of artifacts.
-/// Consumed by ScannerService.
+/// ScannerService copies the confined source into private storage and accepts it
+/// only when both the digest and size match this request.
 /// </summary>
-public record CveScanRequested(Guid ArtifactId, string ArtifactPath, string FileName, string ScannerType, DateTime RequestedAt);
+public record CveScanRequested(
+    Guid ArtifactId,
+    string ArtifactPath,
+    string FileName,
+    string ExpectedSha256,
+    long ExpectedFileSize,
+    string ScannerType,
+    DateTime RequestedAt);
 
 /// <summary>
 /// Sent by ScannerService when CVE scan completes.
@@ -27,7 +35,16 @@ public record CveScanRequested(Guid ArtifactId, string ArtifactPath, string File
 /// treats unknowns conservatively and blocks signing when it is non-zero, so a
 /// parser/labeling failure cannot masquerade as a clean scan.
 /// </remarks>
-public record CveScanCompleted(Guid ArtifactId, ScanStatus Status, int CriticalCount, int HighCount, int MediumCount, int LowCount, int UnknownCount, DateTime CompletedAt);
+public record CveScanCompleted(
+    Guid ArtifactId,
+    string ScannedSha256,
+    ScanStatus Status,
+    int CriticalCount,
+    int HighCount,
+    int MediumCount,
+    int LowCount,
+    int UnknownCount,
+    DateTime CompletedAt);
 
 /// <summary>
 /// Sent by BuildService to request hash storage for an artifact.
@@ -37,7 +54,7 @@ public record HashStoreRequested(Guid ArtifactId, string FileName, string Sha256
 
 /// <summary>
 /// Sent by BuildService to request PGP signing of an artifact.
-/// Consumed by SecurityService.
+/// SecurityService signs a private snapshot only after matching ExpectedSha256.
 /// </summary>
 public record PackageSigningRequested(
     Guid ArtifactId,
@@ -88,9 +105,10 @@ public record GetArtifactSigningMetadata(Guid ArtifactId);
 public record ArtifactSigningMetadata(string? KeyFingerprint, string? SignedSha256, DateTime? SignedAt);
 
 /// <summary>
-/// Request the immutable object-store location of a signed build artifact.
+/// Request the immutable object-store location of the exact signed build
+/// artifact identified by ExpectedSha256.
 /// </summary>
-public record GetArtifactLocation(Guid ArtifactId);
+public record GetArtifactLocation(Guid ArtifactId, string ExpectedSha256);
 
 /// <summary>
 /// Small metadata response used to stream the RPM directly from object storage.

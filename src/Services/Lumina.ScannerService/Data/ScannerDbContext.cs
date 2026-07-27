@@ -21,6 +21,7 @@ public class ScannerDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ScannerType).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.ArtifactSha256).HasMaxLength(64);
             entity.HasIndex(e => e.ArtifactId).IsUnique();
             entity.Ignore(e => e.Artifact); // Artifact lives in build-service DB, no FK here
             entity.HasMany(e => e.Vulnerabilities)

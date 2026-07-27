@@ -15,6 +15,7 @@ public sealed class PackagePublishRequestedConsumer(
         var package = await storage.PublishPackageAsync(
             request.ArtifactId,
             request.RepositoryId,
+            request.ExpectedSha256,
             request.PublishedBy);
 
         await context.Publish(new PackagePublished(

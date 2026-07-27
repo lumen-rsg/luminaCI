@@ -4,6 +4,7 @@ namespace Lumina.Shared.Events;
 public record PackagePublishRequested(
     Guid ArtifactId,
     Guid RepositoryId,
+    string ExpectedSha256,
     string PublishedBy,
     DateTime RequestedAt);
 

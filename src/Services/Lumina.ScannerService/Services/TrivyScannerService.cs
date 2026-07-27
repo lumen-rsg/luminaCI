@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Lumina.ScannerService.Data;
@@ -64,57 +65,101 @@ public class TrivyScannerService
     /// <summary>
     /// Scan an artifact using Trivy Server API. Creates a CveReport record.
     /// </summary>
-    public async Task<CveReport> ScanArtifactAsync(Guid artifactId, string artifactPath, string scannerType = "Trivy")
+    public async Task<CveReport> ScanArtifactAsync(
+        Guid artifactId,
+        string artifactPath,
+        string scannerType = "Trivy",
+        string? expectedSha256 = null,
+        long? expectedFileSize = null)
     {
         // SECURITY: confine the client-supplied path to the trusted artifacts
         // root before it reaches trivy (CLI or Server API). Without this an
         // authenticated caller could point the scanner at arbitrary paths and
         // read filesystem contents via the vulnerability report.
         var safePath = ProcessArgumentSanitizer.ResolveConfinedPath(artifactPath, _artifactsRoot);
-
-        _logger.LogInformation("Starting CVE scan for artifact {ArtifactId} at {Path}", artifactId, safePath);
-
-        var report = await _db.CveReports
-            .Include(item => item.Vulnerabilities)
-            .SingleOrDefaultAsync(item => item.ArtifactId == artifactId);
-        if (report is not null && report.Status is ScanStatus.Completed or ScanStatus.Failed)
+        var snapshotDirectory = Path.Combine(Path.GetTempPath(), "lumina-scans", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(snapshotDirectory);
+        var snapshotPath = Path.Combine(snapshotDirectory, Path.GetFileName(safePath));
+        try
         {
+            await using (var source = new FileStream(
+                safePath, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
+            await using (var snapshot = new FileStream(
+                snapshotPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                await source.CopyToAsync(snapshot);
+            }
+
+            var snapshotSize = new FileInfo(snapshotPath).Length;
+            await using var hashStream = File.OpenRead(snapshotPath);
+            var snapshotSha256 = Convert.ToHexString(await SHA256.HashDataAsync(hashStream))
+                .ToLowerInvariant();
+
+            if (expectedFileSize is not null && snapshotSize != expectedFileSize)
+                throw new InvalidOperationException("Artifact size changed before CVE scanning.");
+            if (expectedSha256 is not null &&
+                !string.Equals(snapshotSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Artifact digest mismatch before CVE scanning: expected {expectedSha256}, got {snapshotSha256}.");
+            }
+
             _logger.LogInformation(
-                "Returning existing terminal CVE report {ReportId} for artifact {ArtifactId}",
-                report.Id, artifactId);
+                "Starting CVE scan for artifact {ArtifactId} from verified snapshot {Digest}",
+                artifactId, snapshotSha256);
+
+            var report = await _db.CveReports
+                .Include(item => item.Vulnerabilities)
+                .SingleOrDefaultAsync(item => item.ArtifactId == artifactId);
+            if (report is not null &&
+                (report.Status is ScanStatus.Completed or ScanStatus.Failed) &&
+                !string.IsNullOrWhiteSpace(report.ArtifactSha256))
+            {
+                if (!string.Equals(report.ArtifactSha256, snapshotSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Artifact identity changed after its CVE report was created.");
+                _logger.LogInformation(
+                    "Returning existing terminal CVE report {ReportId} for artifact {ArtifactId}",
+                    report.Id, artifactId);
+                return report;
+            }
+
+            if (report is null)
+            {
+                report = new CveReport
+                {
+                    Id = Guid.NewGuid(),
+                    ArtifactId = artifactId,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _db.CveReports.Add(report);
+            }
+            else
+            {
+                _db.Vulnerabilities.RemoveRange(report.Vulnerabilities);
+                report.Vulnerabilities.Clear();
+            }
+
+            report.ArtifactSha256 = snapshotSha256;
+            report.ScannerType = scannerType;
+            report.Status = ScanStatus.Running;
+            report.CompletedAt = null;
+            report.Summary = null;
+            report.RawOutput = null;
+            await _db.SaveChangesAsync();
+
+            // Trivy sees only this private verified snapshot, never the shared
+            // mutable build path carried by the request.
+            await RunScanAsync(report, snapshotPath);
+
             return report;
         }
-
-        if (report is null)
+        finally
         {
-            report = new CveReport
-            {
-                Id = Guid.NewGuid(),
-                ArtifactId = artifactId,
-                CreatedAt = DateTime.UtcNow
-            };
-            _db.CveReports.Add(report);
+            if (Directory.Exists(snapshotDirectory))
+                Directory.Delete(snapshotDirectory, recursive: true);
         }
-        else
-        {
-            _db.Vulnerabilities.RemoveRange(report.Vulnerabilities);
-            report.Vulnerabilities.Clear();
-        }
-
-        report.ScannerType = scannerType;
-        report.Status = ScanStatus.Running;
-        report.CompletedAt = null;
-        report.Summary = null;
-        report.RawOutput = null;
-        await _db.SaveChangesAsync();
-
-        // IMPORTANT: await the scan so the consumer gets the completed report
-        // with actual vulnerability counts before publishing CveScanCompleted.
-        // Previously this was fire-and-forget (_ = RunScanAsync), which caused
-        // the consumer to publish CveScanCompleted with Status=Running and 0 counts.
-        await RunScanAsync(report, safePath);
-
-        return report;
     }
 
     private async Task RunScanAsync(CveReport report, string artifactPath)
