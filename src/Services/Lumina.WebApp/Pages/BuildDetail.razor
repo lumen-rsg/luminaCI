@@ -195,6 +195,29 @@ else
                                 }
                             </td>
                         </tr>
+                        @if (!string.IsNullOrWhiteSpace(build.BuildProfile))
+                        {
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Target:</td>
+                                <td style="border:none;padding:4px 8px;"><code>@build.BuildProfile</code></td>
+                            </tr>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(build.RunnerImageReference))
+                        {
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Runner:</td>
+                                <td style="border:none;padding:4px 8px;"><code class="text-break">@build.RunnerImageReference</code></td>
+                            </tr>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(build.RunnerImageDigest))
+                        {
+                            <tr style="border:none;">
+                                <td class="text-muted text-sm" style="border:none;padding:4px 8px;">Runner ID:</td>
+                                <td style="border:none;padding:4px 8px;">
+                                    <code class="text-break" title="@build.RunnerImageDigest">@build.RunnerImageDigest</code>
+                                </td>
+                            </tr>
+                        }
                     </table>
                 </div>
             </div>

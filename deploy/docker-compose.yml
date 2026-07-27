@@ -192,8 +192,8 @@ services:
       - Docker__BuildMemoryBytes=${BUILD_MEMORY_BYTES:-2147483648}
       - Docker__BuildPidsLimit=${BUILD_PIDS_LIMIT:-512}
       - Docker__BuildCpuQuota=${BUILD_CPU_QUOTA:-150000}
-      - Docker__AllowedBuildImages__0=${RPM_BUILD_IMAGE:-lumina-rpm-build:latest}
-      - Docker__AllowedBuildImages__1=${DOTNET_BUILD_IMAGE:-lumina-dotnet-build:latest}
+      - Docker__AllowedBuildImages__0=${RPM_BUILD_IMAGE:-lumina-rpm-build:f44-v1}
+      - Docker__AllowedBuildImages__1=${DOTNET_BUILD_IMAGE:-lumina-dotnet-build:f44-v1}
       - Services__SecurityService=http://security-service:5002
       # Shared JWT secret + issuer/audience so build-service can independently
       # re-validate bearer tokens (defense-in-depth) — see SEC-04. The internal
@@ -253,7 +253,7 @@ services:
     environment:
       # Only the API surfaces build-service needs; everything else stays off.
       CONTAINERS: "1"   # create/start/logs/wait/stop/remove build containers
-      IMAGES: "1"        # list images + pull missing build images
+      IMAGES: "1"        # list/inspect images + pull missing build images
       POST: "1"          # allow create/start/pull (mutations)
       # Explicitly denied — reduces blast radius:
       EXEC: "0"
@@ -541,7 +541,7 @@ services:
     build:
       context: ../
       dockerfile: deploy/docker/rpm-build.Dockerfile
-    image: lumina-rpm-build:latest
+    image: lumina-rpm-build:f44-v1
     restart: "no"
     entrypoint: ["true"]
 
@@ -549,7 +549,7 @@ services:
     build:
       context: ../
       dockerfile: deploy/docker/dotnet-build.Dockerfile
-    image: lumina-dotnet-build:latest
+    image: lumina-dotnet-build:f44-v1
     restart: "no"
     entrypoint: ["true"]
 

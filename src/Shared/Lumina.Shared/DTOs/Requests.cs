@@ -15,7 +15,11 @@ public record CreatePipelineRequest(
     string? BuildImage = null,
     string? GitUsername = null,
     string? GitToken = null,
-    string? SpecContent = null);
+    string? SpecContent = null,
+    string? TargetDistribution = null,
+    string? TargetRelease = null,
+    string? TargetArchitecture = null,
+    string? BuildProfile = null);
 
 public record UpdatePipelineRequest(
     string Name,
@@ -29,7 +33,11 @@ public record UpdatePipelineRequest(
     string? GitUsername = null,
     string? GitToken = null,
     string? SpecContent = null,
-    DateTime? ExpectedUpdatedAt = null);
+    DateTime? ExpectedUpdatedAt = null,
+    string? TargetDistribution = null,
+    string? TargetRelease = null,
+    string? TargetArchitecture = null,
+    string? BuildProfile = null);
 
 public record CreatePipelineStepRequest(StepType Type, string Name, int Order, Dictionary<string, string> Configuration);
 

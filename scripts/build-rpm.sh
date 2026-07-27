@@ -14,6 +14,10 @@
 #   AUTO_DOWNLOAD      — "true" to run spectool for missing sources (default: true)
 #   GIT_USERNAME       — Username for private git repositories
 #   GIT_TOKEN          — PAT / password for git auth
+#   TARGET_DISTRIBUTION — Reviewed target distribution (fedora)
+#   TARGET_RELEASE      — Reviewed distribution release (44)
+#   TARGET_ARCHITECTURE — Native RPM architecture (x86_64 or aarch64)
+#   BUILD_PROFILE       — Canonical profile (for example fedora-44-aarch64)
 
 set -euo pipefail
 
@@ -26,11 +30,30 @@ ARTIFACTS_DIR="${ARTIFACTS_DIR:-/artifacts}"
 RPMBUILDER_HOME="/home/rpmbuilder"
 BUILD_DIR="${RPMBUILDER_HOME}/rpmbuild"
 AUTO_DOWNLOAD="${AUTO_DOWNLOAD:-true}"
+TARGET_DISTRIBUTION="${TARGET_DISTRIBUTION:?TARGET_DISTRIBUTION is required}"
+TARGET_RELEASE="${TARGET_RELEASE:?TARGET_RELEASE is required}"
+TARGET_ARCHITECTURE="${TARGET_ARCHITECTURE:?TARGET_ARCHITECTURE is required}"
+BUILD_PROFILE="${BUILD_PROFILE:?BUILD_PROFILE is required}"
+
+runner_distribution=$(. /etc/os-release && printf '%s' "${ID:-unknown}")
+runner_release=$(. /etc/os-release && printf '%s' "${VERSION_ID:-unknown}")
+runner_architecture=$(rpm --eval '%{_target_cpu}')
+expected_profile="${TARGET_DISTRIBUTION}-${TARGET_RELEASE}-${TARGET_ARCHITECTURE}"
+if [ "${runner_distribution}" != "${TARGET_DISTRIBUTION}" ] \
+    || [ "${runner_release}" != "${TARGET_RELEASE}" ] \
+    || [ "${runner_architecture}" != "${TARGET_ARCHITECTURE}" ] \
+    || [ "${BUILD_PROFILE}" != "${expected_profile}" ]; then
+    echo "ERROR: runner target mismatch"
+    echo "Requested: ${BUILD_PROFILE}"
+    echo "Runner: ${runner_distribution}-${runner_release}-${runner_architecture}"
+    exit 1
+fi
 
 echo "=== Lumina CI RPM Build ==="
 echo "Spec: ${SPEC_NAME}"
 echo "Artifacts dir: ${ARTIFACTS_DIR}"
 echo "Job ID: ${BUILD_JOB_ID:-N/A}"
+echo "Target profile: ${BUILD_PROFILE}"
 echo "Auto-download sources: ${AUTO_DOWNLOAD}"
 echo "============================"
 
@@ -492,6 +515,7 @@ builder_phase() {
     : > /tmp/build.log
     echo "Creating source RPM (as uid $(id -u))..."
     rpmbuild -bs "${BUILD_DIR}/SPECS/${SPEC_NAME}" \
+        --target "${TARGET_ARCHITECTURE}" \
         --define "_topdir ${BUILD_DIR}" \
         2>&1 | tee -a /tmp/build.log
     rpmbuild_exit=${PIPESTATUS[0]}
@@ -512,6 +536,7 @@ builder_phase() {
     mkdir -p "${rebuild_dir}"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
     echo "Rebuilding immutable source RPM in clean topdir: $(basename "${source_rpm}")"
     rpmbuild --rebuild "${source_rpm}" \
+        --target "${TARGET_ARCHITECTURE}" \
         --define "_topdir ${rebuild_dir}" \
         2>&1 | tee -a /tmp/build.log
     rpmbuild_exit=${PIPESTATUS[0]}
@@ -581,6 +606,10 @@ builder_phase() {
   "rpmArtifactsManifestSha256": "${artifacts_sha}",
   "runnerImageReference": "$(json_escape "${runner_reference}")",
   "runnerImageIdentity": "$(json_escape "${runner_identity}")",
+  "targetDistribution": "$(json_escape "${TARGET_DISTRIBUTION}")",
+  "targetRelease": "$(json_escape "${TARGET_RELEASE}")",
+  "targetArchitecture": "$(json_escape "${TARGET_ARCHITECTURE}")",
+  "buildProfile": "$(json_escape "${BUILD_PROFILE}")",
   "targetCpu": "$(json_escape "${target_cpu}")",
   "targetOs": "$(json_escape "${target_os}")",
   "runnerOs": "$(json_escape "${os_id}")",
@@ -597,7 +626,8 @@ echo "Installing build dependencies (as root)..."
 # `2>/dev/null || echo "Warning..."` discarded the real error and downgraded a
 # hard failure to a hint, so operators chased downstream rpmbuild errors
 # instead of the missing-deps root cause.
-if ! dnf builddep -y "${BUILD_DIR}/SPECS/${SPEC_NAME}"; then
+if ! dnf --disablerepo='*' --enablerepo=fedora builddep -y \
+    "${BUILD_DIR}/SPECS/${SPEC_NAME}"; then
     echo "ERROR: dnf builddep failed — see stderr above for the unresolvable/missing dependencies."
     exit 1
 fi
@@ -609,6 +639,7 @@ chown -R rpmbuilder:lumina-build "${BUILD_DIR}"
 export -f builder_phase
 export BUILD_DIR SPEC_NAME ARTIFACTS_DIR RPMBUILDER_HOME
 export BUILD_JOB_ID COMMIT_SHA RUNNER_IMAGE_REFERENCE RUNNER_IMAGE_IDENTITY
+export TARGET_DISTRIBUTION TARGET_RELEASE TARGET_ARCHITECTURE BUILD_PROFILE
 setpriv --reuid 1000 --regid 1654 --clear-groups -- bash -c 'builder_phase'
 BUILD_EXIT=$?
 

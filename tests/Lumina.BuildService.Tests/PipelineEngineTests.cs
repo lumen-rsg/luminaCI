@@ -90,7 +90,11 @@ public class PipelineEngineTests
         Tags: new List<string>(),
         GitRepoUrl: "example.com/repo.git",
         GitBranch: "main",
-        WebhookSecret: webhookSecret);
+        WebhookSecret: webhookSecret,
+        TargetDistribution: "fedora",
+        TargetRelease: "44",
+        TargetArchitecture: "aarch64",
+        BuildProfile: "fedora-44-aarch64");
 
     // ─── CreatePipelineAsync: webhook-secret gate ────────────────────────
 
@@ -129,6 +133,24 @@ public class PipelineEngineTests
         var fromDb = await sp.GetRequiredService<BuildDbContext>().Pipelines
             .Include(p => p.Steps).FirstAsync(p => p.Id == pipeline.Id);
         Assert.Equal("s3cret", fromDb.WebhookSecret);
+    }
+
+    [Fact]
+    public async Task CreatePipelineAsync_RequiresExplicitBuildTarget()
+    {
+        await using var sp = BuildServiceProvider(
+            nameof(CreatePipelineAsync_RequiresExplicitBuildTarget));
+        var engine = await NewEngineAsync(sp);
+        var request = BuildRequest("s3cret") with
+        {
+            TargetDistribution = null,
+            TargetRelease = null,
+            TargetArchitecture = null,
+            BuildProfile = null
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            engine.CreatePipelineAsync(request, "ops"));
     }
 
     [Fact]
@@ -223,7 +245,11 @@ public class PipelineEngineTests
             "changed", "updated",
             [new CreatePipelineStepRequest(StepType.Build, "build", 1, new Dictionary<string, string>())],
             [],
-            ExpectedUpdatedAt: pipeline.UpdatedAt);
+            ExpectedUpdatedAt: pipeline.UpdatedAt,
+            TargetDistribution: "fedora",
+            TargetRelease: "44",
+            TargetArchitecture: "aarch64",
+            BuildProfile: "fedora-44-aarch64");
 
         var updated = await engine.UpdatePipelineAsync(pipeline.Id, request);
 
@@ -334,6 +360,10 @@ public class PipelineEngineTests
         Assert.Equal("fix", job.CommitMessage);
         Assert.Equal("jane", job.CommitAuthor);
         Assert.Equal("pkg.spec", job.SpecName);
+        Assert.Equal("fedora", job.TargetDistribution);
+        Assert.Equal("44", job.TargetRelease);
+        Assert.Equal("aarch64", job.TargetArchitecture);
+        Assert.Equal("fedora-44-aarch64", job.BuildProfile);
         Assert.Single(job.StepRuns);
         Assert.Equal(StepStatus.Running, job.StepRuns[0].Status);
         Assert.Equal(StepType.Build, job.StepRuns[0].Type);

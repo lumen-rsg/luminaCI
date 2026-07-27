@@ -36,6 +36,10 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.CreatedBy).IsRequired().HasMaxLength(256);
             entity.Property(e => e.GitUsername).HasMaxLength(256);
             entity.Property(e => e.Tags).HasColumnType("text[]");
+            entity.Property(e => e.TargetDistribution).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.TargetRelease).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.TargetArchitecture).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.BuildProfile).IsRequired().HasMaxLength(128);
             entity.Property(e => e.UpdatedAt).IsConcurrencyToken();
 
             // Encrypted secret columns. Stored as `text` because the ciphertext
@@ -79,6 +83,12 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.Branch).HasMaxLength(256);
             entity.Property(e => e.CommitMessage).HasMaxLength(2048);
             entity.Property(e => e.CommitAuthor).HasMaxLength(256);
+            entity.Property(e => e.TargetDistribution).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.TargetRelease).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.TargetArchitecture).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.BuildProfile).IsRequired().HasMaxLength(128);
+            entity.Property(e => e.RunnerImageReference).HasMaxLength(512);
+            entity.Property(e => e.RunnerImageDigest).HasMaxLength(512);
             entity.HasMany(e => e.Artifacts).WithOne(e => e.BuildJob).HasForeignKey(e => e.BuildJobId).OnDelete(DeleteBehavior.Cascade);
             entity.HasMany(e => e.StepRuns).WithOne(e => e.BuildJob).HasForeignKey(e => e.BuildJobId).OnDelete(DeleteBehavior.Cascade);
         });

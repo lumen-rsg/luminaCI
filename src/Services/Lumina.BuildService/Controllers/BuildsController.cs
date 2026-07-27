@@ -66,7 +66,9 @@ public class BuildsController : ControllerBase
             job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor,
             job.StepRuns.OrderBy(step => step.Order).Select(step => new BuildStepRunResponse(
                 step.Id, step.Type, step.Name, step.Order, step.Status,
-                step.StartedAt, step.CompletedAt, step.Error)).ToList());
+                step.StartedAt, step.CompletedAt, step.Error)).ToList(),
+            job.TargetDistribution, job.TargetRelease, job.TargetArchitecture, job.BuildProfile,
+            job.RunnerImageReference, job.RunnerImageDigest);
         return Ok(new ApiResponse<BuildJobResponse>(true, response, null, null));
     }
 

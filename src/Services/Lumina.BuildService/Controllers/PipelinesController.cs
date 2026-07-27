@@ -51,7 +51,8 @@ public class PipelinesController : ControllerBase
         var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
             p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Configuration)).ToList(),
             p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
-            p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
+            p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent,
+            p.TargetDistribution, p.TargetRelease, p.TargetArchitecture, p.BuildProfile);
         return Ok(new ApiResponse<PipelineResponse>(true, response, null, null));
     }
 
@@ -66,7 +67,8 @@ public class PipelinesController : ControllerBase
             var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
                 p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Configuration)).ToList(),
                 p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
-                p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
+                p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent,
+                p.TargetDistribution, p.TargetRelease, p.TargetArchitecture, p.BuildProfile);
             return CreatedAtAction(nameof(Get), new { id = p.Id }, new ApiResponse<PipelineResponse>(true, response, null, "Pipeline created"));
         }
         catch (Exception ex)
@@ -89,7 +91,9 @@ public class PipelinesController : ControllerBase
                 job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs,
                 job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [],
                 job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor,
-                job.StepRuns.Select(ToStepRunResponse).ToList());
+                job.StepRuns.Select(ToStepRunResponse).ToList(),
+                job.TargetDistribution, job.TargetRelease, job.TargetArchitecture, job.BuildProfile,
+                job.RunnerImageReference, job.RunnerImageDigest);
             return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Build triggered"));
         }
         catch (Exception ex)
@@ -111,7 +115,8 @@ public class PipelinesController : ControllerBase
             var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
                 p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Configuration)).ToList(),
                 p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
-                p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
+                p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent,
+                p.TargetDistribution, p.TargetRelease, p.TargetArchitecture, p.BuildProfile);
             return Ok(new ApiResponse<PipelineResponse>(true, response, null, "Pipeline updated"));
         }
         catch (Exception ex)
@@ -154,7 +159,9 @@ public class PipelinesController : ControllerBase
                 job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs,
                 job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [],
                 job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor,
-                job.StepRuns.Select(ToStepRunResponse).ToList());
+                job.StepRuns.Select(ToStepRunResponse).ToList(),
+                job.TargetDistribution, job.TargetRelease, job.TargetArchitecture, job.BuildProfile,
+                job.RunnerImageReference, job.RunnerImageDigest);
             return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Auto build triggered — sources will be fetched from git"));
         }
         catch (Exception ex)

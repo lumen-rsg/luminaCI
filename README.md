@@ -331,7 +331,9 @@ Open `https://<host>/`. Pages:
    - **Branch** — default `main`
    - **Spec File Path** — path to the `.spec` inside the repo
    - **Webhook Secret** — shared secret used to verify inbound webhooks
-4. **Create**.
+4. Select the reviewed **Fedora 44** build target and its native
+   **x86_64** or **aarch64** architecture.
+5. **Create**.
 
 ### Trigger a build
 
@@ -343,7 +345,8 @@ Open `https://<host>/`. Pages:
 ### Watch a build
 
 Open **Builds → `<id>`** for live log streaming (SSE), artifact list,
-downloadable `.spec`, and Trivy/PGP status.
+downloadable `.spec`, Trivy/PGP status, and the snapshotted target profile and
+immutable Docker image ID used for the run.
 
 ### Webhooks
 
@@ -382,7 +385,7 @@ name="aurora"
 source="https://github.com/lumen-rsg/aurora.net"
 source_type="git"
 source_branch="main"
-build_image="lumina-dotnet-build:latest"
+build_image="lumina-dotnet-build:f44-v1"
 
 [package]
 name="testpkg"

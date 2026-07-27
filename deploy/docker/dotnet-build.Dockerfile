@@ -1,10 +1,16 @@
-# Pinned to a specific Fedora major (not :latest) for reproducible builds.
-# See rpm-build.Dockerfile for rationale. Keep in sync with it.
-FROM fedora:44
+# Keep the immutable base and release-only repository policy in sync with the
+# generic RPM runner.
+FROM fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+
+LABEL org.opencontainers.image.version="fedora-44-dotnet-v1" \
+      io.lumina.build.distribution="fedora" \
+      io.lumina.build.release="44" \
+      io.lumina.build.dotnet-sdk="10.0.104-1.fc44"
 
 # Install RPM build tools + .NET SDK + NativeAOT dependencies.
 # No `sudo` (see rpm-build.Dockerfile for rationale).
-RUN dnf install -y \
+RUN dnf --disablerepo='*' --enablerepo=fedora \
+    --setopt=install_weak_deps=False install -y \
     rpm-build \
     rpmdevtools \
     curl \
@@ -15,12 +21,9 @@ RUN dnf install -y \
     findutils \
     icu \
     libicu-devel \
-    && dnf clean all
-
-# Install .NET SDK 10.0. --channel 10.0 already pins the major; the install
-# script resolves it to the latest 10.0.x SDK at build time.
-RUN curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0 --install-dir /usr/share/dotnet \
-    && ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+    dotnet-sdk-10.0-10.0.104-1.fc44 \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 
 # Verify installations
 RUN dotnet --version && clang --version | head -1

@@ -1,4 +1,5 @@
 using Docker.DotNet;
+using Lumina.BuildService.Services;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Lumina.BuildService.Health;
@@ -33,6 +34,7 @@ public sealed class DockerReadinessHealthCheck(IConfiguration configuration) : I
         var digests = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var image in images)
         {
+            BuildImagePolicy.Resolve(configuration, image);
             var inspection = await client.Images.InspectImageAsync(image, cancellationToken);
             if (string.IsNullOrWhiteSpace(inspection.ID) ||
                 !inspection.ID.StartsWith("sha256:", StringComparison.Ordinal))

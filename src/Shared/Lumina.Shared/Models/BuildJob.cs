@@ -25,5 +25,13 @@ public class BuildJob
     public string? CommitMessage { get; set; }
     public string? CommitAuthor { get; set; }
 
+    // Immutable build target and runner snapshot captured when the job starts.
+    public string TargetDistribution { get; set; } = string.Empty;
+    public string TargetRelease { get; set; } = string.Empty;
+    public string TargetArchitecture { get; set; } = string.Empty;
+    public string BuildProfile { get; set; } = string.Empty;
+    public string? RunnerImageReference { get; set; }
+    public string? RunnerImageDigest { get; set; }
+
     public Pipeline? Pipeline { get; set; }
 }

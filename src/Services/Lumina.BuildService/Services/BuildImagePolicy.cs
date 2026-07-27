@@ -9,7 +9,7 @@ namespace Lumina.BuildService.Services;
 /// </summary>
 public static class BuildImagePolicy
 {
-    public const string DefaultImage = "lumina-rpm-build:latest";
+    public const string DefaultImage = "lumina-rpm-build:f44-v1";
 
     public static string Resolve(IConfiguration configuration, string? requestedImage)
     {
@@ -34,6 +34,13 @@ public static class BuildImagePolicy
         {
             throw new ValidationException(
                 $"Build image '{image}' is not an allowed administrator-managed runner.");
+        }
+
+        if (image.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ||
+            (!image.Contains('@') && image.LastIndexOf(':') <= image.LastIndexOf('/')))
+        {
+            throw new ValidationException(
+                $"Build image '{image}' must use an immutable digest or an explicit version tag.");
         }
 
         return image;

@@ -1,7 +1,11 @@
-# Pinned to a specific Fedora major (not :latest) for reproducible RPM builds:
-# :latest drifts, so a spec that builds today can break tomorrow with no code
-# change. Bump deliberately after re-validating the build specs.
-FROM fedora:44
+# Pin the multi-platform Fedora 44 release image by OCI index digest. Package
+# installation below is restricted to Fedora's immutable release repository;
+# the mutable updates repository is deliberately excluded.
+FROM fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+
+LABEL org.opencontainers.image.version="fedora-44-v1" \
+      io.lumina.build.distribution="fedora" \
+      io.lumina.build.release="44"
 
 # Install RPM build tools, a minimal C/C++ build toolchain, and multi-protocol
 # source-fetching tools.
@@ -15,7 +19,8 @@ FROM fedora:44
 # entrypoint (it must, to install into /usr/lib and write /var/lib/rpm); the
 # untrusted %build/%install shell then runs as the `rpmbuilder` user. See the
 # privilege-split comment at the ENTRYPOINT below and in build-rpm.sh.
-RUN dnf install -y \
+RUN dnf --disablerepo='*' --enablerepo=fedora \
+    --setopt=install_weak_deps=False install -y \
     rpm-build \
     rpmdevtools \
     gcc \
@@ -35,7 +40,8 @@ RUN dnf install -y \
     gzip \
     bzip2 \
     xz \
-    && dnf clean all
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 
 # UID 1000 is the unprivileged build identity. GID 1654 is shared with the
 # service containers' built-in `app` identity, so both sides can write setgid

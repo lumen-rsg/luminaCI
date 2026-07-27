@@ -7,7 +7,7 @@ namespace Lumina.Shared.DTOs;
 public record ApiResponse<T>(bool Success, T? Data, string? Error, string? Message);
 
 // Pipeline Responses
-public record PipelineResponse(Guid Id, string Name, string Description, PipelineStatus Status, List<PipelineStepResponse> Steps, string CreatedBy, DateTime CreatedAt, DateTime UpdatedAt, List<string> Tags, string? GitRepoUrl, string? GitBranch, string? SpecPath, string? WebhookUrl, string? BuildImage, string? GitUsername, bool HasGitToken, string? SpecContent = null);
+public record PipelineResponse(Guid Id, string Name, string Description, PipelineStatus Status, List<PipelineStepResponse> Steps, string CreatedBy, DateTime CreatedAt, DateTime UpdatedAt, List<string> Tags, string? GitRepoUrl, string? GitBranch, string? SpecPath, string? WebhookUrl, string? BuildImage, string? GitUsername, bool HasGitToken, string? SpecContent = null, string TargetDistribution = "fedora", string TargetRelease = "44", string TargetArchitecture = "aarch64", string BuildProfile = "fedora-44-aarch64");
 
 public record PipelineStepResponse(Guid Id, StepType Type, string Name, int Order, Dictionary<string, string> Configuration);
 
@@ -16,7 +16,7 @@ public record PipelineListResponse(List<PipelineSummaryResponse> Pipelines, int 
 public record PipelineSummaryResponse(Guid Id, string Name, string Description, PipelineStatus Status, string CreatedBy, DateTime CreatedAt, int StepCount, string? GitRepoUrl = null, string? GitBranch = null);
 
 // Build Responses
-public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null, List<BuildStepRunResponse>? StepRuns = null);
+public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null, List<BuildStepRunResponse>? StepRuns = null, string? TargetDistribution = null, string? TargetRelease = null, string? TargetArchitecture = null, string? BuildProfile = null, string? RunnerImageReference = null, string? RunnerImageDigest = null);
 
 public record BuildArtifactResponse(Guid Id, string FileName, long FileSize, string? HashSha256, string? HashMd5, string? SigningKeyFingerprint, DateTime? SignedAt, ScanStatus CveScanStatus, Guid? PublishedRepositoryId = null, DateTime? PublishedAt = null);
 

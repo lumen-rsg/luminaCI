@@ -36,7 +36,11 @@ public class Pipeline
     public string? GitToken { get; set; }  // Personal Access Token or deploy key password
 
     // Build configuration
-    public string? BuildImage { get; set; }  // Docker image for builds, e.g. "lumina-rpm-build:latest" or "lumina-dotnet-build:latest"
+    public string? BuildImage { get; set; }
+    public string TargetDistribution { get; set; } = "fedora";
+    public string TargetRelease { get; set; } = "44";
+    public string TargetArchitecture { get; set; } = "aarch64";
+    public string BuildProfile { get; set; } = "fedora-44-aarch64";
 
     // Spec content (for packages where .spec is NOT in the git repo)
     public string? SpecContent { get; set; }  // Full .spec file content — used by Auto Build when repo has no spec

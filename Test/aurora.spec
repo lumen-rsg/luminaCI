@@ -11,6 +11,13 @@ Source0:        %{name}-%{version}.tar.gz
 
 ExclusiveArch:  x86_64 aarch64
 
+%ifarch x86_64
+%global dotnet_rid linux-x64
+%endif
+%ifarch aarch64
+%global dotnet_rid linux-arm64
+%endif
+
 %description
 Aurora is the package manager and bootstrap engine for Lumina.
 Built on the battle-tested foundation of the RPM ecosystem, Aurora replaces
@@ -25,7 +32,7 @@ for missing capabilities.
 %build
 dotnet publish Aurora.CLI/Aurora.CLI.csproj \
     -c Release \
-    -r linux-x64 \
+    -r %{dotnet_rid} \
     -o %{_builddir}/publish \
     --self-contained true
 

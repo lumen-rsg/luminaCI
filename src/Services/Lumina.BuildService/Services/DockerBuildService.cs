@@ -370,7 +370,18 @@ public class DockerBuildService : IBuildLauncher
         try
         {
             // Ensure the build image exists locally — try to pull if missing
-            var imageIdentity = await EnsureImageExistsAsync(imageName);
+            var resolvedImage = await EnsureImageExistsAsync(imageName);
+            job.RunnerImageReference = imageName;
+            job.RunnerImageDigest = resolvedImage.Identity;
+            if (!string.Equals(
+                    resolvedImage.Architecture,
+                    job.TargetArchitecture,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Runner '{imageName}' is {resolvedImage.Architecture}, but build {job.Id} targets {job.TargetArchitecture}.");
+            }
+
             job.Status = BuildStatus.Building;
             job.StartedAt = DateTime.UtcNow;
             _db.BuildJobs.Update(job);
@@ -397,7 +408,11 @@ public class DockerBuildService : IBuildLauncher
                 $"ARTIFACTS_DIR=/artifacts",
                 $"BUILD_JOB_ID={job.Id}",
                 $"RUNNER_IMAGE_REFERENCE={imageName}",
-                $"RUNNER_IMAGE_IDENTITY={imageIdentity}",
+                $"RUNNER_IMAGE_IDENTITY={resolvedImage.Identity}",
+                $"TARGET_DISTRIBUTION={job.TargetDistribution}",
+                $"TARGET_RELEASE={job.TargetRelease}",
+                $"TARGET_ARCHITECTURE={job.TargetArchitecture}",
+                $"BUILD_PROFILE={job.BuildProfile}",
                 "AUTO_DOWNLOAD=true"
             };
 
@@ -484,7 +499,10 @@ public class DockerBuildService : IBuildLauncher
             // non-privileged uid on the host.
             var createParams = new CreateContainerParameters
             {
-                Image = imageName,
+                // Resolve a configured alias once, then create by immutable image
+                // ID. Retagging the alias between inspection and container
+                // creation cannot change the bytes used by this job.
+                Image = resolvedImage.Identity,
                 Env = envVars,
                 HostConfig = new HostConfig
                 {
@@ -914,7 +932,7 @@ public class DockerBuildService : IBuildLauncher
     /// Ensure the specified Docker image exists locally. If not found, attempt to pull it.
     /// This prevents build failures when images haven't been pre-built on a new device.
     /// </summary>
-    private async Task<string> EnsureImageExistsAsync(string imageName)
+    private async Task<ResolvedBuildImage> EnsureImageExistsAsync(string imageName)
     {
         try
         {
@@ -930,7 +948,7 @@ public class DockerBuildService : IBuildLauncher
             if (images.Count > 0)
             {
                 _logger.LogDebug("Build image {Image} found locally", imageName);
-                return GetImageIdentity(images[0], imageName);
+                return await ResolveImageAsync(images[0], imageName);
             }
 
             _logger.LogWarning("Build image {Image} not found locally, attempting to pull...", imageName);
@@ -955,8 +973,9 @@ public class DockerBuildService : IBuildLauncher
                     }
                 });
                 return pulledImages.Count > 0
-                    ? GetImageIdentity(pulledImages[0], imageName)
-                    : imageName;
+                    ? await ResolveImageAsync(pulledImages[0], imageName)
+                    : throw new InvalidOperationException(
+                        $"Pulled build image '{imageName}' could not be resolved to an immutable image ID.");
             }
             catch (Exception pullEx)
             {
@@ -967,20 +986,42 @@ public class DockerBuildService : IBuildLauncher
                     "Build it first with: docker compose -f deploy/docker-compose.yml build rpm-build-image", pullEx);
             }
         }
-        catch (InvalidOperationException)
-        {
-            throw; // Re-throw our own exception
-        }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not verify build image {Image} existence, proceeding anyway", imageName);
-            return imageName;
+            _logger.LogError(ex, "Could not resolve build image {Image} to an immutable identity", imageName);
+            throw new InvalidOperationException(
+                $"Build image '{imageName}' could not be verified.", ex);
         }
     }
 
-    private static string GetImageIdentity(ImagesListResponse image, string fallback)
-        => image.RepoDigests?.FirstOrDefault()
-            ?? (!string.IsNullOrWhiteSpace(image.ID) ? image.ID : fallback);
+    private async Task<ResolvedBuildImage> ResolveImageAsync(
+        ImagesListResponse image,
+        string reference)
+    {
+        if (string.IsNullOrWhiteSpace(image.ID) ||
+            !image.ID.StartsWith("sha256:", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Build image '{reference}' has no immutable Docker image ID.");
+        }
+
+        var inspected = await _docker.Images.InspectImageAsync(image.ID);
+        var architecture = inspected.Architecture switch
+        {
+            "amd64" => "x86_64",
+            "arm64" => "aarch64",
+            _ => inspected.Architecture
+        };
+        if (string.IsNullOrWhiteSpace(architecture))
+        {
+            throw new InvalidOperationException(
+                $"Build image '{reference}' has no architecture metadata.");
+        }
+
+        return new ResolvedBuildImage(image.ID, architecture);
+    }
+
+    private sealed record ResolvedBuildImage(string Identity, string Architecture);
 
     /// <summary>
     /// Save failed build log to a file for diagnostics.

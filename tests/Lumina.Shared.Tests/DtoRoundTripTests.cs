@@ -50,10 +50,14 @@ public class DtoRoundTripTests
             GitBranch: "main",
             SpecPath: "pkg.spec",
             WebhookSecret: "s3cret",
-            BuildImage: "lumina-rpm-build:latest",
+            BuildImage: "lumina-rpm-build:f44-v1",
             GitUsername: "user",
             GitToken: "tok",
-            SpecContent: "Name: pkg");
+            SpecContent: "Name: pkg",
+            TargetDistribution: "fedora",
+            TargetRelease: "44",
+            TargetArchitecture: "aarch64",
+            BuildProfile: "fedora-44-aarch64");
 
         var rt = RoundTrip(req);
         Assert.Equal(req.Name, rt.Name);
@@ -62,6 +66,7 @@ public class DtoRoundTripTests
         Assert.Equal("v", rt.Steps[0].Configuration["k"]);
         Assert.Equal(2, rt.Tags.Count);
         Assert.Equal("s3cret", rt.WebhookSecret);
+        Assert.Equal("fedora-44-aarch64", rt.BuildProfile);
     }
 
     [Fact]

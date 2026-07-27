@@ -49,6 +49,11 @@ public class PipelineEngine
         }
 
         PipelineDefinitionValidator.Validate(request.Steps);
+        var target = BuildTargetPolicy.Resolve(
+            request.TargetDistribution,
+            request.TargetRelease,
+            request.TargetArchitecture,
+            request.BuildProfile);
 
         var pipeline = new Pipeline
         {
@@ -64,6 +69,10 @@ public class PipelineEngine
             SpecPath = request.SpecPath,
             WebhookSecret = request.WebhookSecret,
             BuildImage = request.BuildImage,
+            TargetDistribution = target.Distribution,
+            TargetRelease = target.Release,
+            TargetArchitecture = target.Architecture,
+            BuildProfile = target.Profile,
             GitUsername = request.GitUsername,
             GitToken = request.GitToken,
             SpecContent = request.SpecContent,
@@ -104,6 +113,11 @@ public class PipelineEngine
         }
 
         PipelineDefinitionValidator.Validate(pipeline.Steps);
+        var target = BuildTargetPolicy.Resolve(
+            pipeline.TargetDistribution,
+            pipeline.TargetRelease,
+            pipeline.TargetArchitecture,
+            pipeline.BuildProfile);
 
         // Fail-closed: a pipeline that declares a Sign step must have an active
         // PGP key before any build starts, otherwise the artifact would be built
@@ -157,6 +171,10 @@ public class PipelineEngine
             Branch = request.Branch ?? pipeline.GitBranch,
             CommitMessage = request.CommitMessage,
             CommitAuthor = request.CommitAuthor,
+            TargetDistribution = target.Distribution,
+            TargetRelease = target.Release,
+            TargetArchitecture = target.Architecture,
+            BuildProfile = target.Profile,
             StepRuns = pipeline.Steps
                 .OrderBy(step => step.Order)
                 .Select(step => new BuildStepRun
@@ -339,6 +357,11 @@ public class PipelineEngine
             throw new ConflictException("The pipeline was modified by another user. Reload it before saving.");
 
         PipelineDefinitionValidator.Validate(request.Steps);
+        var target = BuildTargetPolicy.Resolve(
+            request.TargetDistribution,
+            request.TargetRelease,
+            request.TargetArchitecture,
+            request.BuildProfile);
 
         pipeline.Name = request.Name;
         pipeline.Description = request.Description;
@@ -350,6 +373,10 @@ public class PipelineEngine
         if (request.GitBranch != null) pipeline.GitBranch = request.GitBranch;
         if (request.SpecPath != null) pipeline.SpecPath = request.SpecPath;
         if (request.BuildImage != null) pipeline.BuildImage = request.BuildImage;
+        pipeline.TargetDistribution = target.Distribution;
+        pipeline.TargetRelease = target.Release;
+        pipeline.TargetArchitecture = target.Architecture;
+        pipeline.BuildProfile = target.Profile;
         if (request.GitUsername != null) pipeline.GitUsername = request.GitUsername;
         if (request.GitToken != null) pipeline.GitToken = request.GitToken;
         if (request.SpecContent != null) pipeline.SpecContent = request.SpecContent;
