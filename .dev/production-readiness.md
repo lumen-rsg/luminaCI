@@ -63,8 +63,6 @@ Passing CI run:
 
 ## Production acceptance checklist
 
-- [ ] Full Compose stack reaches healthy state in CI.
-- [ ] `scripts/smoke-test.sh` passes against that stack.
 - [ ] A real source-to-build-to-scan-to-sign-to-publish canary succeeds in
       staging.
 - [ ] Strong production secrets and signing files are installed.

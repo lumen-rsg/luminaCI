@@ -154,6 +154,13 @@ section "Public boundary and authentication"
 request GET "/"
 expect_status "Web console entry document" 200
 
+for health_path in /health/startup /health/live /health/ready; do
+    request GET "$health_path"
+    expect_status "Anonymous ${health_path} probe" 200
+done
+expect_json "Readiness response reports healthy dependencies" \
+    '.status == "Healthy" and (.checks | type == "object")'
+
 request GET "/api/pipelines?page=1&pageSize=1"
 expect_status "Protected API rejects anonymous requests" 401
 

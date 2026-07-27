@@ -245,6 +245,18 @@ jobs:
       - name: Verify durable infrastructure
         run: tests/ci/infrastructure-durability.sh
 
+  compose-smoke:
+    name: complete Compose application smoke test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    needs: deployment-validation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start and smoke-test the complete application
+        run: tests/ci/compose-smoke.sh
+
   rpm-lifecycle:
     name: rpm build, sign, publish & install
     runs-on: ubuntu-24.04-arm
@@ -266,6 +278,7 @@ jobs:
       - build-and-test
       - production-images
       - infrastructure-durability
+      - compose-smoke
       - rpm-lifecycle
     steps:
       - name: Require every validation layer
@@ -274,5 +287,5 @@ jobs:
         run: |
           jq -e '
             [.[] | .result]
-            | length == 5 and all(. == "success")
+            | length == 6 and all(. == "success")
           ' <<<"$NEEDS_JSON"

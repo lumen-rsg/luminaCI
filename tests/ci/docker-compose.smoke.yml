@@ -1,0 +1,33 @@
+services:
+  volume-init:
+    volumes:
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/builds:/volumes/builds:z
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/sources:/volumes/sources:z
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/extra-sources:/volumes/extra-sources:z
+
+  build-service:
+    volumes:
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/builds:/app/builds:z
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/builds:/opt/lumina/builds:z
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/sources:/opt/lumina/sources:z
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/extra-sources:/opt/lumina/extra-sources:z
+
+  security-service:
+    volumes:
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/builds:/app/builds:z
+
+  scanner-service:
+    volumes:
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/builds:/app/builds:z
+
+  trivy:
+    volumes:
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/builds:/app/builds:z
+
+  source-service:
+    volumes:
+      - ${LUMINA_CI_DATA:?LUMINA_CI_DATA must be set}/sources:/opt/lumina/sources:z
+
+  nginx:
+    volumes:
+      - ${LUMINA_CI_CERTS:?LUMINA_CI_CERTS must be set}:/etc/nginx/certs:ro,z
