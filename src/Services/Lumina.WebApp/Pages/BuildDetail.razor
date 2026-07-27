@@ -344,20 +344,45 @@ else
     <div class="console-output animate-slide-in">
         <div class="console-header">
             <span><Icon Name="terminal" /> Build Logs</span>
-            <div class="d-flex gap-2">
+            <div class="d-flex align-items-center gap-2">
                 @if (isRunning)
                 {
-                    <span class="badge bg-primary building-pulse">
-                        <span class="spinner-border spinner-border-sm" style="width:12px;height:12px;border-width:1px;"></span>
-                        @(_streaming ? "Live" : "Connecting...")
+                    <span class="badge @GetStreamBadgeClass()" role="status">
+                        @if (_streamState is LogStreamState.Connecting or LogStreamState.Reconnecting)
+                        {
+                            <span class="spinner-border spinner-border-sm" style="width:12px;height:12px;border-width:1px;"></span>
+                        }
+                        @GetStreamStateText()
                     </span>
                 }
                 @if (_logLines.Count > 0)
                 {
-                    <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;padding:2px 8px;" @onclick="CopyLogs"><Icon Name="copy" /> Copy</button>
+                    <button class="btn btn-sm btn-outline-secondary console-action" @onclick="DownloadLogs">
+                        <Icon Name="download" /> Download
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary console-action" @onclick="CopyLogs">
+                        <Icon Name="copy" /> @(_logsCopied ? "Copied" : "Copy")
+                    </button>
                 }
             </div>
         </div>
+        @if (_logLines.Count > 0)
+        {
+            <div class="console-toolbar">
+                <label class="visually-hidden" for="build-log-search">Search build logs</label>
+                <input id="build-log-search"
+                       class="form-control form-control-sm"
+                       type="search"
+                       placeholder="Search logs"
+                       @bind="_logSearch"
+                       @bind:event="oninput" />
+                <label class="console-follow">
+                    <input type="checkbox" @bind="_followTail" />
+                    Follow tail
+                </label>
+                <span class="text-muted">@FilteredLogLines.Count / @_logLines.Count lines</span>
+            </div>
+        }
         <div class="console-body" id="console-body">
             @if (_logLines.Count == 0)
             {
@@ -375,13 +400,18 @@ else
             }
             else
             {
-                @foreach (var line in _logLines)
+                @if (_droppedLogLineCount > 0)
                 {
-                    var lineClass = GetLineClass(line);
-                    <span class="console-line @lineClass">@line</span>
+                    <div class="console-truncated" role="status">
+                        @_droppedLogLineCount older lines omitted. Download the log for the complete retained output.
+                    </div>
                 }
+                <Virtualize TItem="string" Items="@FilteredLogLines" Context="line" ItemSize="22" OverscanCount="10">
+                    <span class="console-line @GetLineClass(line)">@line</span>
+                </Virtualize>
             }
         </div>
+        <div class="visually-hidden" aria-live="polite">@_logActionMessage</div>
     </div>
 }
 
@@ -391,12 +421,27 @@ else
     private ApiResponse<BuildJobResponse>? _build;
     private bool _loading = true;
     private bool _cancelling = false;
-    private bool _streaming = false;
+    private const int MaxRetainedLogLines = 5_000;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _pendingLogLines = new();
+    private LogStreamState _streamState = LogStreamState.Disconnected;
     private Timer? _statusTimer;
+    private Timer? _logFlushTimer;
     private DotNetObjectReference<BuildDetail>? _dotNetRef;
 
     // Log state
     private List<string> _logLines = new();
+    private string _logSearch = string.Empty;
+    private bool _followTail = true;
+    private bool _logsCopied;
+    private string _logActionMessage = string.Empty;
+    private int _droppedLogLineCount;
+
+    private List<string> FilteredLogLines =>
+        string.IsNullOrWhiteSpace(_logSearch)
+            ? _logLines
+            : _logLines
+                .Where(line => line.Contains(_logSearch, StringComparison.OrdinalIgnoreCase))
+                .ToList();
 
     // Publish state
     private ApiResponse<RepositoryListResponse>? _repos;
@@ -430,7 +475,14 @@ else
 
         // Connect SSE for real-time log streaming
         _dotNetRef = DotNetObjectReference.Create(this);
-        _streaming = true;
+        _streamState = LogStreamState.Connecting;
+        _logLines.Clear();
+        _droppedLogLineCount = 0;
+        _logFlushTimer = new Timer(
+            _ => _ = InvokeAsync(FlushPendingLogLinesAsync),
+            null,
+            TimeSpan.FromMilliseconds(200),
+            TimeSpan.FromMilliseconds(200));
         StateHasChanged();
 
         _ = Task.Run(async () =>
@@ -442,7 +494,7 @@ else
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "Failed to connect SSE stream for build {BuildId}", Id);
-                _streaming = false;
+                _streamState = LogStreamState.Disconnected;
                 await InvokeAsync(StateHasChanged);
             }
         });
@@ -467,9 +519,20 @@ else
     [JSInvokable]
     public void OnLogLine(string line)
     {
-        InvokeAsync(() =>
+        _pendingLogLines.Enqueue(line);
+    }
+
+    [JSInvokable]
+    public Task OnStreamStateChanged(string state)
+    {
+        return InvokeAsync(() =>
         {
-            _logLines.Add(line);
+            _streamState = state switch
+            {
+                "live" => LogStreamState.Live,
+                "reconnecting" => LogStreamState.Reconnecting,
+                _ => LogStreamState.Disconnected
+            };
             StateHasChanged();
         });
     }
@@ -479,6 +542,7 @@ else
     {
         InvokeAsync(async () =>
         {
+            await FlushPendingLogLinesAsync();
             StopStreaming();
             // Final refresh to get complete build state
             await LoadBuild();
@@ -488,9 +552,11 @@ else
 
     private void StopStreaming()
     {
-        _streaming = false;
+        _streamState = LogStreamState.Disconnected;
         _statusTimer?.Dispose();
         _statusTimer = null;
+        _logFlushTimer?.Dispose();
+        _logFlushTimer = null;
         _dotNetRef?.Dispose();
         _dotNetRef = null;
         try { JS.InvokeVoidAsync("disconnectBuildLogStream"); } catch { }
@@ -517,7 +583,9 @@ else
 
             // Update log lines from API data only when not streaming via SSE
             // (SSE delivers log lines in real-time, so don't overwrite them)
-            if (!_streaming && _build?.Data != null && !string.IsNullOrEmpty(_build.Data.Logs))
+            if (_streamState == LogStreamState.Disconnected &&
+                _build?.Data != null &&
+                !string.IsNullOrEmpty(_build.Data.Logs))
             {
                 _logLines = CleanLogs(_build.Data.Logs);
             }
@@ -635,10 +703,13 @@ else
 
     private List<string> CleanLogs(string logs)
     {
-        var result = new List<string>();
+        var result = new List<string>(MaxRetainedLogLines);
         var lines = logs.Split('\n');
-        foreach (var line in lines)
+        var start = Math.Max(0, lines.Length - MaxRetainedLogLines);
+        _droppedLogLineCount = start;
+        for (var index = start; index < lines.Length; index++)
         {
+            var line = lines[index];
             var cleaned = new string(line.Where(c => !char.IsControl(c) || c == '\t').ToArray());
             if (!string.IsNullOrWhiteSpace(cleaned))
                 result.Add(cleaned);
@@ -672,9 +743,74 @@ else
         await JS.InvokeVoidAsync("downloadFileWithAuth", $"/api/builds/{Id}/artifacts/{Uri.EscapeDataString(fileName)}", fileName);
     }
 
-    private void CopyLogs()
+    private async Task FlushPendingLogLinesAsync()
     {
-        // Clipboard requires JS interop — placeholder
+        if (_pendingLogLines.IsEmpty) return;
+
+        while (_pendingLogLines.TryDequeue(out var line))
+        {
+            var cleaned = new string(line.Where(c => !char.IsControl(c) || c == '\t').ToArray());
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                _logLines.Add(cleaned);
+        }
+
+        if (_logLines.Count > MaxRetainedLogLines)
+        {
+            var removeCount = _logLines.Count - MaxRetainedLogLines;
+            _logLines.RemoveRange(0, removeCount);
+            _droppedLogLineCount += removeCount;
+        }
+
+        StateHasChanged();
+        if (_followTail && string.IsNullOrWhiteSpace(_logSearch))
+        {
+            await JS.InvokeVoidAsync("scrollBuildLogsToEnd", "console-body");
+        }
+    }
+
+    private async Task CopyLogs()
+    {
+        var copied = await JS.InvokeAsync<bool>("copyTextToClipboard", string.Join('\n', _logLines));
+        _logsCopied = copied;
+        _logActionMessage = copied ? "Build logs copied to clipboard." : "Could not copy build logs.";
+        StateHasChanged();
+
+        if (copied)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            _logsCopied = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DownloadLogs()
+    {
+        var fileName = $"build-{Id:N}.log";
+        await JS.InvokeVoidAsync("downloadTextFile", fileName, string.Join('\n', _logLines));
+        _logActionMessage = "Build log download started.";
+    }
+
+    private string GetStreamStateText() => _streamState switch
+    {
+        LogStreamState.Live => "Live",
+        LogStreamState.Reconnecting => "Reconnecting",
+        LogStreamState.Disconnected => "Disconnected",
+        _ => "Connecting"
+    };
+
+    private string GetStreamBadgeClass() => _streamState switch
+    {
+        LogStreamState.Live => "bg-primary building-pulse",
+        LogStreamState.Disconnected => "bg-danger",
+        _ => "bg-warning text-dark"
+    };
+
+    private enum LogStreamState
+    {
+        Connecting,
+        Live,
+        Reconnecting,
+        Disconnected
     }
 
     private string FormatFileSize(long bytes)

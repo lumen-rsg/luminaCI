@@ -43,6 +43,10 @@
         var source = new EventSource(url);
         window.buildLogStream = source;
 
+        source.onopen = function () {
+            dotNetRef.invokeMethodAsync('OnStreamStateChanged', 'live');
+        };
+
         source.onmessage = function (event) {
             var data = event.data;
             if (data === '[STREAM_END]') {
@@ -55,10 +59,12 @@
         };
 
         source.onerror = function () {
-            // EventSource auto-reconnects; only treat CLOSED as terminal.
             if (source.readyState === EventSource.CLOSED) {
                 window.buildLogStream = null;
                 dotNetRef.invokeMethodAsync('OnStreamEnd');
+            } else {
+                // EventSource reconnects automatically after transient failures.
+                dotNetRef.invokeMethodAsync('OnStreamStateChanged', 'reconnecting');
             }
         };
 
@@ -70,6 +76,44 @@
             window.buildLogStream.close();
             window.buildLogStream = null;
         }
+    };
+
+    window.scrollBuildLogsToEnd = function (elementId) {
+        var element = document.getElementById(elementId);
+        if (element) {
+            element.scrollTop = element.scrollHeight;
+        }
+    };
+
+    window.copyTextToClipboard = async function (text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+            // Clipboard API can be unavailable in non-secure development
+            // contexts. Keep the action functional without retaining the text.
+            var input = document.createElement('textarea');
+            input.value = text;
+            input.setAttribute('readonly', '');
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            var copied = document.execCommand('copy');
+            document.body.removeChild(input);
+            return copied;
+        }
+    };
+
+    window.downloadTextFile = function (filename, text) {
+        var blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+        var link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
     };
 
     // --- Authenticated file download ----------------------------------------

@@ -752,12 +752,40 @@ select optgroup { background: var(--bg-dark); color: var(--text-primary); }
     gap: var(--space-2);
 }
 
+.console-action {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+}
+
+.console-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 8px 16px;
+    background: rgba(0, 0, 0, 0.12);
+    border-bottom: 1px solid var(--border-color);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+}
+
+.console-toolbar input[type="search"] {
+    max-width: 320px;
+}
+
+.console-follow {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+}
+
 .console-body {
     padding: 14px 16px;
+    height: min(500px, 55vh);
     max-height: 500px;
     overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
+    white-space: pre;
+    overflow-x: auto;
     color: #c9d1d9;
     counter-reset: line;
 }
@@ -784,6 +812,16 @@ select optgroup { background: var(--bg-dark); color: var(--text-primary); }
 .console-line.line-error { color: var(--accent-red); }
 .console-line.line-warning { color: var(--accent-yellow); }
 .console-line.line-success { color: var(--accent-green); }
+
+.console-truncated {
+    padding: 4px 8px;
+    margin-bottom: 8px;
+    color: var(--accent-yellow);
+    border: 1px solid color-mix(in srgb, var(--accent-yellow) 35%, transparent);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    white-space: normal;
+}
 
 /* ========== Build Health ========== */
 .build-health {
