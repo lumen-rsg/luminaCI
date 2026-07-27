@@ -114,17 +114,24 @@ try
         Log.Information("Build database schema applied (EF Core migrations)");
     }
 
-    // Ensure required host directories exist for build artifacts and sources
+    // Fail startup when the shared volumes are not writable by the service
+    // identity. The volume-init Compose service establishes the shared GID and
+    // setgid permissions; silently continuing here would only defer the failure
+    // until a build is queued.
     foreach (var dir in new[] { "/app/builds", "/opt/lumina/builds", "/opt/lumina/sources", "/opt/lumina/extra-sources/pipelines" })
     {
         try
         {
             Directory.CreateDirectory(dir);
-            Log.Information("Ensured directory exists: {Dir}", dir);
+            var probePath = Path.Combine(dir, $".lumina-write-probe-{Guid.NewGuid():N}");
+            await File.WriteAllTextAsync(probePath, "ok");
+            File.Delete(probePath);
+            Log.Information("Verified writable build volume: {Dir}", dir);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Could not create directory {Dir} (may already exist or be a volume mount)", dir);
+            throw new InvalidOperationException(
+                $"Required build volume '{dir}' is not writable by the BuildService identity.", ex);
         }
     }
 

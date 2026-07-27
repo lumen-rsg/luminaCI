@@ -83,6 +83,25 @@ services:
     networks:
       - lumina-network
 
+  # Establish the shared service/builder GID and setgid permissions before any
+  # application container touches the bind-mounted build workspace.
+  volume-init:
+    image: alpine:3.22
+    container_name: lumina-volume-init
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -euc
+      - |
+        chown -R 1654:1654 /volumes/builds /volumes/sources /volumes/extra-sources
+        find /volumes/builds /volumes/sources /volumes/extra-sources -type d -exec chmod 2770 {} +
+        find /volumes/builds /volumes/sources /volumes/extra-sources -type f -exec chmod 0660 {} +
+    volumes:
+      - /opt/lumina/builds:/volumes/builds:z
+      - /opt/lumina/sources:/volumes/sources:z
+      - /opt/lumina/extra-sources:/volumes/extra-sources:z
+    restart: "no"
+
   # === Application Services ===
   api-gateway:
     build:
@@ -184,9 +203,12 @@ services:
       - Secrets__MasterKey=${SECRETS_MASTER_KEY:?SECRETS_MASTER_KEY must be set in .env (see deploy/.env.example)}
     volumes:
       - /opt/lumina/builds:/app/builds
+      - /opt/lumina/builds:/opt/lumina/builds:z
       - /opt/lumina/sources:/opt/lumina/sources:z
       - /opt/lumina/extra-sources:/opt/lumina/extra-sources:z
     depends_on:
+      volume-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       rabbitmq:
@@ -281,6 +303,8 @@ services:
       - gpg_gnupghome:/app/.gnupg
       - /opt/lumina/builds:/app/builds:z
     depends_on:
+      volume-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       rabbitmq:
@@ -316,6 +340,8 @@ services:
     volumes:
       - /opt/lumina/builds:/app/builds:z
     depends_on:
+      volume-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       rabbitmq:
@@ -337,6 +363,9 @@ services:
     volumes:
       - trivy_cache:/root/.cache/trivy
       - /opt/lumina/builds:/app/builds:z
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
     networks:
       - lumina-network
 
@@ -406,6 +435,8 @@ services:
       - source_temp:/tmp/source-fetch
       - /opt/lumina/sources:/opt/lumina/sources:z
     depends_on:
+      volume-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       rabbitmq:

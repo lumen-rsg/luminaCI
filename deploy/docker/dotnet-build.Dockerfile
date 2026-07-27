@@ -25,9 +25,10 @@ RUN curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 1
 # Verify installations
 RUN dotnet --version && clang --version | head -1
 
-# Dedicated unprivileged user (uid/gid 1000), matching rpm-build.Dockerfile.
-RUN groupadd -g 1000 rpmbuilder \
-    && useradd -u 1000 -g 1000 -m -d /home/rpmbuilder -s /bin/bash rpmbuilder
+# Dedicated unprivileged user with the shared service/builder GID, matching
+# rpm-build.Dockerfile.
+RUN groupadd -g 1654 lumina-build \
+    && useradd -u 1000 -g 1654 -m -d /home/rpmbuilder -s /bin/bash rpmbuilder
 
 USER rpmbuilder
 
@@ -40,7 +41,9 @@ COPY --chown=rpmbuilder:rpmbuilder scripts/build-rpm.sh /usr/local/bin/build-rpm
 RUN chmod +x /usr/local/bin/build-rpm.sh
 
 USER root
-RUN mkdir -p /artifacts && chown -R rpmbuilder:rpmbuilder /artifacts
-USER rpmbuilder
+RUN mkdir -p /artifacts && chown -R rpmbuilder:lumina-build /artifacts
+
+# The entrypoint must start as root for dnf builddep, then drops to uid 1000 /
+# gid 1654 before rpmbuild executes the untrusted spec.
 
 ENTRYPOINT ["/usr/local/bin/build-rpm.sh"]

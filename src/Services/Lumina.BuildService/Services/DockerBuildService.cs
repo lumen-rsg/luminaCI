@@ -381,6 +381,15 @@ public class DockerBuildService : IBuildLauncher
             // Host-side path for RPM container bind mounts (Docker API resolves on host)
             var hostArtifactDir = $"/opt/lumina/builds/{job.Id}";
             Directory.CreateDirectory(artifactDir);
+            Directory.CreateDirectory(hostArtifactDir);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(
+                    hostArtifactDir,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+                    UnixFileMode.SetGroup);
+            }
 
             var envVars = new List<string>
             {

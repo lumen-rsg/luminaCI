@@ -481,7 +481,7 @@ ls -la "${BUILD_DIR}/SOURCES/"
 
 # builder_phase: everything that runs as the unprivileged rpmbuilder user — the
 # rpmbuild step (which executes spec-supplied %build/%install shell) and the
-# artifact copy into /artifacts (owned by uid 1000).
+# artifact copy into /artifacts (writable by shared gid 1654).
 builder_phase() {
     echo "Building RPM (as uid $(id -u))..."
     rpmbuild -bb "${BUILD_DIR}/SPECS/${SPEC_NAME}" \
@@ -517,12 +517,12 @@ if ! dnf builddep -y "${BUILD_DIR}/SPECS/${SPEC_NAME}"; then
 fi
 
 # Hand the build tree to the unprivileged user so %build/%install can write to it.
-chown -R rpmbuilder:rpmbuilder "${BUILD_DIR}"
+chown -R rpmbuilder:lumina-build "${BUILD_DIR}"
 
-# Run the untrusted build phase as rpmbuilder (uid/gid 1000).
+# Run the untrusted build phase as rpmbuilder (uid 1000, shared gid 1654).
 export -f builder_phase
 export BUILD_DIR SPEC_NAME ARTIFACTS_DIR
-setpriv --reuid 1000 --regid 1000 --clear-groups -- bash -c 'builder_phase'
+setpriv --reuid 1000 --regid 1654 --clear-groups -- bash -c 'builder_phase'
 BUILD_EXIT=$?
 
 if [ ${BUILD_EXIT} -ne 0 ]; then

@@ -37,12 +37,11 @@ RUN dnf install -y \
     xz \
     && dnf clean all
 
-# Create a dedicated, fixed-id unprivileged user for the build phase. uid/gid
-# 1000 is chosen so it is stable across image rebuilds (matches
-# /opt/lumina/* host bind ownership expectations) and so any user-namespace
-# remap on the daemon maps it to a non-privileged host uid.
-RUN groupadd -g 1000 rpmbuilder \
-    && useradd -u 1000 -g 1000 -m -d /home/rpmbuilder -s /bin/bash rpmbuilder
+# UID 1000 is the unprivileged build identity. GID 1654 is shared with the
+# service containers' built-in `app` identity, so both sides can write setgid
+# artifact/source volumes without making them world-writable.
+RUN groupadd -g 1654 lumina-build \
+    && useradd -u 1000 -g 1654 -m -d /home/rpmbuilder -s /bin/bash rpmbuilder
 
 # Create the rpmbuild tree as the non-root user (the tree only needs to exist;
 # the entrypoint later chowns it so the build phase owns its contents).
@@ -59,7 +58,7 @@ COPY --chown=rpmbuilder:rpmbuilder scripts/build-rpm.sh /usr/local/bin/build-rpm
 RUN chmod +x /usr/local/bin/build-rpm.sh
 
 USER root
-RUN mkdir -p /artifacts && chown -R rpmbuilder:rpmbuilder /artifacts
+RUN mkdir -p /artifacts && chown -R rpmbuilder:lumina-build /artifacts
 
 # The entrypoint runs as root so dnf builddep can install build dependencies
 # into the writable overlay (FUNC-002: builddep writes to /usr/lib and
