@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -35,6 +36,7 @@ public class TrivyScannerService
     private readonly IConfiguration _config;
     private readonly RedisCacheService _cache;
     private readonly string _artifactsRoot;
+    private readonly TimeSpan _scanTimeout;
 
     public TrivyScannerService(
         ScannerDbContext db,
@@ -53,6 +55,10 @@ public class TrivyScannerService
         // scanned — never hand a client-supplied absolute path to trivy, which
         // would otherwise read and report on arbitrary filesystem locations.
         _artifactsRoot = config["Builds:ArtifactsRoot"] ?? "/app/builds";
+        _scanTimeout = TimeSpan.FromSeconds(
+            int.TryParse(config["Trivy:TimeoutSeconds"], out var timeoutSeconds) && timeoutSeconds > 0
+                ? timeoutSeconds
+                : 600);
     }
 
     /// <summary>
@@ -205,7 +211,7 @@ public class TrivyScannerService
     {
         var client = _httpClientFactory.CreateClient("TrivyServer");
         client.BaseAddress = new Uri(serverUrl);
-        client.Timeout = TimeSpan.FromMinutes(10);
+        client.Timeout = _scanTimeout;
 
         var scanRequest = new
         {
@@ -240,9 +246,9 @@ public class TrivyScannerService
 
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo
+            var psi = new ProcessStartInfo
             {
-                FileName = "trivy",
+                FileName = _config["Trivy:Path"] ?? "trivy",
                 ArgumentList = { "fs", "--format", "json", "--output", tempReport, "--exit-code", "0", "--no-progress", artifactPath },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -250,14 +256,27 @@ public class TrivyScannerService
                 CreateNoWindow = true
             };
 
-            using var process = System.Diagnostics.Process.Start(psi)
+            using var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start trivy process");
 
-            await process.WaitForExitAsync();
+            // Drain redirected streams while the process runs so a noisy Trivy
+            // invocation cannot deadlock on a full OS pipe.
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var exited = await WaitForExitOrKillAsync(process, _scanTimeout);
+            stderr = Truncate(await stderrTask, 4_000);
+            _ = await stdoutTask;
+
+            if (!exited)
+            {
+                return new TrivyScanResult
+                {
+                    Error = $"trivy scan exceeded {_scanTimeout.TotalSeconds:0} seconds and was terminated"
+                };
+            }
 
             if (process.ExitCode != 0)
             {
-                stderr = await process.StandardError.ReadToEndAsync();
                 _logger.LogWarning("Trivy CLI exited with code {Code}: {Error}", process.ExitCode, stderr);
             }
 
@@ -283,6 +302,61 @@ public class TrivyScannerService
                 try { File.Delete(tempReport); } catch { }
         }
     }
+
+    /// <summary>
+    /// Wait for a child process within a fixed budget. On timeout or caller
+    /// cancellation, terminate and reap the complete process tree.
+    /// </summary>
+    internal static async Task<bool> WaitForExitOrKillAsync(
+        Process process,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout);
+
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            TryKillProcessTree(process);
+            using var reapCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                await process.WaitForExitAsync(reapCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                throw new InvalidOperationException(
+                    $"Process {process.Id} did not exit after its process tree was terminated");
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+                cancellationToken.ThrowIfCancellationRequested();
+
+            return false;
+        }
+    }
+
+    private static void TryKillProcessTree(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // It may exit between HasExited and Kill. WaitForExitAsync below
+            // still reaps it.
+        }
+    }
+
+    private static string Truncate(string value, int maxLength)
+        => value.Length <= maxLength ? value : value[..maxLength];
 
     /// <summary>
     /// Parse Trivy Server API JSON response into Vulnerability objects.

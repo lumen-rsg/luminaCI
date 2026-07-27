@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Lumina.ScannerService.Services;
 using Xunit;
 
@@ -5,6 +6,40 @@ namespace Lumina.ScannerService.Tests;
 
 public class TrivyScannerServiceTests
 {
+    [Fact]
+    public async Task WaitForExitOrKillAsync_TerminatesHungProcess()
+    {
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "/bin/sh",
+            ArgumentList = { "-c", "sleep 30 & wait" },
+            UseShellExecute = false
+        })!;
+
+        var exitedNormally = await TrivyScannerService.WaitForExitOrKillAsync(
+            process, TimeSpan.FromMilliseconds(100));
+
+        Assert.False(exitedNormally);
+        Assert.True(process.HasExited);
+    }
+
+    [Fact]
+    public async Task WaitForExitOrKillAsync_ReturnsTrueForCompletedProcess()
+    {
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "/bin/sh",
+            ArgumentList = { "-c", "exit 0" },
+            UseShellExecute = false
+        })!;
+
+        var exitedNormally = await TrivyScannerService.WaitForExitOrKillAsync(
+            process, TimeSpan.FromSeconds(5));
+
+        Assert.True(exitedNormally);
+        Assert.Equal(0, process.ExitCode);
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("""{"error":"scanner unavailable"}""")]
