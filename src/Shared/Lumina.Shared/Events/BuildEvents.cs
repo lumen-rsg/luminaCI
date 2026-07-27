@@ -121,3 +121,9 @@ public record GetActivePublicKey();
 /// when no active PGP key exists.
 /// </summary>
 public record ActivePublicKey(string? PublicKeyArmored);
+
+/// <summary>Requests a trusted RPM signing public key by its full fingerprint.</summary>
+public record GetPublicKey(string Fingerprint);
+
+/// <summary>Returns the exact trusted key matching the requested fingerprint.</summary>
+public record PublicKeyByFingerprint(string Fingerprint, string? PublicKeyArmored);

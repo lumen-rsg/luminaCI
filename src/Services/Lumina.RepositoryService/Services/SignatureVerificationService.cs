@@ -119,6 +119,75 @@ public class SignatureVerificationService
         }
     }
 
+    /// <summary>
+    /// Verifies an RPM's embedded signature against the trusted key selected by
+    /// full fingerprint. The keyring and RPM database are private per call.
+    /// </summary>
+    public async Task VerifyEmbeddedRpmAsync(string rpmPath, string expectedFingerprint)
+    {
+        var fingerprint = expectedFingerprint.Trim().ToUpperInvariant();
+        if (fingerprint.Length is not (40 or 64) || !fingerprint.All(Uri.IsHexDigit))
+            throw new ValidationException("Signing metadata contains an invalid key fingerprint.");
+
+        string publicKeyArmored;
+        try
+        {
+            var response = await _bus.Request<GetPublicKey, PublicKeyByFingerprint>(
+                new GetPublicKey(fingerprint), timeout: TimeSpan.FromSeconds(10));
+            publicKeyArmored = response.Message.PublicKeyArmored ?? "";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch trusted public key {Fingerprint}", fingerprint);
+            throw new ValidationException("Could not retrieve the trusted RPM signing key.");
+        }
+
+        if (string.IsNullOrWhiteSpace(publicKeyArmored))
+            throw new ValidationException($"RPM signing key {fingerprint} is not trusted.");
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "lumina-rpmkeys-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var pubKeyPath = Path.Combine(tempDir, "pubkey.asc");
+        try
+        {
+            await File.WriteAllTextAsync(pubKeyPath, publicKeyArmored);
+            var import = await RunProcessAsync("rpmkeys", args =>
+            {
+                args.Add("--dbpath");
+                args.Add(tempDir);
+                args.Add("--import");
+                args.Add(pubKeyPath);
+            });
+            if (!import.Success)
+            {
+                _logger.LogWarning("rpmkeys could not import trusted key {Fingerprint}: {Error}", fingerprint, import.Error);
+                throw new ValidationException("Could not initialize the RPM signature verification keyring.");
+            }
+
+            var verify = await RunProcessAsync("rpmkeys", args =>
+            {
+                args.Add("--dbpath");
+                args.Add(tempDir);
+                args.Add("--checksig");
+                args.Add(rpmPath);
+            });
+            var output = $"{verify.Output}\n{verify.Error}";
+            if (!verify.Success || !output.Contains("signatures OK", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "Embedded RPM signature verification failed for {RpmPath}: {Output}",
+                    rpmPath, output.Trim());
+                throw new ValidationException(
+                    "The RPM does not contain a valid embedded signature from the expected trusted key.");
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to clean up RPM verification directory {Dir}", tempDir); }
+        }
+    }
+
     private static async Task<byte[]> ToArrayAsync(Stream stream)
     {
         using var ms = new MemoryStream();
@@ -155,11 +224,37 @@ public class SignatureVerificationService
 
         using var process = Process.Start(startInfo);
         if (process is null)
-        {
             return (false, "Failed to start gpg process");
-        }
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
-        var stderr = await process.StandardError.ReadToEndAsync();
-        return (process.ExitCode == 0, stderr);
+        await stdout;
+        return (process.ExitCode == 0, await stderr);
+    }
+
+    private static async Task<(bool Success, string Output, string Error)> RunProcessAsync(
+        string fileName,
+        Action<List<string>> configureArgs)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        var args = new List<string>();
+        configureArgs(args);
+        foreach (var argument in args)
+            startInfo.ArgumentList.Add(argument);
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+            return (false, "", $"Failed to start {fileName}");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode == 0, await stdout, await stderr);
     }
 }

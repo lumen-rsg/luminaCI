@@ -44,7 +44,7 @@ public record ScanPaginatedResponse(List<ScanSummaryResponse> Scans, int TotalCo
 // Repository Responses
 public record RepositoryResponse(Guid Id, string Name, string DisplayName, string BasePath, string Arch, string Distribution, bool IsActive, DateTime CreatedAt, int PackageCount);
 
-public record PackageResponse(Guid Id, Guid RepositoryId, string Name, string Version, string Release, string Arch, string FileName, long FileSize, string? HashSha256, ScanStatus CveScanStatus, DateTime PublishedAt, string PublishedBy, string? PgpSignature = null, string? SigningKeyFingerprint = null)
+public record PackageResponse(Guid Id, Guid RepositoryId, string Name, string Version, string Release, string Arch, string FileName, long FileSize, string? HashSha256, ScanStatus CveScanStatus, DateTime PublishedAt, string PublishedBy, string? PgpSignature = null, string? SigningKeyFingerprint = null, string Status = "Ready")
 {
     /// <summary>
     /// Maps a <see cref="Package"/> entity to this response DTO. Centralizing the
@@ -54,7 +54,7 @@ public record PackageResponse(Guid Id, Guid RepositoryId, string Name, string Ve
     /// </summary>
     public static PackageResponse From(Package p) => new(
         p.Id, p.RepositoryId, p.Name, p.Version, p.Release, p.Arch, p.FileName,
-        p.FileSize, p.HashSha256, p.CveScanStatus, p.PublishedAt, p.PublishedBy, p.PgpSignature, p.SigningKeyFingerprint);
+        p.FileSize, p.HashSha256, p.CveScanStatus, p.PublishedAt, p.PublishedBy, p.PgpSignature, p.SigningKeyFingerprint, p.Status);
 }
 
 public record RepositoryListResponse(List<RepositoryResponse> Repositories, int TotalCount, int Page, int PageSize);

@@ -1,5 +1,10 @@
 using System.Diagnostics;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Lumina.Shared.Errors;
 using Lumina.Shared.Extensions;
 
 namespace Lumina.RepositoryService.Services;
@@ -9,6 +14,11 @@ namespace Lumina.RepositoryService.Services;
 /// </summary>
 public class RepositoryManagerService
 {
+    private const int AtFdcwd = -100;
+    private const uint RenameExchange = 2;
+    private static readonly Regex RpmFieldPattern =
+        new(@"^[A-Za-z0-9][A-Za-z0-9+._~^-]*$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private readonly ILogger<RepositoryManagerService> _logger;
     private readonly string _reposBasePath;
 
@@ -47,67 +57,6 @@ public class RepositoryManagerService
             _logger.LogInformation("Created repository directory: {Dir}", archDir);
         }
         return archDir;
-    }
-
-    /// <summary>
-    /// Saves an uploaded RPM file to the appropriate repository directory.
-    /// Returns the full path where the file was saved.
-    /// </summary>
-    public async Task<string> SaveRpmAsync(string basePath, string arch, string fileName, Stream fileStream)
-    {
-        var archDir = EnsureRepoDir(basePath, arch);
-        var filePath = Path.Combine(archDir, fileName);
-
-        await using var fs = new FileStream(filePath, FileMode.Create);
-        await fileStream.CopyToAsync(fs);
-        fs.Flush();
-
-        _logger.LogInformation("Saved RPM: {Path} ({Size} bytes)", filePath, fs.Length);
-        return filePath;
-    }
-
-    /// <summary>
-    /// Saves an uploaded RPM file from byte array.
-    /// Returns the full path where the file was saved.
-    /// </summary>
-    public string SaveRpm(string basePath, string arch, string fileName, byte[] data)
-    {
-        var archDir = EnsureRepoDir(basePath, arch);
-        var filePath = Path.Combine(archDir, fileName);
-        File.WriteAllBytes(filePath, data);
-
-        _logger.LogInformation("Saved RPM: {Path} ({Size} bytes)", filePath, data.Length);
-        return filePath;
-    }
-
-    /// <summary>
-    /// Moves an RPM from one arch directory to another within the same
-    /// repository (both paths confined to <see cref="_reposBasePath"/>). Used by
-    /// the publish path to relocate a package after its real arch is read from
-    /// the RPM header — a noarch subpackage is initially saved into the
-    /// repository's default arch dir and then moved to <c>noarch/</c> (FUNC-003).
-    /// Returns the new full path. Both arches are validated via the allow-list
-    /// sanitizer, and the destination directory is ensured.
-    /// </summary>
-    public string MoveRpm(string basePath, string fromArch, string toArch, string fileName)
-    {
-        EnsureSafeRepoSegments(basePath, fromArch);
-        EnsureSafeRepoSegments(basePath, toArch);
-        var fromDir = ProcessArgumentSanitizer.ResolveConfinedPath(
-            Path.Combine(basePath.Trim('/'), fromArch), _reposBasePath);
-        var toDir = EnsureRepoDir(basePath, toArch);
-        var fromPath = Path.Combine(fromDir, fileName);
-        var toPath = Path.Combine(toDir, fileName);
-
-        if (!File.Exists(fromPath))
-            throw new FileNotFoundException($"RPM to move not found: {fromPath}", fromPath);
-
-        // File.Move across same-volume dirs is atomic; if a same-named file
-        // already exists at the destination (re-publish), overwrite it.
-        File.Move(fromPath, toPath, overwrite: true);
-
-        _logger.LogInformation("Moved RPM {Name} from {From} to {To}", fileName, fromArch, toArch);
-        return toPath;
     }
 
     /// <summary>
@@ -337,8 +286,287 @@ public class RepositoryManagerService
             .Cast<string>()
             .ToList();
     }
+
+    /// <summary>Creates a private operation directory on the repository volume.</summary>
+    public string CreatePublicationStagingDirectory(Guid repositoryId)
+    {
+        var stagingDirectory = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(".staging", repositoryId.ToString("N"), Guid.NewGuid().ToString("N")),
+            _reposBasePath);
+        Directory.CreateDirectory(stagingDirectory);
+        return stagingDirectory;
+    }
+
+    public async Task<string> WriteStagedRpmAsync(string stagingDirectory, string fileName, Stream content)
+    {
+        var safeName = Path.GetFileName(fileName);
+        if (safeName != fileName || !safeName.EndsWith(".rpm", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("The package filename must be a plain .rpm filename.");
+
+        var safeDirectory = ProcessArgumentSanitizer.ResolveConfinedPath(stagingDirectory, _reposBasePath);
+        var stagedPath = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(safeDirectory, safeName), _reposBasePath);
+        await using var output = new FileStream(
+            stagedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024,
+            FileOptions.Asynchronous | FileOptions.WriteThrough);
+        await content.CopyToAsync(output);
+        await output.FlushAsync();
+        return stagedPath;
+    }
+
+    public RpmMetadata ValidateStagedRpm(string stagedPath, string expectedFileName)
+    {
+        var metadata = ExtractRpmMetadata(stagedPath)
+            ?? throw new ValidationException("The staged file is not a readable RPM.");
+        if (!RpmFieldPattern.IsMatch(metadata.Name) ||
+            !RpmFieldPattern.IsMatch(metadata.Version) ||
+            !RpmFieldPattern.IsMatch(metadata.Release))
+        {
+            throw new ValidationException("The RPM contains invalid NEVR header fields.");
+        }
+        ProcessArgumentSanitizer.ValidateRepositoryArch(metadata.Arch);
+
+        var canonicalName = $"{metadata.Name}-{metadata.Version}-{metadata.Release}.{metadata.Arch}.rpm";
+        if (!string.Equals(expectedFileName, canonicalName, StringComparison.Ordinal))
+        {
+            throw new ValidationException(
+                $"RPM filename does not match its NEVRA header; expected '{canonicalName}'.");
+        }
+        return metadata;
+    }
+
+    /// <summary>
+    /// Builds complete metadata from a private snapshot containing the current
+    /// live RPM set plus the candidate package.
+    /// </summary>
+    public async Task<string> GenerateStagedMetadataAsync(
+        string basePath,
+        string arch,
+        string stagingDirectory,
+        string stagedRpmPath)
+    {
+        EnsureSafeRepoSegments(basePath, arch);
+        var liveDirectory = EnsureRepoDir(basePath, arch);
+        var snapshotDirectory = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(stagingDirectory, "snapshot"), _reposBasePath);
+        Directory.CreateDirectory(snapshotDirectory);
+
+        foreach (var liveRpm in Directory.EnumerateFiles(liveDirectory, "*.rpm"))
+            File.Copy(liveRpm, Path.Combine(snapshotDirectory, Path.GetFileName(liveRpm)));
+
+        var candidateName = Path.GetFileName(stagedRpmPath);
+        var snapshotCandidate = Path.Combine(snapshotDirectory, candidateName);
+        if (File.Exists(snapshotCandidate))
+            throw new ConflictException($"Package file '{candidateName}' already exists in this repository.");
+        File.Copy(stagedRpmPath, snapshotCandidate);
+
+        var result = await RunCreaterepoForDirectoryAsync(snapshotDirectory);
+        if (!result.Success)
+            throw new InvalidOperationException($"createrepo_c failed in publication staging: {result.Output}");
+
+        var repodata = Path.Combine(snapshotDirectory, "repodata");
+        if (!File.Exists(Path.Combine(repodata, "repomd.xml")))
+            throw new InvalidOperationException("createrepo_c completed without producing repomd.xml.");
+        return snapshotDirectory;
+    }
+
+    /// <summary>
+    /// Atomically exchanges the complete architecture directory, so clients see
+    /// either the old package+metadata set or the new set—never a partial mix.
+    /// The old snapshot is retained until the database transaction commits.
+    /// </summary>
+    public PublicationCommit CommitStagedPublication(
+        string basePath,
+        string arch,
+        string stagedSnapshotPath,
+        string candidateFileName)
+    {
+        stagedSnapshotPath = ProcessArgumentSanitizer.ResolveConfinedPath(stagedSnapshotPath, _reposBasePath);
+        var liveDirectory = EnsureRepoDir(basePath, arch);
+        var snapshotCandidate = Path.Combine(stagedSnapshotPath, Path.GetFileName(candidateFileName));
+        if (!File.Exists(snapshotCandidate) ||
+            !File.Exists(Path.Combine(stagedSnapshotPath, "repodata", "repomd.xml")))
+        {
+            throw new InvalidOperationException("Publication snapshot is incomplete.");
+        }
+
+        AtomicExchange(liveDirectory, stagedSnapshotPath);
+        return new PublicationCommit(
+            Path.Combine(liveDirectory, Path.GetFileName(candidateFileName)),
+            liveDirectory,
+            stagedSnapshotPath);
+    }
+
+    public void CompletePublication(PublicationCommit publication)
+    {
+        if (Directory.Exists(publication.PreviousSnapshotPath))
+        {
+            Directory.Delete(publication.PreviousSnapshotPath, recursive: true);
+        }
+    }
+
+    public void RollbackPublication(PublicationCommit publication)
+    {
+        if (Directory.Exists(publication.LiveDirectoryPath) &&
+            Directory.Exists(publication.PreviousSnapshotPath))
+        {
+            AtomicExchange(publication.LiveDirectoryPath, publication.PreviousSnapshotPath);
+            Directory.Delete(publication.PreviousSnapshotPath, recursive: true);
+        }
+    }
+
+    public void CleanupPublicationStaging(string stagingDirectory)
+    {
+        var safeDirectory = ProcessArgumentSanitizer.ResolveConfinedPath(stagingDirectory, _reposBasePath);
+        if (Directory.Exists(safeDirectory))
+            Directory.Delete(safeDirectory, recursive: true);
+    }
+
+    public void WritePublicationJournal(
+        string stagingDirectory,
+        Guid packageId,
+        string basePath,
+        string arch,
+        string fileName)
+    {
+        EnsureSafeRepoSegments(basePath, arch);
+        if (Path.GetFileName(fileName) != fileName)
+            throw new ValidationException("Publication journal contains an invalid filename.");
+        var journalPath = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(stagingDirectory, "publication.json"), _reposBasePath);
+        var journal = new PublicationJournal(packageId, basePath, arch, fileName, stagingDirectory);
+        using var stream = new FileStream(
+            journalPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+        JsonSerializer.Serialize(stream, journal);
+        stream.Flush(flushToDisk: true);
+    }
+
+    public bool HasPublicationJournal(string stagingDirectory)
+    {
+        var journalPath = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(stagingDirectory, "publication.json"), _reposBasePath);
+        return File.Exists(journalPath);
+    }
+
+    public void RemovePublicationJournal(string stagingDirectory)
+    {
+        var journalPath = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(stagingDirectory, "publication.json"), _reposBasePath);
+        if (File.Exists(journalPath))
+            File.Delete(journalPath);
+    }
+
+    public IReadOnlyList<(string JournalPath, PublicationJournal Journal)> ReadPublicationJournals()
+    {
+        var stagingRoot = Path.Combine(_reposBasePath, ".staging");
+        if (!Directory.Exists(stagingRoot))
+            return [];
+
+        var journals = new List<(string, PublicationJournal)>();
+        foreach (var operationDirectory in Directory.EnumerateDirectories(stagingRoot, "*", SearchOption.AllDirectories)
+                     .Where(path => File.Exists(Path.Combine(path, "publication.json"))))
+        {
+            var journalPath = Path.Combine(operationDirectory, "publication.json");
+            var journal = JsonSerializer.Deserialize<PublicationJournal>(File.ReadAllText(journalPath))
+                ?? throw new InvalidOperationException($"Invalid publication journal: {journalPath}");
+            journals.Add((journalPath, journal));
+        }
+        return journals;
+    }
+
+    public void RecoverPublication(PublicationJournal journal, bool databaseCommitted)
+    {
+        EnsureSafeRepoSegments(journal.BasePath, journal.Arch);
+        var stagingDirectory = ProcessArgumentSanitizer.ResolveConfinedPath(
+            journal.StagingDirectory, _reposBasePath);
+        var previousOrCandidateSnapshot = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(stagingDirectory, "snapshot"), _reposBasePath);
+        var liveDirectory = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(journal.BasePath.Trim('/'), journal.Arch), _reposBasePath);
+        var liveCandidate = Path.Combine(liveDirectory, Path.GetFileName(journal.FileName));
+
+        if (!databaseCommitted &&
+            File.Exists(liveCandidate) &&
+            Directory.Exists(liveDirectory) &&
+            Directory.Exists(previousOrCandidateSnapshot))
+        {
+            AtomicExchange(liveDirectory, previousOrCandidateSnapshot);
+        }
+
+        CleanupPublicationStaging(stagingDirectory);
+    }
+
+    public void CleanupOrphanedPublicationStaging()
+    {
+        var stagingRoot = Path.Combine(_reposBasePath, ".staging");
+        if (!Directory.Exists(stagingRoot))
+            return;
+
+        foreach (var repositoryDirectory in Directory.EnumerateDirectories(stagingRoot))
+        {
+            foreach (var operationDirectory in Directory.EnumerateDirectories(repositoryDirectory))
+            {
+                if (!File.Exists(Path.Combine(operationDirectory, "publication.json")))
+                    CleanupPublicationStaging(operationDirectory);
+            }
+        }
+    }
+
+    private async Task<CreaterepoResult> RunCreaterepoForDirectoryAsync(string directory)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "createrepo_c",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = directory
+        };
+        startInfo.ArgumentList.Add(directory);
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+            return new CreaterepoResult(false, "Failed to start createrepo_c.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var output = await stdout;
+        var error = await stderr;
+        return process.ExitCode == 0
+            ? new CreaterepoResult(true, output)
+            : new CreaterepoResult(false, $"createrepo_c exited with code {process.ExitCode}: {error}");
+    }
+
+    private static void AtomicExchange(string firstPath, string secondPath)
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new PlatformNotSupportedException("Atomic repository metadata exchange requires Linux renameat2.");
+        if (renameat2(AtFdcwd, firstPath, AtFdcwd, secondPath, RenameExchange) != 0)
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), "Atomic repository metadata exchange failed.");
+    }
+
+    [DllImport("libc", SetLastError = true, EntryPoint = "renameat2")]
+    private static extern int renameat2(
+        int oldDirectoryFileDescriptor,
+        string oldPath,
+        int newDirectoryFileDescriptor,
+        string newPath,
+        uint flags);
 }
 
 public record RpmMetadata(string Name, string Version, string Release, string Arch, long Size);
 
 public record CreaterepoResult(bool Success, string Output);
+
+public record PublicationCommit(
+    string FinalRpmPath,
+    string LiveDirectoryPath,
+    string PreviousSnapshotPath);
+
+public record PublicationJournal(
+    Guid PackageId,
+    string BasePath,
+    string Arch,
+    string FileName,
+    string StagingDirectory);

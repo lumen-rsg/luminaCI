@@ -88,6 +88,8 @@ try
         var db = scope.ServiceProvider.GetRequiredService<RepositoryDbContext>();
         await DatabaseInitializer.MigrateAsync(db);
         Log.Information("Repository database schema applied (EF Core migrations)");
+        var storage = scope.ServiceProvider.GetRequiredService<MinioStorageService>();
+        await storage.RecoverInterruptedPublicationsAsync();
     }
 
     if (app.Environment.IsDevelopment())

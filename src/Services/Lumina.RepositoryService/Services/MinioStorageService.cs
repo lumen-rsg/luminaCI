@@ -14,14 +14,22 @@ public class MinioStorageService
     private readonly RepositoryDbContext _db;
     private readonly IMinioClient _minio;
     private readonly RepositoryManagerService _repoManager;
+    private readonly SignatureVerificationService _verification;
     private readonly ILogger<MinioStorageService> _logger;
     private readonly IBus _bus;
 
-    public MinioStorageService(RepositoryDbContext db, IMinioClient minio, RepositoryManagerService repoManager, ILogger<MinioStorageService> logger, IBus bus)
+    public MinioStorageService(
+        RepositoryDbContext db,
+        IMinioClient minio,
+        RepositoryManagerService repoManager,
+        SignatureVerificationService verification,
+        ILogger<MinioStorageService> logger,
+        IBus bus)
     {
         _db = db;
         _minio = minio;
         _repoManager = repoManager;
+        _verification = verification;
         _logger = logger;
         _bus = bus;
     }
@@ -152,85 +160,47 @@ public class MinioStorageService
         if (string.IsNullOrWhiteSpace(fileName))
             throw new ValidationException($"Artifact {artifactId} has no usable filename.");
 
-        // Save into the repo's default arch dir first (confined); the real arch
-        // is only knowable after ExtractRpmMetadata, which requires the file to
-        // already live inside the repo tree (it confines its path to the repo
-        // root). If the header arch differs, MoveRpm relocates it below.
-        var savedPath = _repoManager.SaveRpm(repo.BasePath, repo.Arch, fileName, artifact.Content);
-
-        var metadata = _repoManager.ExtractRpmMetadata(savedPath)
-            ?? throw new ValidationException(
-                $"Could not read RPM metadata for artifact {artifactId}; the file may be corrupt or not a valid RPM.");
-
-        string pkgName = metadata.Name;
-        string pkgVersion = metadata.Version;
-        string pkgRelease = metadata.Release;
-        string pkgArch = metadata.Arch;
-        long pkgSize = metadata.Size > 0 ? metadata.Size : new FileInfo(savedPath).Length;
-
-        // FUNC-003: route by the package's own arch, not the repository's
-        // configured arch. A noarch/-devel subpackage must land in its own arch
-        // dir so dnf on any client can resolve the full subpackage set.
-        if (!string.Equals(pkgArch, repo.Arch, StringComparison.OrdinalIgnoreCase))
-        {
-            savedPath = _repoManager.MoveRpm(repo.BasePath, repo.Arch, pkgArch, fileName);
-        }
-
-        var package = new Package
-        {
-            Id = Guid.NewGuid(),
-            RepositoryId = repositoryId,
-            ArtifactId = artifactId,
-            Name = pkgName,
-            Version = pkgVersion,
-            Release = pkgRelease,
-            Arch = pkgArch,
-            FileName = fileName,
-            StoragePath = $"{repo.BasePath}/{pkgArch}/{fileName}",
-            FileSize = pkgSize,
-            // Prefer the hash BuildService already computed; fall back to a
-            // local recompute as defense-in-depth.
-            HashSha256 = !string.IsNullOrWhiteSpace(artifact.HashSha256)
-                ? artifact.HashSha256
-                : _repoManager.ComputeSha256(savedPath),
-            SigningKeyFingerprint = signing.KeyFingerprint,
-            PublishedAt = DateTime.UtcNow,
-            PublishedBy = publishedBy
-        };
-
-        _db.Packages.Add(package);
-        await _db.SaveChangesAsync();
-
-        // FUNC-006: regenerate metadata for the arch dir that actually received
-        // the file (the package's own arch), not just the repository's default.
-        await RunCreaterepoForArchAsync(repo.BasePath, pkgArch, package.Id);
-
-        _logger.LogInformation("Package {PackageId} published to repository {RepoId} (arch {Arch})", package.Id, repositoryId, pkgArch);
-        return package;
-    }
-
-    /// <summary>
-    /// Runs createrepo_c on a single arch directory after a publish/upload,
-    /// logging failures without swallowing them silently. Extracted so both
-    /// publish paths route metadata regeneration through the package's own arch.
-    /// </summary>
-    private async Task RunCreaterepoForArchAsync(string basePath, string arch, Guid packageId)
-    {
+        var stagingDirectory = _repoManager.CreatePublicationStagingDirectory(repositoryId);
         try
         {
-            var result = await _repoManager.RunCreaterepoAsync(basePath, arch);
-            if (result.Success)
+            await using var content = new MemoryStream(artifact.Content, writable: false);
+            var stagedPath = await _repoManager.WriteStagedRpmAsync(stagingDirectory, fileName, content);
+            var stagedHash = _repoManager.ComputeSha256(stagedPath);
+            if (!string.Equals(stagedHash, artifact.HashSha256, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(stagedHash, signing.SignedSha256, StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogInformation("Repository metadata updated for {Arch} after publishing package {PackageId}", arch, packageId);
+                throw new ValidationException(
+                    $"Artifact {artifactId} bytes do not match the verified signed SHA-256 digest.");
             }
-            else
+            if (new FileInfo(stagedPath).Length != artifact.FileSize)
+                throw new ValidationException($"Artifact {artifactId} size does not match its build record.");
+
+            var metadata = _repoManager.ValidateStagedRpm(stagedPath, fileName);
+            await _verification.VerifyEmbeddedRpmAsync(stagedPath, signing.KeyFingerprint!);
+
+            var package = new Package
             {
-                _logger.LogWarning("createrepo_c failed after publishing package {PackageId}: {Error}", packageId, result.Output);
-            }
+                Id = Guid.NewGuid(),
+                RepositoryId = repositoryId,
+                ArtifactId = artifactId,
+                Name = metadata.Name,
+                Version = metadata.Version,
+                Release = metadata.Release,
+                Arch = metadata.Arch,
+                FileName = fileName,
+                StoragePath = $"{repo.BasePath}/{metadata.Arch}/{fileName}",
+                FileSize = new FileInfo(stagedPath).Length,
+                HashSha256 = stagedHash,
+                SigningKeyFingerprint = signing.KeyFingerprint,
+                PublishedAt = DateTime.UtcNow,
+                PublishedBy = publishedBy,
+                Status = "Staging"
+            };
+            return await CommitPublicationAsync(repo, package, stagingDirectory, stagedPath);
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogWarning(ex, "createrepo_c threw after publishing package {PackageId}", packageId);
+            TryCleanupStaging(stagingDirectory);
         }
     }
 
@@ -253,61 +223,173 @@ public class MinioStorageService
         var repo = await _db.Repositories.FindAsync(repositoryId)
             ?? throw new NotFoundException($"Repository {repositoryId} not found");
 
-        // Save RPM to filesystem (default arch dir first; relocated below if the
-        // RPM header declares a different arch — same routing logic as publish).
-        var savedPath = await _repoManager.SaveRpmAsync(repo.BasePath, repo.Arch, fileName, fileStream);
-
-        // Compute hash
-        var hash = _repoManager.ComputeSha256(savedPath);
-        var actualSize = new FileInfo(savedPath).Length;
-
-        // Extract metadata from RPM
-        string pkgName = Path.GetFileNameWithoutExtension(fileName);
-        string pkgVersion = "0.0.0";
-        string pkgRelease = "1";
-        string pkgArch = repo.Arch;
-
-        var metadata = _repoManager.ExtractRpmMetadata(savedPath);
-        if (metadata != null)
+        var safeFileName = Path.GetFileName(fileName);
+        var stagingDirectory = _repoManager.CreatePublicationStagingDirectory(repositoryId);
+        try
         {
-            pkgName = metadata.Name;
-            pkgVersion = metadata.Version;
-            pkgRelease = metadata.Release;
-            pkgArch = metadata.Arch;
+            var stagedPath = await _repoManager.WriteStagedRpmAsync(stagingDirectory, safeFileName, fileStream);
+            var actualSize = new FileInfo(stagedPath).Length;
+            if (actualSize != fileSize)
+                throw new ValidationException("Uploaded RPM size changed while it was being staged.");
+            var hash = _repoManager.ComputeSha256(stagedPath);
+            var metadata = _repoManager.ValidateStagedRpm(stagedPath, safeFileName);
+
+            var package = new Package
+            {
+                Id = Guid.NewGuid(),
+                RepositoryId = repositoryId,
+                ArtifactId = null,
+                Name = metadata.Name,
+                Version = metadata.Version,
+                Release = metadata.Release,
+                Arch = metadata.Arch,
+                FileName = safeFileName,
+                StoragePath = $"{repo.BasePath}/{metadata.Arch}/{safeFileName}",
+                FileSize = actualSize,
+                HashSha256 = hash,
+                PgpSignature = pgpSignature,
+                PublishedAt = DateTime.UtcNow,
+                PublishedBy = publishedBy,
+                Status = "Staging"
+            };
+            return await CommitPublicationAsync(repo, package, stagingDirectory, stagedPath);
         }
-
-        // FUNC-003: route by the package's own arch, not the repository's.
-        if (!string.Equals(pkgArch, repo.Arch, StringComparison.OrdinalIgnoreCase))
+        finally
         {
-            savedPath = _repoManager.MoveRpm(repo.BasePath, repo.Arch, pkgArch, fileName);
+            TryCleanupStaging(stagingDirectory);
         }
+    }
 
-        var package = new Package
+    private async Task<Package> CommitPublicationAsync(
+        PackageRepository repository,
+        Package package,
+        string stagingDirectory,
+        string stagedRpmPath)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        PublicationCommit? filesystemCommit = null;
+        var databaseCommitted = false;
+        try
         {
-            Id = Guid.NewGuid(),
-            RepositoryId = repositoryId,
-            ArtifactId = null,
-            Name = pkgName,
-            Version = pkgVersion,
-            Release = pkgRelease,
-            Arch = pkgArch,
-            FileName = fileName,
-            StoragePath = $"{repo.BasePath}/{pkgArch}/{fileName}",
-            FileSize = actualSize,
-            HashSha256 = hash,
-            PgpSignature = pgpSignature,
-            PublishedAt = DateTime.UtcNow,
-            PublishedBy = publishedBy
-        };
+            // PostgreSQL row lock serializes publishers across service replicas.
+            await _db.Repositories
+                .FromSqlInterpolated(
+                    $"""SELECT * FROM "Repositories" WHERE "Id" = {repository.Id} FOR UPDATE""")
+                .SingleAsync();
 
-        _db.Packages.Add(package);
-        await _db.SaveChangesAsync();
+            if (package.ArtifactId is Guid artifactId)
+            {
+                var existing = await _db.Packages
+                    .SingleOrDefaultAsync(p =>
+                        p.RepositoryId == repository.Id && p.ArtifactId == artifactId);
+                if (existing is not null)
+                {
+                    await transaction.RollbackAsync();
+                    return existing;
+                }
+            }
 
-        // FUNC-006: regenerate metadata for the arch dir that received the file.
-        await RunCreaterepoForArchAsync(repo.BasePath, pkgArch, package.Id);
+            if (await _db.Packages.AnyAsync(p =>
+                    p.RepositoryId == repository.Id &&
+                    (p.FileName == package.FileName ||
+                     (p.Name == package.Name &&
+                      p.Version == package.Version &&
+                      p.Release == package.Release &&
+                      p.Arch == package.Arch))))
+            {
+                throw new ConflictException(
+                    $"Package {package.Name}-{package.Version}-{package.Release}.{package.Arch} already exists.");
+            }
 
-        _logger.LogInformation("Package {FileName} uploaded to repository {RepoId} (arch {Arch}, id: {PackageId})", fileName, repositoryId, pkgArch, package.Id);
-        return package;
+            _db.Packages.Add(package);
+            await _db.SaveChangesAsync();
+
+            var stagedSnapshot = await _repoManager.GenerateStagedMetadataAsync(
+                repository.BasePath, package.Arch, stagingDirectory, stagedRpmPath);
+            _repoManager.WritePublicationJournal(
+                stagingDirectory, package.Id, repository.BasePath, package.Arch, package.FileName);
+            filesystemCommit = _repoManager.CommitStagedPublication(
+                repository.BasePath, package.Arch, stagedSnapshot, package.FileName);
+
+            package.Status = "Ready";
+            repository.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+            databaseCommitted = true;
+
+            try
+            {
+                _repoManager.CompletePublication(filesystemCommit);
+                _repoManager.RemovePublicationJournal(stagingDirectory);
+            }
+            catch (Exception ex)
+            {
+                // The previous metadata is hidden and no longer live. Cleanup
+                // failure is recoverable and must not roll back a committed row.
+                _logger.LogWarning(ex, "Failed to remove superseded repository metadata {Path}",
+                    filesystemCommit.PreviousSnapshotPath);
+            }
+
+            _logger.LogInformation(
+                "Package {PackageId} became Ready in repository {RepositoryId}",
+                package.Id, repository.Id);
+            return package;
+        }
+        catch
+        {
+            if (!databaseCommitted)
+            {
+                await transaction.RollbackAsync();
+                try
+                {
+                    if (filesystemCommit is not null)
+                        _repoManager.RollbackPublication(filesystemCommit);
+                    _repoManager.RemovePublicationJournal(stagingDirectory);
+                }
+                catch (Exception recoveryException)
+                {
+                    _logger.LogCritical(
+                        recoveryException,
+                        "Immediate publication rollback failed; preserving journal {Directory} for startup recovery",
+                        stagingDirectory);
+                    throw;
+                }
+            }
+            throw;
+        }
+    }
+
+    public async Task RecoverInterruptedPublicationsAsync()
+    {
+        foreach (var (_, journal) in _repoManager.ReadPublicationJournals())
+        {
+            var committed = await _db.Packages.AnyAsync(
+                p => p.Id == journal.PackageId && p.Status == "Ready");
+            _repoManager.RecoverPublication(journal, committed);
+            _logger.LogWarning(
+                "Recovered interrupted publication {PackageId}; database committed: {Committed}",
+                journal.PackageId, committed);
+        }
+        _repoManager.CleanupOrphanedPublicationStaging();
+    }
+
+    private void TryCleanupStaging(string stagingDirectory)
+    {
+        try
+        {
+            if (_repoManager.HasPublicationJournal(stagingDirectory))
+            {
+                _logger.LogWarning(
+                    "Preserving unresolved publication journal for startup recovery: {Directory}",
+                    stagingDirectory);
+                return;
+            }
+            _repoManager.CleanupPublicationStaging(stagingDirectory);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to clean publication staging directory {Directory}", stagingDirectory);
+        }
     }
 
     /// <summary>
@@ -315,7 +397,11 @@ public class MinioStorageService
     /// </summary>
     public async Task SyncRepositoryAsync(Guid repositoryId)
     {
-        var repo = await _db.Repositories.FindAsync(repositoryId)
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        var repo = await _db.Repositories
+            .FromSqlInterpolated(
+                $"""SELECT * FROM "Repositories" WHERE "Id" = {repositoryId} FOR UPDATE""")
+            .SingleOrDefaultAsync()
             ?? throw new NotFoundException($"Repository {repositoryId} not found");
 
         _logger.LogInformation("Syncing repository {RepoName} (basePath: {BasePath})", repo.Name, repo.BasePath);
@@ -330,12 +416,13 @@ public class MinioStorageService
             }
             else
             {
-                _logger.LogWarning("createrepo_c sync failed: {Output}", result.Output);
+                throw new InvalidOperationException($"createrepo_c sync failed: {result.Output}");
             }
         }
 
         repo.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        await transaction.CommitAsync();
 
         _logger.LogInformation("Repository {RepoName} sync completed", repo.Name);
     }
@@ -348,7 +435,7 @@ public class MinioStorageService
     public async Task<List<Package>> ListPackagesAsync(Guid repositoryId)
     {
         return await _db.Packages
-            .Where(p => p.RepositoryId == repositoryId)
+            .Where(p => p.RepositoryId == repositoryId && p.Status == "Ready")
             .OrderByDescending(p => p.PublishedAt)
             .ToListAsync();
     }

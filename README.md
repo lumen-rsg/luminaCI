@@ -125,8 +125,9 @@ primary UI; a REST API is available for automation and integrations.
   non-root user (see [Build security model](#build-security-model)).
 - **PGP signing** — generate/manage signing keys and attach detached signatures.
 - **CVE scanning** — Trivy integration with results stored per-artifact.
-- **Managed RPM repository** — publish packages and serve them over HTTP via
-  nginx; `createrepo`-style metadata maintained by repository-service.
+- **Managed RPM repository** — verify and stage packages privately, then
+  atomically publish each architecture’s RPM set and `createrepo_c` metadata
+  for nginx to serve.
 - **Secure session model** — short-lived access JWT in an `HttpOnly`,
   `Secure`, `SameSite=Strict` cookie, rotated refresh tokens in Redis.
 - **Rate limiting & lockout** — per-IP global token bucket plus a strict
