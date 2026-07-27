@@ -145,8 +145,6 @@ services:
       - RateLimit__Login__PermitLimit=${RATE_LIMIT_LOGIN_PERMIT:-5}
       - RateLimit__Login__TokensPerSecond=${RATE_LIMIT_LOGIN_TPS:-5}
       - RateLimit__Login__QueueLimit=${RATE_LIMIT_LOGIN_QUEUE:-0}
-    ports:
-      - "5000:5000"
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:5000/health/ready"]
       interval: 15s
@@ -527,8 +525,6 @@ services:
       context: ../
       dockerfile: deploy/docker/Lumina.WebApp.Dockerfile
     container_name: lumina-webapp
-    ports:
-      - "5005:80"
     depends_on:
       api-gateway:
         condition: service_healthy

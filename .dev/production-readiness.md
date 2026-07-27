@@ -29,18 +29,6 @@ Before deployment:
 
 The repository documents these requirements in `README.md:730`.
 
-## Network exposure
-
-The Compose configuration publishes the API gateway and WebApp debug ports
-directly:
-
-- API gateway: `deploy/docker-compose.yml:148` (`5000:5000`)
-- WebApp: `deploy/docker-compose.yml:522` (`5005:80`)
-
-These listeners bypass the nginx TLS and security-header boundary. For
-production, remove the host publications or bind/firewall them so that only
-the intended reverse proxy can reach them.
-
 ## Evidence already passing
 
 The following checks passed for the reviewed revision:
@@ -67,7 +55,6 @@ Passing CI run:
       staging.
 - [ ] Strong production secrets and signing files are installed.
 - [ ] Real TLS certificates and production DNS are configured.
-- [ ] Direct debug port exposure is removed or restricted.
 - [ ] Backup and restore procedures are tested.
 - [ ] Rollback procedure is documented and rehearsed.
 - [ ] Monitoring and actionable alerts cover the application and its
