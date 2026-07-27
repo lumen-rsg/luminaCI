@@ -92,6 +92,17 @@
                 </select>
             </div>
             <div class="mb-3">
+                <label class="form-label" for="new-pipeline-publish-repository">Publish Repository</label>
+                <select id="new-pipeline-publish-repository" class="form-select" @bind="_newPublishRepositoryId">
+                    <option value="">Select a repository</option>
+                    @foreach (var repository in _repositories)
+                    {
+                        <option value="@repository.Id">@repository.DisplayName (@repository.Arch)</option>
+                    }
+                </select>
+                <div class="form-text">The Publish step runs automatically after Scan and Sign succeed.</div>
+            </div>
+            <div class="mb-3">
                 <label class="form-label" for="new-pipeline-spec-content">RPM Spec Content</label>
                 <div class="d-flex align-items-center gap-2 mb-2">
                     <InputFile id="new-pipeline-spec-upload" class="visually-hidden-file-input" OnChange="@OnCreateSpecFileUploaded" Accept=".spec,.spec.in" />
@@ -112,7 +123,7 @@ Version: 1.0
                 <label class="form-check-label" for="autoBuildCheck">Auto-build after creation (requires Git URL)</label>
             </div>
             <div class="d-flex gap-2 mt-3">
-                <button class="btn btn-success" @onclick="CreatePipeline">Create Pipeline</button>
+                <button class="btn btn-success" @onclick="CreatePipeline" disabled="@(!_newPublishRepositoryId.HasValue)">Create Pipeline</button>
                 <button class="btn btn-outline-secondary" @onclick="() => _showCreate = false">Cancel</button>
             </div>
         </div>
@@ -247,6 +258,16 @@ else if (_showEdit && _edit != null)
                 </select>
             </div>
             <div class="mb-3">
+                <label class="form-label" for="edit-pipeline-publish-repository">Publish Repository</label>
+                <select id="edit-pipeline-publish-repository" class="form-select" @bind="_edit.PublishRepositoryId">
+                    <option value="">Select a repository</option>
+                    @foreach (var repository in _repositories)
+                    {
+                        <option value="@repository.Id">@repository.DisplayName (@repository.Arch)</option>
+                    }
+                </select>
+            </div>
+            <div class="mb-3">
                 <label class="form-label" for="edit-pipeline-spec-content">RPM Spec Content (inline)</label>
                 <div class="d-flex align-items-center gap-2 mb-2">
                     <InputFile id="edit-pipeline-spec-upload" class="visually-hidden-file-input" OnChange="@OnEditSpecFileUploaded" Accept=".spec,.spec.in" />
@@ -260,7 +281,7 @@ else if (_showEdit && _edit != null)
                 <textarea id="edit-pipeline-spec-content" class="form-control font-monospace" rows="6" @bind="_edit.SpecContent" style="font-size:0.82rem;"></textarea>
             </div>
             <div class="d-flex gap-2 mt-3">
-                <button class="btn btn-warning" @onclick="SaveEditPipeline" disabled="@_savingEdit">
+                <button class="btn btn-warning" @onclick="SaveEditPipeline" disabled="@(_savingEdit || !_edit.PublishRepositoryId.HasValue)">
                     @(_savingEdit ? "Saving..." : "Save Changes")
                 </button>
                 <button class="btn btn-outline-secondary" @onclick="DismissEdit" disabled="@_savingEdit">Cancel</button>
@@ -512,7 +533,9 @@ else
     private string _newGitToken = "";
     private string _newSpecContent = "";
     private string _newSpecFileName = "";
+    private Guid? _newPublishRepositoryId;
     private bool _autoBuildAfterCreate = false;
+    private List<RepositoryResponse> _repositories = [];
 
     // Trigger build dialog
     private bool _showTrigger = false;
@@ -586,7 +609,11 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
 
     protected override async Task OnInitializedAsync()
     {
+        var repositoriesTask = Api.GetRepositoriesAsync();
         await LoadPipelinesInternal();
+        var repositories = await repositoriesTask;
+        _repositories = repositories?.Data?.Repositories ?? [];
+        _newPublishRepositoryId = _repositories.FirstOrDefault()?.Id;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -643,13 +670,23 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
 
     private async Task CreatePipeline()
     {
+        if (!_newPublishRepositoryId.HasValue)
+        {
+            _triggerMessage = "Select a repository for the Publish step.";
+            IsSuccess = false;
+            return;
+        }
+
         var tags = _newTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
         var steps = new List<CreatePipelineStepRequest>
         {
             new(StepType.Build, "Build RPM", 1, new Dictionary<string, string>()),
             new(StepType.Scan, "CVE Scan", 2, new Dictionary<string, string>()),
             new(StepType.Sign, "PGP Sign", 3, new Dictionary<string, string>()),
-            new(StepType.Publish, "Publish", 4, new Dictionary<string, string>())
+            new(StepType.Publish, "Publish", 4, new Dictionary<string, string>
+            {
+                ["repositoryId"] = _newPublishRepositoryId!.Value.ToString()
+            })
         };
 
         var result = await Api.CreatePipelineAsync(new CreatePipelineRequest(
@@ -678,6 +715,7 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             _newBuildImage = "";
             _newGitUsername = "";
             _newGitToken = "";
+            _newPublishRepositoryId = _repositories.FirstOrDefault()?.Id;
             _newSpecContent = "";
             _newSpecFileName = "";
             _autoBuildAfterCreate = false;
@@ -889,7 +927,7 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
     private async Task SaveEditPipeline()
     {
         var edit = _edit;
-        if (!_showEdit || edit == null || _savingEdit)
+        if (!_showEdit || edit == null || _savingEdit || !edit.PublishRepositoryId.HasValue)
             return;
 
         _savingEdit = true;
@@ -901,7 +939,10 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
                 new(StepType.Build, "Build RPM", 1, new Dictionary<string, string>()),
                 new(StepType.Scan, "CVE Scan", 2, new Dictionary<string, string>()),
                 new(StepType.Sign, "PGP Sign", 3, new Dictionary<string, string>()),
-                new(StepType.Publish, "Publish", 4, new Dictionary<string, string>())
+                new(StepType.Publish, "Publish", 4, new Dictionary<string, string>
+                {
+                    ["repositoryId"] = edit.PublishRepositoryId!.Value.ToString()
+                })
             };
 
             var result = await Api.UpdatePipelineAsync(edit.Id, new UpdatePipelineRequest(
@@ -1061,6 +1102,7 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
         public string GitToken { get; set; } = "";
         public string SpecContent { get; set; } = "";
         public string SpecFileName { get; set; } = "";
+        public Guid? PublishRepositoryId { get; set; }
 
         public static EditPipelineModel From(PipelineResponse pipeline) => new()
         {
@@ -1074,7 +1116,13 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
             SpecPath = pipeline.SpecPath ?? "",
             BuildImage = pipeline.BuildImage ?? "",
             GitUsername = pipeline.GitUsername ?? "",
-            SpecContent = pipeline.SpecContent ?? ""
+            SpecContent = pipeline.SpecContent ?? "",
+            PublishRepositoryId = pipeline.Steps
+                .SingleOrDefault(step => step.Type == StepType.Publish)?
+                .Configuration.TryGetValue("repositoryId", out var repositoryId) == true &&
+                Guid.TryParse(repositoryId, out var parsedRepositoryId)
+                    ? parsedRepositoryId
+                    : null
         };
     }
 

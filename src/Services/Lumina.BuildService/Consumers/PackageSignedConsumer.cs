@@ -15,15 +15,18 @@ public class PackageSignedConsumer : IConsumer<PackageSigned>
 {
     private readonly BuildDbContext _db;
     private readonly ArtifactStorageService _storage;
+    private readonly PipelineRunCoordinator _coordinator;
     private readonly ILogger<PackageSignedConsumer> _logger;
 
     public PackageSignedConsumer(
         BuildDbContext db,
         ArtifactStorageService storage,
+        PipelineRunCoordinator coordinator,
         ILogger<PackageSignedConsumer> logger)
     {
         _db = db;
         _storage = storage;
+        _coordinator = coordinator;
         _logger = logger;
     }
 
@@ -58,6 +61,7 @@ public class PackageSignedConsumer : IConsumer<PackageSigned>
         artifact.StoragePath = storagePath;
         _db.Update(artifact);
         await _db.SaveChangesAsync();
+        await _coordinator.ReportSignedAsync(msg.ArtifactId, context.CancellationToken);
 
         _logger.LogInformation(
             "Updated artifact {ArtifactId} with verified RPM signature metadata for {Fingerprint}",

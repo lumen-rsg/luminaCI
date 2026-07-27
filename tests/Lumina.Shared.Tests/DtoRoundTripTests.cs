@@ -187,7 +187,7 @@ public class DtoRoundTripTests
             Guid.NewGuid(), "n", "d", PipelineStatus.Active,
             new List<PipelineStepResponse>
             {
-                new(Guid.NewGuid(), StepType.Build, "b", 1, StepStatus.Pending,
+                new(Guid.NewGuid(), StepType.Build, "b", 1,
                     new Dictionary<string, string> { ["x"] = "y" })
             },
             "ops", DateTime.UtcNow, DateTime.UtcNow, new List<string> { "t" },

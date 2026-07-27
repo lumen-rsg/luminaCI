@@ -48,6 +48,8 @@ public class PipelineEngine
                 "A non-empty WebhookSecret is required — pipelines without a webhook secret cannot be triggered securely.");
         }
 
+        PipelineDefinitionValidator.Validate(request.Steps);
+
         var pipeline = new Pipeline
         {
             Id = Guid.NewGuid(),
@@ -66,14 +68,13 @@ public class PipelineEngine
             GitToken = request.GitToken,
             SpecContent = request.SpecContent,
             Tags = request.Tags ?? new List<string>(),
-            Steps = request.Steps.Select((s, i) => new PipelineStep
+            Steps = request.Steps.OrderBy(s => s.Order).Select(s => new PipelineStep
             {
                 Id = Guid.NewGuid(),
                 Type = s.Type,
                 Name = s.Name,
                 Order = s.Order,
-                Status = StepStatus.Pending,
-                Configuration = s.Configuration
+                Configuration = s.Configuration ?? new Dictionary<string, string>()
             }).ToList()
         };
 
@@ -95,6 +96,14 @@ public class PipelineEngine
 
         if (pipeline == null)
             throw new NotFoundException($"Pipeline {pipelineId} not found");
+
+        if (pipeline.Status != PipelineStatus.Active)
+        {
+            throw new ValidationException(
+                $"Pipeline {pipelineId} is {pipeline.Status} and cannot be triggered. Activate it first.");
+        }
+
+        PipelineDefinitionValidator.Validate(pipeline.Steps);
 
         // Fail-closed: a pipeline that declares a Sign step must have an active
         // PGP key before any build starts, otherwise the artifact would be built
@@ -147,33 +156,49 @@ public class PipelineEngine
             CommitSha = request.CommitSha,
             Branch = request.Branch ?? pipeline.GitBranch,
             CommitMessage = request.CommitMessage,
-            CommitAuthor = request.CommitAuthor
+            CommitAuthor = request.CommitAuthor,
+            StepRuns = pipeline.Steps
+                .OrderBy(step => step.Order)
+                .Select(step => new BuildStepRun
+                {
+                    Id = Guid.NewGuid(),
+                    PipelineStepId = step.Id,
+                    Type = step.Type,
+                    Name = step.Name,
+                    Order = step.Order,
+                    Configuration = new Dictionary<string, string>(step.Configuration)
+                })
+                .ToList()
         };
+
+        var buildRun = job.StepRuns.Single(step => step.Type == StepType.Build);
+        buildRun.Status = StepStatus.Running;
+        buildRun.StartedAt = DateTime.UtcNow;
 
         _db.BuildJobs.Add(job);
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Build job {JobId} queued for pipeline {PipelineId}", job.Id, pipelineId);
 
-        // Find the build step in pipeline
-        var buildStep = pipeline.Steps.FirstOrDefault(s => s.Type == StepType.Build);
-        if (buildStep != null)
+        try
         {
-            try
-            {
-                // Pipeline-level extra sources directory
-                var pipelineExtraDir = $"/opt/lumina/extra-sources/pipelines/{pipelineId}";
-                var pipelineExtraExists = Directory.Exists(pipelineExtraDir) && Directory.GetFiles(pipelineExtraDir, "*", SearchOption.AllDirectories).Length > 0;
+            // Pipeline-level extra sources directory
+            var pipelineExtraDir = $"/opt/lumina/extra-sources/pipelines/{pipelineId}";
+            var pipelineExtraExists = Directory.Exists(pipelineExtraDir) && Directory.GetFiles(pipelineExtraDir, "*", SearchOption.AllDirectories).Length > 0;
 
-                await _buildLauncher.StartBuildAsync(job, specContent, sourceUrl, pipeline.BuildImage,
-                    pipeline.GitUsername, pipeline.GitToken,
-                    extraSourcesPipelineDir: pipelineExtraExists ? pipelineExtraDir : null);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Build start failed for job {JobId}, returning with Failed status", job.Id);
-                // Job is already marked as Failed in DockerBuildService, just return it
-            }
+            await _buildLauncher.StartBuildAsync(job, specContent, sourceUrl, pipeline.BuildImage,
+                pipeline.GitUsername, pipeline.GitToken,
+                extraSourcesPipelineDir: pipelineExtraExists ? pipelineExtraDir : null);
+        }
+        catch (Exception ex)
+        {
+            job.Status = BuildStatus.Failed;
+            job.CompletedAt = DateTime.UtcNow;
+            buildRun.Status = StepStatus.Failed;
+            buildRun.Error = ex.Message.Length > 2048 ? ex.Message[..2048] : ex.Message;
+            buildRun.CompletedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            _logger.LogWarning(ex, "Build start failed for job {JobId}", job.Id);
         }
 
         return job;
@@ -191,6 +216,12 @@ public class PipelineEngine
 
         if (pipeline == null)
             throw new NotFoundException($"Pipeline {pipelineId} not found");
+
+        if (pipeline.Status != PipelineStatus.Active)
+        {
+            throw new ValidationException(
+                $"Pipeline {pipelineId} is {pipeline.Status} and cannot be triggered. Activate it first.");
+        }
 
         if (string.IsNullOrWhiteSpace(pipeline.GitRepoUrl))
             throw new ValidationException($"Pipeline {pipelineId} has no Git repository URL configured. Cannot auto-build.");
@@ -246,6 +277,7 @@ public class PipelineEngine
         // Not cached: EF entity with navigation properties — see RedisCacheService contract.
         return await _db.BuildJobs
             .Include(b => b.Artifacts)
+            .Include(b => b.StepRuns)
             .FirstOrDefaultAsync(b => b.Id == id);
     }
 
@@ -306,6 +338,8 @@ public class PipelineEngine
         if (pipeline.UpdatedAt != request.ExpectedUpdatedAt.Value)
             throw new ConflictException("The pipeline was modified by another user. Reload it before saving.");
 
+        PipelineDefinitionValidator.Validate(request.Steps);
+
         pipeline.Name = request.Name;
         pipeline.Description = request.Description;
         pipeline.Tags = request.Tags;
@@ -322,18 +356,17 @@ public class PipelineEngine
 
         // Replace steps
         _db.PipelineSteps.RemoveRange(pipeline.Steps);
-        pipeline.Steps = request.Steps.Select((s, i) => new PipelineStep
+        pipeline.Steps = request.Steps.OrderBy(s => s.Order).Select(s => new PipelineStep
         {
             Id = Guid.NewGuid(),
             PipelineId = pipeline.Id,
             Type = s.Type,
             Name = s.Name,
             Order = s.Order,
-            Status = StepStatus.Pending,
-            Configuration = s.Configuration
+            Configuration = s.Configuration ?? new Dictionary<string, string>()
         }).ToList();
 
-        _db.Pipelines.Update(pipeline);
+        _db.PipelineSteps.AddRange(pipeline.Steps);
         try
         {
             await _db.SaveChangesAsync();
@@ -377,12 +410,20 @@ public class PipelineEngine
     {
         var queuedJobs = await _db.BuildJobs
             .Where(b => b.Status == BuildStatus.Queued)
+            .Include(b => b.StepRuns)
             .ToListAsync();
 
         foreach (var job in queuedJobs)
         {
             job.Status = BuildStatus.Cancelled;
             job.CompletedAt = DateTime.UtcNow;
+            foreach (var step in job.StepRuns.Where(step =>
+                         step.Status is StepStatus.Pending or StepStatus.Running))
+            {
+                step.Status = StepStatus.Skipped;
+                step.CompletedAt = DateTime.UtcNow;
+                step.Error = "Removed from the queued build list.";
+            }
         }
 
         _db.BuildJobs.UpdateRange(queuedJobs);

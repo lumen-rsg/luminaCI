@@ -46,6 +46,7 @@ try
     builder.Services.AddSingleton<IRpmArtifactValidator, RpmArtifactValidator>();
     builder.Services.AddScoped<ISigningKeyGate, SigningKeyGate>();
     builder.Services.AddScoped<PipelineEngine>();
+    builder.Services.AddScoped<PipelineRunCoordinator>();
     builder.Services.AddScoped<ArtifactStorageService>();
     builder.Services.AddMinio(client => client
         .WithEndpoint(builder.Configuration["MinIO:Endpoint"] ?? "minio:9000")
@@ -70,6 +71,8 @@ try
         x.AddConsumer<CveScanCompletedConsumer>();
         x.AddConsumer<PackageSignedConsumer>();
         x.AddConsumer<PackageSigningFaultConsumer>();
+        x.AddConsumer<PackagePublishedConsumer>();
+        x.AddConsumer<PackagePublishFaultConsumer>();
         x.AddConsumer<GetArtifactSignatureConsumer>();
         x.AddConsumer<GetArtifactLocationConsumer>();
 
@@ -86,6 +89,8 @@ try
                 e.ConfigureConsumer<CveScanCompletedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSignedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSigningFaultConsumer>(ctx);
+                e.ConfigureConsumer<PackagePublishedConsumer>(ctx);
+                e.ConfigureConsumer<PackagePublishFaultConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactSignatureConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactLocationConsumer>(ctx);
             });

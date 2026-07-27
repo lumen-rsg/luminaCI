@@ -42,8 +42,8 @@ Lumina CI automates the RPM release pipeline end to end:
 2. **Build** — create an SRPM, rebuild it in a fresh RPM topdir, and retain the
    inputs, dependency inventory, runner identity, and logs inside an ephemeral,
    isolated container.
-3. **Sign** — attach a PGP signature (security-service, GPG).
-4. **Scan** — run Trivy against the artifacts and record CVE findings.
+3. **Scan** — run Trivy against the artifacts and enforce the CVE policy.
+4. **Sign** — attach and verify an RPM PGP signature (security-service, GPG).
 5. **Publish** — add the signed package to a managed RPM repository served by
    nginx.
 
@@ -492,6 +492,10 @@ curl -skb cookies.txt https://localhost/api/auth/me
 | `DELETE` | `/api/pipelines/{id}` | Delete a pipeline |
 | `POST` | `/api/pipelines/{id}/trigger` | Trigger a manual build |
 | `POST` | `/api/pipelines/{id}/trigger-auto` | Trigger an automatic (webhook-style) build |
+
+Pipeline definitions are executed in `Build → Scan → Sign → Publish` order.
+Each build snapshots the declared steps and records independent per-run state;
+the Publish step requires a `repositoryId` configuration value.
 
 ### Builds
 

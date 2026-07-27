@@ -284,33 +284,40 @@ else
         <div class="section-title mt-4">Publish to Repository</div>
         <div class="card animate-slide-in">
             <div class="card-body">
-                @if (_publishMessage != null)
+                @if (build.Artifacts.All(artifact => artifact.PublishedAt.HasValue))
+                {
+                    <div class="alert alert-success mb-0" role="status">
+                        All artifacts were published automatically by the pipeline.
+                    </div>
+                }
+                else if (_publishMessage != null)
                 {
                     <div class="alert @(_publishSuccess ? "alert-success" : "alert-danger") alert-dismissible fade show py-2 px-3 mb-3" role="status" aria-live="polite">
                         @_publishMessage
                         <button type="button" class="btn-close btn-sm" @onclick="() => _publishMessage = null" aria-label="Dismiss publish message" style="font-size:0.6em;"></button>
                     </div>
                 }
-                @if (_reposLoadError != null)
+                @if (build.Artifacts.Any(artifact => !artifact.PublishedAt.HasValue) && _reposLoadError != null)
                 {
                     <div class="alert alert-danger py-2 px-3 mb-2" role="alert">
                         @_reposLoadError
                     </div>
                 }
-                else if (_repos?.Data?.Repositories == null || !_repos.Data.Repositories.Any())
+                else if (build.Artifacts.Any(artifact => !artifact.PublishedAt.HasValue) &&
+                         (_repos?.Data?.Repositories == null || !_repos.Data.Repositories.Any()))
                 {
                     <div class="text-muted text-sm mb-2">
                         No repositories available. <a href="/repositories">Create one first</a>.
                     </div>
                 }
-                else
+                else if (build.Artifacts.Any(artifact => !artifact.PublishedAt.HasValue))
                 {
                     <div class="row align-items-end">
                         <div class="col-md-5 mb-2">
                             <label class="form-label text-sm" for="publish-repository">Repository</label>
                             <select id="publish-repository" class="form-select form-select-sm" @bind="_selectedRepoId">
                                 <option value="">-- Select repository --</option>
-                                @foreach (var repo in _repos.Data.Repositories)
+                                @foreach (var repo in _repos?.Data?.Repositories ?? [])
                                 {
                                     <option value="@repo.Id">@repo.DisplayName (@repo.Arch)</option>
                                 }
@@ -319,7 +326,7 @@ else
                         <div class="col-md-5 mb-2">
                             <label class="form-label text-sm" for="publish-artifact">Artifact</label>
                             <select id="publish-artifact" class="form-select form-select-sm" @bind="_selectedArtifactId">
-                                @foreach (var artifact in build.Artifacts)
+                                @foreach (var artifact in build.Artifacts.Where(artifact => !artifact.PublishedAt.HasValue))
                                 {
                                     <option value="@artifact.Id">@artifact.FileName</option>
                                 }
@@ -682,55 +689,37 @@ else
 
     private List<StageInfo> GetStages(BuildJobResponse build)
     {
-        var stages = new List<StageInfo>();
-        var hasArtifacts = build.Artifacts.Any();
-        var isRunning = build.Status == BuildStatus.Building;
-        var isFailed = build.Status == BuildStatus.Failed;
-        var isSuccess = build.Status == BuildStatus.Success;
+        if (build.StepRuns is not { Count: > 0 })
+        {
+            return
+            [
+                new StageInfo(
+                    "Legacy build",
+                    build.Status == BuildStatus.Success ? "status-dot success" :
+                    build.Status == BuildStatus.Failed ? "status-dot failed" : "status-dot running",
+                    build.Status.ToString(),
+                    build.Status == BuildStatus.Success ? "stage-success" :
+                    build.Status == BuildStatus.Failed ? "stage-failed" : "stage-running",
+                    build.Status == BuildStatus.Failed ? "text-danger" : "text-primary")
+            ];
+        }
 
-        // Build stage
-        stages.Add(new StageInfo(
-            "Build",
-            isSuccess || (isRunning && hasArtifacts) ? "status-dot success" : isFailed && !hasArtifacts ? "status-dot failed" : isRunning ? "status-dot running" : "status-dot pending",
-            isSuccess || (isRunning && hasArtifacts) ? "Passed" : isFailed && !hasArtifacts ? "Failed" : isRunning ? "Running..." : "Pending",
-            isSuccess || (isRunning && hasArtifacts) ? "stage-success" : isFailed && !hasArtifacts ? "stage-failed" : isRunning ? "stage-running" : "stage-pending",
-            isSuccess || (isRunning && hasArtifacts) ? "text-success" : isFailed && !hasArtifacts ? "text-danger" : isRunning ? "text-primary" : "text-muted"
-        ));
-
-        // Scan stage
-        var scanDone = hasArtifacts && build.Artifacts.All(a => a.CveScanStatus == ScanStatus.Completed);
-        var scanRunning = hasArtifacts && build.Artifacts.Any(a => a.CveScanStatus == ScanStatus.Running);
-        var scanFailed = hasArtifacts && build.Artifacts.Any(a => a.CveScanStatus == ScanStatus.Failed);
-        stages.Add(new StageInfo(
-            "CVE Scan",
-            scanFailed ? "status-dot failed" : scanDone ? "status-dot complete" : scanRunning ? "status-dot running" : "status-dot pending",
-            scanFailed ? "Failed" : scanDone ? "Completed" : scanRunning ? "Scanning..." : isRunning || isSuccess ? "Pending" : "Skipped",
-            scanFailed ? "stage-failed" : scanDone ? "stage-complete" : scanRunning ? "stage-running" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
-            scanFailed ? "text-danger" : scanDone || scanRunning ? "text-primary" : "text-muted"
-        ));
-
-        // Sign stage
-        var signed = hasArtifacts && build.Artifacts.All(a => !string.IsNullOrEmpty(a.SigningKeyFingerprint));
-        stages.Add(new StageInfo(
-            "PGP Sign",
-            signed ? "status-dot success" : "status-dot pending",
-            signed ? "Signed" : isRunning ? "Pending" : isSuccess ? "Unsigned" : "Skipped",
-            signed ? "stage-success" : isSuccess && !signed ? "stage-failed" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
-            signed ? "text-success" : "text-muted"
-        ));
-
-        // Publication is a separate manual operation and is not represented in
-        // the build response, so never infer "Published" from build success.
-        var publishReady = isSuccess && signed && scanDone;
-        stages.Add(new StageInfo(
-            "Publish",
-            publishReady ? "status-dot queued" : "status-dot pending",
-            publishReady ? "Ready (manual)" : isSuccess ? "Blocked" : isRunning ? "Pending" : "Skipped",
-            !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
-            publishReady ? "text-warning" : "text-muted"
-        ));
-
-        return stages;
+        return build.StepRuns
+            .OrderBy(step => step.Order)
+            .Select(step => step.Status switch
+            {
+                StepStatus.Success => new StageInfo(
+                    step.Name, "status-dot success", "Completed", "stage-success", "text-success"),
+                StepStatus.Running => new StageInfo(
+                    step.Name, "status-dot running", "Running...", "stage-running", "text-primary"),
+                StepStatus.Failed => new StageInfo(
+                    step.Name, "status-dot failed", step.Error ?? "Failed", "stage-failed", "text-danger"),
+                StepStatus.Skipped => new StageInfo(
+                    step.Name, "status-dot pending", "Skipped", "stage-skipped", "text-muted"),
+                _ => new StageInfo(
+                    step.Name, "status-dot pending", "Pending", "stage-pending", "text-muted")
+            })
+            .ToList();
     }
 
     private List<string> CleanLogs(string logs)

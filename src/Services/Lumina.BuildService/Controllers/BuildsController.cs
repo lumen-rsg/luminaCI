@@ -61,8 +61,12 @@ public class BuildsController : ControllerBase
             job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy,
             job.Artifacts.Select(a => new BuildArtifactResponse(
                 a.Id, a.FileName, a.FileSize, a.HashSha256, a.HashMd5,
-                a.SigningKeyFingerprint, a.SignedAt, a.CveScanStatus)).ToList(),
-            job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
+                a.SigningKeyFingerprint, a.SignedAt, a.CveScanStatus,
+                a.PublishedRepositoryId, a.PublishedAt)).ToList(),
+            job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor,
+            job.StepRuns.OrderBy(step => step.Order).Select(step => new BuildStepRunResponse(
+                step.Id, step.Type, step.Name, step.Order, step.Status,
+                step.StartedAt, step.CompletedAt, step.Error)).ToList());
         return Ok(new ApiResponse<BuildJobResponse>(true, response, null, null));
     }
 

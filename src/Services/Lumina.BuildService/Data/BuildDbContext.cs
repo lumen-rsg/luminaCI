@@ -22,6 +22,7 @@ public class BuildDbContext : DbContext
     public DbSet<PipelineStep> PipelineSteps => Set<PipelineStep>();
     public DbSet<BuildJob> BuildJobs => Set<BuildJob>();
     public DbSet<BuildArtifact> BuildArtifacts => Set<BuildArtifact>();
+    public DbSet<BuildStepRun> BuildStepRuns => Set<BuildStepRun>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -79,6 +80,17 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.CommitMessage).HasMaxLength(2048);
             entity.Property(e => e.CommitAuthor).HasMaxLength(256);
             entity.HasMany(e => e.Artifacts).WithOne(e => e.BuildJob).HasForeignKey(e => e.BuildJobId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(e => e.StepRuns).WithOne(e => e.BuildJob).HasForeignKey(e => e.BuildJobId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<BuildStepRun>(entity =>
+        {
+            entity.ToTable("build_step_runs", "build");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.Configuration).HasColumnType("hstore");
+            entity.Property(e => e.Error).HasMaxLength(2048);
+            entity.HasIndex(e => new { e.BuildJobId, e.Order }).IsUnique();
         });
 
         modelBuilder.Entity<BuildArtifact>(entity =>

@@ -10,7 +10,6 @@ public class PipelineStep
     public StepType Type { get; set; }
     public string Name { get; set; } = string.Empty;
     public Dictionary<string, string> Configuration { get; set; } = new();
-    public StepStatus Status { get; set; } = StepStatus.Pending;
 
     public Pipeline? Pipeline { get; set; }
 }

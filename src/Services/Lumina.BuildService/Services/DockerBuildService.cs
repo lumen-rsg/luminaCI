@@ -4,10 +4,8 @@ using System.Threading.Channels;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Lumina.BuildService.Data;
-using Lumina.Shared.Events;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
-using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.BuildService.Services;
@@ -24,7 +22,6 @@ public class DockerBuildService : IBuildLauncher
     private readonly ILogger<DockerBuildService> _logger;
     private readonly IConfiguration _config;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IBus _bus;
     private readonly IRpmArtifactValidator _rpmArtifactValidator;
 
     /// <summary>
@@ -88,14 +85,12 @@ public class DockerBuildService : IBuildLauncher
         ILogger<DockerBuildService> logger,
         IConfiguration config,
         IServiceScopeFactory scopeFactory,
-        IBus bus,
         IRpmArtifactValidator rpmArtifactValidator)
     {
         _db = db;
         _logger = logger;
         _config = config;
         _scopeFactory = scopeFactory;
-        _bus = bus;
         _rpmArtifactValidator = rpmArtifactValidator;
 
         // The Docker endpoint may be a raw unix socket (unix:///var/run/docker.sock),
@@ -160,7 +155,9 @@ public class DockerBuildService : IBuildLauncher
             return logs;
 
         // Fallback to database
-        var job = await _db.BuildJobs.FindAsync(jobId);
+        var job = await _db.BuildJobs
+            .Include(item => item.StepRuns)
+            .SingleOrDefaultAsync(item => item.Id == jobId);
         return job?.Logs ?? "";
     }
 
@@ -715,6 +712,13 @@ public class DockerBuildService : IBuildLauncher
             dbJob.Logs = logs;
             dbJob.ContainerId = containerId;
 
+            if (dbJob.Status == BuildStatus.Cancelled)
+            {
+                await db.SaveChangesAsync();
+                PublishLogLine(job.Id, "[BUILD CANCELLED]");
+                return;
+            }
+
             if (waitResult.StatusCode == 0)
             {
                 try
@@ -731,9 +735,8 @@ public class DockerBuildService : IBuildLauncher
                     }
                     else
                     {
-                        dbJob.Status = BuildStatus.Success;
                         _logger.LogInformation(
-                            "Build job {JobId} completed successfully with {ArtifactCount} valid RPM artifact(s)",
+                            "Build step for job {JobId} completed successfully with {ArtifactCount} valid RPM artifact(s)",
                             job.Id, artifactCount);
                     }
                 }
@@ -754,18 +757,26 @@ public class DockerBuildService : IBuildLauncher
                 SaveFailedBuildLog(job.Id, job.SpecName, logs);
             }
 
-            dbJob.CompletedAt = DateTime.UtcNow;
             db.BuildJobs.Update(dbJob);
             await db.SaveChangesAsync();
 
             // Notify SSE subscribers that build is complete
-            var buildResult = dbJob.Status == BuildStatus.Success ? "SUCCESS" : "FAILED";
+            var buildResult = dbJob.Status == BuildStatus.Building ? "SUCCESS" : "FAILED";
             PublishLogLine(job.Id, $"[BUILD {buildResult}]");
 
-            // Trigger CVE scan, hash storage, and PGP signing via MassTransit for all registered artifacts
-            if (dbJob.Status == BuildStatus.Success)
+            var coordinator = scope.ServiceProvider.GetRequiredService<PipelineRunCoordinator>();
+            if (dbJob.Status == BuildStatus.Building)
             {
-                _ = PublishPostBuildEventsAsync(dbJob.Id);
+                await coordinator.CompleteBuildStepAsync(dbJob.Id);
+            }
+            else
+            {
+                await coordinator.FailStepAsync(
+                    dbJob.Id,
+                    StepType.Build,
+                    waitResult.StatusCode == 0
+                        ? "The build produced no valid RPM artifacts."
+                        : $"The build container exited with code {waitResult.StatusCode}.");
             }
 
             // Clean up container
@@ -805,10 +816,14 @@ public class DockerBuildService : IBuildLauncher
                 if (dbJob != null)
                 {
                     dbJob.Logs = errorLogs;
-                    dbJob.Status = BuildStatus.Failed;
-                    dbJob.CompletedAt = DateTime.UtcNow;
                     db.BuildJobs.Update(dbJob);
                     await db.SaveChangesAsync();
+
+                    var coordinator = scope.ServiceProvider.GetRequiredService<PipelineRunCoordinator>();
+                    await coordinator.FailStepAsync(
+                        dbJob.Id,
+                        StepType.Build,
+                        "Container monitoring failed.");
                 }
 
                 // Save failed build log to file for diagnostics
@@ -893,49 +908,6 @@ public class DockerBuildService : IBuildLauncher
 
         await db.SaveChangesAsync();
         return registeredCount;
-    }
-
-    /// <summary>
-    /// Publish post-build events via MassTransit: CVE scan requests and hash storage.
-    /// PGP signing is now handled by CveScanCompletedConsumer after CVE scan passes.
-    /// </summary>
-    private async Task PublishPostBuildEventsAsync(Guid jobId)
-    {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
-            var artifacts = await db.BuildArtifacts.Where(a => a.BuildJobId == jobId).ToListAsync();
-
-            foreach (var artifact in artifacts)
-            {
-                // Publish CVE scan request
-                // After scan completes, CveScanCompletedConsumer will request PGP signing if no critical/high vulns
-                await _bus.Publish(new CveScanRequested(
-                    artifact.Id,
-                    artifact.FilePath,
-                    artifact.FileName,
-                    "Trivy",
-                    DateTime.UtcNow
-                ));
-                _logger.LogInformation("Published CveScanRequested for artifact {ArtifactId}", artifact.Id);
-
-                // Publish hash storage request
-                await _bus.Publish(new HashStoreRequested(
-                    artifact.Id,
-                    artifact.FileName,
-                    artifact.HashSha256,
-                    artifact.HashMd5,
-                    artifact.FileSize,
-                    DateTime.UtcNow
-                ));
-                _logger.LogInformation("Published HashStoreRequested for artifact {ArtifactId}", artifact.Id);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to publish post-build events for job {JobId}", jobId);
-        }
     }
 
     /// <summary>
@@ -1085,6 +1057,13 @@ public class DockerBuildService : IBuildLauncher
             var previousStatus = job.Status.ToString();
             job.Status = BuildStatus.Cancelled;
             job.CompletedAt = DateTime.UtcNow;
+            foreach (var step in job.StepRuns.Where(step =>
+                         step.Status is StepStatus.Pending or StepStatus.Running))
+            {
+                step.Status = StepStatus.Skipped;
+                step.CompletedAt = DateTime.UtcNow;
+                step.Error = "Build cancelled.";
+            }
             _db.BuildJobs.Update(job);
             await _db.SaveChangesAsync();
             _logger.LogInformation("Build {BuildId} cancelled (was {PreviousStatus})", jobId, previousStatus);

@@ -49,7 +49,7 @@ public class PipelinesController : ControllerBase
         if (p == null) return NotFound(new ApiResponse<PipelineResponse>(false, null, "Not found", null));
         var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
         var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
-            p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
+            p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Configuration)).ToList(),
             p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
             p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
         return Ok(new ApiResponse<PipelineResponse>(true, response, null, null));
@@ -64,7 +64,7 @@ public class PipelinesController : ControllerBase
             var p = await _engine.CreatePipelineAsync(request, "system");
             var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
             var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
-                p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
+                p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Configuration)).ToList(),
                 p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
                 p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
             return CreatedAtAction(nameof(Get), new { id = p.Id }, new ApiResponse<PipelineResponse>(true, response, null, "Pipeline created"));
@@ -85,7 +85,11 @@ public class PipelinesController : ControllerBase
         try
         {
             var job = await _engine.TriggerBuildAsync(id, request);
-            var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
+            var response = new BuildJobResponse(
+                job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs,
+                job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [],
+                job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor,
+                job.StepRuns.Select(ToStepRunResponse).ToList());
             return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Build triggered"));
         }
         catch (Exception ex)
@@ -105,7 +109,7 @@ public class PipelinesController : ControllerBase
             var p = await _engine.UpdatePipelineAsync(id, request);
             var webhookUrl = $"{Request.Scheme}://{Request.Host}/api/webhooks/{p.Id}";
             var response = new PipelineResponse(p.Id, p.Name, p.Description, p.Status,
-                p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Status, s.Configuration)).ToList(),
+                p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Configuration)).ToList(),
                 p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
                 p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent);
             return Ok(new ApiResponse<PipelineResponse>(true, response, null, "Pipeline updated"));
@@ -146,7 +150,11 @@ public class PipelinesController : ControllerBase
         {
             var triggeredBy = request?.TriggeredBy ?? "auto";
             var job = await _engine.TriggerAutoBuildAsync(id, triggeredBy);
-            var response = new BuildJobResponse(job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs, job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [], job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor);
+            var response = new BuildJobResponse(
+                job.Id, job.PipelineId, job.Status, job.SpecName, job.ContainerId, job.Logs,
+                job.CreatedAt, job.StartedAt, job.CompletedAt, job.TriggeredBy, [],
+                job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor,
+                job.StepRuns.Select(ToStepRunResponse).ToList());
             return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Auto build triggered — sources will be fetched from git"));
         }
         catch (Exception ex)
@@ -156,4 +164,7 @@ public class PipelinesController : ControllerBase
             return ApiResults.FromException<BuildJobResponse>(ex, _logger, "Pipelines.TriggerAuto", id);
         }
     }
+
+    private static BuildStepRunResponse ToStepRunResponse(Lumina.Shared.Models.BuildStepRun step) =>
+        new(step.Id, step.Type, step.Name, step.Order, step.Status, step.StartedAt, step.CompletedAt, step.Error);
 }

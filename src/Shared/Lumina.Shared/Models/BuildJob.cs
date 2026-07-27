@@ -13,6 +13,7 @@ public class BuildJob
     public string? ContainerId { get; set; }
     public string Logs { get; set; } = string.Empty;
     public List<BuildArtifact> Artifacts { get; set; } = [];
+    public List<BuildStepRun> StepRuns { get; set; } = [];
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string TriggeredBy { get; set; } = string.Empty;

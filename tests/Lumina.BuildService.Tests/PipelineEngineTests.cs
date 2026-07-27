@@ -81,7 +81,11 @@ public class PipelineEngineTests
         {
             new(StepType.Build, "build", 1, new Dictionary<string, string>())
         }.Concat(withSignStep
-            ? new[] { new CreatePipelineStepRequest(StepType.Sign, "sign", 2, new Dictionary<string, string>()) }
+            ? new[]
+            {
+                new CreatePipelineStepRequest(StepType.Scan, "scan", 2, new Dictionary<string, string>()),
+                new CreatePipelineStepRequest(StepType.Sign, "sign", 3, new Dictionary<string, string>())
+            }
             : Array.Empty<CreatePipelineStepRequest>()).ToList(),
         Tags: new List<string>(),
         GitRepoUrl: "example.com/repo.git",
@@ -128,6 +132,56 @@ public class PipelineEngineTests
     }
 
     [Fact]
+    public async Task CreatePipelineAsync_RejectsDefinitionWithoutBuildStep()
+    {
+        await using var sp = BuildServiceProvider(nameof(CreatePipelineAsync_RejectsDefinitionWithoutBuildStep));
+        var engine = await NewEngineAsync(sp);
+        var request = BuildRequest("s3cret") with
+        {
+            Steps = [new CreatePipelineStepRequest(StepType.Scan, "scan", 1, new())]
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            engine.CreatePipelineAsync(request, "ops"));
+    }
+
+    [Fact]
+    public async Task CreatePipelineAsync_RejectsOutOfOrderDefinition()
+    {
+        await using var sp = BuildServiceProvider(nameof(CreatePipelineAsync_RejectsOutOfOrderDefinition));
+        var engine = await NewEngineAsync(sp);
+        var request = BuildRequest("s3cret") with
+        {
+            Steps =
+            [
+                new CreatePipelineStepRequest(StepType.Scan, "scan", 1, new()),
+                new CreatePipelineStepRequest(StepType.Build, "build", 2, new())
+            ]
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            engine.CreatePipelineAsync(request, "ops"));
+    }
+
+    [Fact]
+    public async Task CreatePipelineAsync_RejectsPublishWithoutRepository()
+    {
+        await using var sp = BuildServiceProvider(nameof(CreatePipelineAsync_RejectsPublishWithoutRepository));
+        var engine = await NewEngineAsync(sp);
+        var request = BuildRequest("s3cret", withSignStep: true) with
+        {
+            Steps =
+            [
+                .. BuildRequest("s3cret", withSignStep: true).Steps,
+                new CreatePipelineStepRequest(StepType.Publish, "publish", 4, new())
+            ]
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            engine.CreatePipelineAsync(request, "ops"));
+    }
+
+    [Fact]
     public async Task UpdatePipelineAsync_RejectsStaleVersion()
     {
         await using var sp = BuildServiceProvider(nameof(UpdatePipelineAsync_RejectsStaleVersion));
@@ -166,7 +220,9 @@ public class PipelineEngineTests
         var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
 
         var request = new UpdatePipelineRequest(
-            "changed", "updated", [], [],
+            "changed", "updated",
+            [new CreatePipelineStepRequest(StepType.Build, "build", 1, new Dictionary<string, string>())],
+            [],
             ExpectedUpdatedAt: pipeline.UpdatedAt);
 
         var updated = await engine.UpdatePipelineAsync(pipeline.Id, request);
@@ -241,6 +297,23 @@ public class PipelineEngineTests
         Assert.Equal(BuildStatus.Queued, job.Status);
     }
 
+    [Fact]
+    public async Task TriggerBuildAsync_RejectsPausedPipeline()
+    {
+        await using var sp = BuildServiceProvider(nameof(TriggerBuildAsync_RejectsPausedPipeline));
+        var engine = await NewEngineAsync(sp);
+        var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
+        pipeline.Status = PipelineStatus.Paused;
+        await sp.GetRequiredService<BuildDbContext>().SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            engine.TriggerBuildAsync(
+                pipeline.Id,
+                new TriggerBuildRequest("pkg.spec", "", null, "ops")));
+
+        Assert.False(sp.GetRequiredService<FakeBuildLauncher>().WasLaunched);
+    }
+
     // ─── TriggerBuildAsync: job persistence + metadata ───────────────────
 
     [Fact]
@@ -261,6 +334,9 @@ public class PipelineEngineTests
         Assert.Equal("fix", job.CommitMessage);
         Assert.Equal("jane", job.CommitAuthor);
         Assert.Equal("pkg.spec", job.SpecName);
+        Assert.Single(job.StepRuns);
+        Assert.Equal(StepStatus.Running, job.StepRuns[0].Status);
+        Assert.Equal(StepType.Build, job.StepRuns[0].Type);
 
         // A build WAS launched with the launcher fake.
         Assert.True(sp.GetRequiredService<FakeBuildLauncher>().WasLaunched);
@@ -297,18 +373,17 @@ public class PipelineEngineTests
     }
 
     [Fact]
-    public async Task TriggerBuildAsync_KeepsQueuedStatus_WhenLauncherThrows()
+    public async Task TriggerBuildAsync_FailsBuildStep_WhenLauncherThrows()
     {
-        // The launcher is best-effort: if Docker is down, the job is still
-        // persisted as Queued so a worker can retry, rather than vanishing.
-        await using var sp = BuildServiceProvider(nameof(TriggerBuildAsync_KeepsQueuedStatus_WhenLauncherThrows));
+        await using var sp = BuildServiceProvider(nameof(TriggerBuildAsync_FailsBuildStep_WhenLauncherThrows));
         var engine = await NewEngineAsync(sp);
         var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
         sp.GetRequiredService<FakeBuildLauncher>().ThrowOnNextLaunch = new InvalidOperationException("docker down");
 
         var job = await engine.TriggerBuildAsync(pipeline.Id, new TriggerBuildRequest("pkg.spec", "", null, "ops"));
 
-        Assert.Equal(BuildStatus.Queued, job.Status);
+        Assert.Equal(BuildStatus.Failed, job.Status);
+        Assert.Equal(StepStatus.Failed, job.StepRuns.Single().Status);
     }
 
     // ─── TriggerAutoBuildAsync ───────────────────────────────────────────
@@ -504,6 +579,12 @@ public class PipelineEngineTests
                     v => JsonSerializer.Deserialize<List<string>>(v, (JsonSerializerOptions?)null) ?? new());
 
             modelBuilder.Entity<PipelineStep>()
+                .Property(p => p.Configuration)
+                .HasConversion(
+                    v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                    v => JsonSerializer.Deserialize<Dictionary<string, string>>(v, (JsonSerializerOptions?)null) ?? new());
+
+            modelBuilder.Entity<BuildStepRun>()
                 .Property(p => p.Configuration)
                 .HasConversion(
                     v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),

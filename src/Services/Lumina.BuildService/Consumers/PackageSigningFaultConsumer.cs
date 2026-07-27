@@ -1,4 +1,5 @@
 using Lumina.BuildService.Data;
+using Lumina.BuildService.Services;
 using Lumina.Shared.Events;
 using Lumina.Shared.Models.Enums;
 using MassTransit;
@@ -15,10 +16,15 @@ public sealed class PackageSigningFaultConsumer : IConsumer<Fault<PackageSigning
 {
     private readonly BuildDbContext _db;
     private readonly ILogger<PackageSigningFaultConsumer> _logger;
+    private readonly PipelineRunCoordinator _coordinator;
 
-    public PackageSigningFaultConsumer(BuildDbContext db, ILogger<PackageSigningFaultConsumer> logger)
+    public PackageSigningFaultConsumer(
+        BuildDbContext db,
+        PipelineRunCoordinator coordinator,
+        ILogger<PackageSigningFaultConsumer> logger)
     {
         _db = db;
+        _coordinator = coordinator;
         _logger = logger;
     }
 
@@ -45,12 +51,11 @@ public sealed class PackageSigningFaultConsumer : IConsumer<Fault<PackageSigning
 
         var reason = context.Message.Exceptions.FirstOrDefault()?.Message
             ?? "The signing worker exhausted its retries.";
-        job.Status = BuildStatus.Failed;
-        job.CompletedAt = DateTime.UtcNow;
-        var entry =
-            $"[{DateTime.UtcNow:O}] SIGNING FAILED: artifact '{artifact.FileName}' was not published. {reason}";
-        job.Logs = string.IsNullOrWhiteSpace(job.Logs) ? entry : $"{job.Logs}\n{entry}";
-        await _db.SaveChangesAsync();
+        await _coordinator.FailStepAsync(
+            job.Id,
+            StepType.Sign,
+            $"Artifact '{artifact.FileName}': {reason}",
+            context.CancellationToken);
 
         _logger.LogError(
             "Build {BuildJobId} marked failed after signing retries were exhausted for artifact {ArtifactId}",
