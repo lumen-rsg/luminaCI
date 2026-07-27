@@ -39,6 +39,34 @@ jobs:
       - name: Restore
         run: dotnet restore "Lumina CI.sln"
 
+      - name: Audit dependencies
+        shell: bash
+        run: |
+          dotnet package list --project "Lumina CI.sln" \
+            --vulnerable \
+            --include-transitive \
+            --format json \
+            --no-restore > vulnerable-packages.json
+
+          vulnerable_count="$(
+            jq '[
+              .projects[]?.frameworks[]?
+              | ((.topLevelPackages // []) + (.transitivePackages // []))[]?
+              | select((.vulnerabilities // []) | length > 0)
+            ] | length' vulnerable-packages.json
+          )"
+
+          if [[ "$vulnerable_count" -gt 0 ]]; then
+            jq '[
+              .projects[] as $project
+              | $project.frameworks[]?
+              | ((.topLevelPackages // []) + (.transitivePackages // []))[]?
+              | select((.vulnerabilities // []) | length > 0)
+              | { project: $project.path, package: .id, version: .resolvedVersion, vulnerabilities: .vulnerabilities }
+            ]' vulnerable-packages.json
+            exit 1
+          fi
+
       - name: Build
         run: dotnet build "Lumina CI.sln" -c Release --no-restore
 
