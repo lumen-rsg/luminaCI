@@ -326,6 +326,11 @@ services:
       - /opt/lumina/builds:/app/builds:z
     secrets:
       - lumina_gpg_passphrase
+    security_opt:
+      - no-new-privileges:true
+      # Compose secrets are bind mounts. Disable SELinux confinement for this
+      # container so GnuPG can read the otherwise host-confined secret file.
+      - label=disable
     depends_on:
       volume-init:
         condition: service_completed_successfully
