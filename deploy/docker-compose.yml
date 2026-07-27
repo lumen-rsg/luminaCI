@@ -283,6 +283,9 @@ services:
       - /tmp
     security_opt:
       - no-new-privileges:true
+      # The proxy must open the host's Docker socket on SELinux hosts. Its API
+      # allowlist, read-only rootfs, and dropped capabilities remain enforced.
+      - label=disable
     cap_drop:
       - ALL
     cap_add:
