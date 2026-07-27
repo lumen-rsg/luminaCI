@@ -19,7 +19,7 @@ namespace Lumina.SourceService.Controllers;
 public class SourceController : ControllerBase
 {
     private readonly ConfigParserService _configParser;
-    private readonly SourceFetchService _fetchService;
+    private readonly SourceFetchQueue _fetchQueue;
     private readonly SourceStorageService _storageService;
     private readonly SourceUriValidator _uriValidator;
     private readonly SourceDbContext _db;
@@ -28,7 +28,7 @@ public class SourceController : ControllerBase
 
     public SourceController(
         ConfigParserService configParser,
-        SourceFetchService fetchService,
+        SourceFetchQueue fetchQueue,
         SourceStorageService storageService,
         SourceUriValidator uriValidator,
         SourceDbContext db,
@@ -36,7 +36,7 @@ public class SourceController : ControllerBase
         IConfiguration config)
     {
         _configParser = configParser;
-        _fetchService = fetchService;
+        _fetchQueue = fetchQueue;
         _storageService = storageService;
         _uriValidator = uriValidator;
         _db = db;
@@ -128,7 +128,7 @@ public class SourceController : ControllerBase
             // again as defense-in-depth.
             await _uriValidator.ValidateAsync(pkg.Source, pkg.SourceType, pkg.SourceBranch);
 
-            var job = await _fetchService.FetchAsync(
+            var job = await _fetchQueue.EnqueueAsync(
                 pkg.Name,
                 pkg.Source,
                 pkg.SourceType,
@@ -161,7 +161,7 @@ public class SourceController : ControllerBase
     {
         try
         {
-            var jobs = await _fetchService.FetchAllAsync(_configParser, request?.MaxRetries ?? 3);
+            var jobs = await _fetchQueue.EnqueueAllAsync(_configParser, request?.MaxRetries ?? 3);
 
             var data = jobs.Select(j =>
                 new SourceFetchResponse(j.Id, j.PackageName, j.Status, j.ErrorMessage)).ToList();
@@ -194,6 +194,36 @@ public class SourceController : ControllerBase
             new SourceFetchResponse(job.Id, job.PackageName, job.Status, job.ErrorMessage),
             null,
             null));
+    }
+
+    [HttpPost("jobs/{jobId:guid}/cancel")]
+    public async Task<ActionResult<ApiResponse<SourceFetchResponse>>> CancelFetch(Guid jobId)
+    {
+        var job = await _db.SourceJobs.SingleOrDefaultAsync(j => j.Id == jobId);
+        if (job is null)
+            return NotFound(new ApiResponse<SourceFetchResponse>(false, null, "Source fetch job not found.", null));
+
+        if (job.Status is SourceStatus.Ready or SourceStatus.Failed or SourceStatus.Cancelled)
+        {
+            return Conflict(new ApiResponse<SourceFetchResponse>(
+                false, null, $"Source fetch job is already {job.Status}.", null));
+        }
+
+        job.CancellationRequested = true;
+        job.UpdatedAt = DateTime.UtcNow;
+        if (job.Status == SourceStatus.Pending)
+        {
+            job.Status = SourceStatus.Cancelled;
+            job.FetchCompletedAt = DateTime.UtcNow;
+            job.ErrorMessage = "Cancelled by request.";
+        }
+        await _db.SaveChangesAsync();
+
+        return Accepted(new ApiResponse<SourceFetchResponse>(
+            true,
+            new SourceFetchResponse(job.Id, job.PackageName, job.Status, job.ErrorMessage),
+            null,
+            "Cancellation requested."));
     }
 
     /// <summary>

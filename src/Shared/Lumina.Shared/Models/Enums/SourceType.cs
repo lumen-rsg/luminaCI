@@ -17,5 +17,6 @@ public enum SourceStatus
     Pending = 0,
     Fetching = 1,
     Ready = 2,
-    Failed = 3
+    Failed = 3,
+    Cancelled = 4
 }

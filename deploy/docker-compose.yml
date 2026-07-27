@@ -424,6 +424,9 @@ services:
       - Source__ConfigPath=/app/conf.ini
       - Source__MaxRetries=3
       - Source__FetchTimeoutMinutes=30
+      - Source__WorkerConcurrency=${SOURCE_WORKER_CONCURRENCY:-2}
+      - Source__WorkerPollSeconds=${SOURCE_WORKER_POLL_SECONDS:-2}
+      - Source__LeaseSeconds=${SOURCE_LEASE_SECONDS:-60}
       - Source__TempDir=/tmp/source-fetch
       - Source__SourcesDir=/opt/lumina/sources
       - Services__BuildService=http://build-service:5001

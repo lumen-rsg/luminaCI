@@ -119,7 +119,8 @@ primary UI; a REST API is available for automation and integrations.
 - **Pipeline-driven builds** — name, describe, tag, and trigger builds; each
   pipeline optionally wires up Git integration and a webhook secret.
 - **Multiple source types** — Git, tarball, and `rsync`, declared in `conf.ini`
-  or managed via the API/UI.
+  or managed via the API/UI. Each fetch is a durable attempt processed by a
+  bounded worker with leases, heartbeats, cancellation, and restart recovery.
 - **Isolated build containers** — every `rpmbuild`/`dotnet build` runs in a
   throwaway container on a dedicated network, with caps, limits, and a
   non-root user (see [Build security model](#build-security-model)).
@@ -555,6 +556,7 @@ curl -skb cookies.txt https://localhost/api/auth/me
 | `POST` | `/api/sources/reload-config` | Validate and reload the read-only legacy config |
 | `POST` | `/api/sources/{name}/fetch` | Fetch one source |
 | `POST` | `/api/sources/fetch-all` | Fetch all sources |
+| `POST` | `/api/sources/jobs/{jobId}/cancel` | Cancel a pending or running fetch attempt |
 | `POST` | `/api/sources/{name}/build` | Build a source |
 | `GET` | `/api/sources/{name}/status` | Fetch status for a source |
 | `GET` | `/api/sources/{name}/download` | Download a fetched source |

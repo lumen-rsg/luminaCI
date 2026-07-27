@@ -29,6 +29,8 @@ try
     builder.Services.AddSingleton<SourceUriValidator>();
     builder.Services.AddScoped<SourceStorageService>();
     builder.Services.AddScoped<SourceFetchService>();
+    builder.Services.AddScoped<SourceFetchQueue>();
+    builder.Services.AddHostedService<SourceFetchWorker>();
 
     // Redis distributed cache
     builder.Services.AddStackExchangeRedisCache(options =>

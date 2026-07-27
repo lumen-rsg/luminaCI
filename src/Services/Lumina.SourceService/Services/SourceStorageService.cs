@@ -31,9 +31,12 @@ public class SourceStorageService
     /// <summary>
     /// Upload a source archive to MinIO. Returns the storage path.
     /// </summary>
-    public async Task<string> UploadAsync(string packageName, string filePath)
+    public async Task<string> UploadAsync(
+        string packageName,
+        string filePath,
+        CancellationToken cancellationToken = default)
     {
-        await EnsureBucketAsync();
+        await EnsureBucketAsync(cancellationToken);
 
         var fileName = Path.GetFileName(filePath);
         var objectName = $"{packageName}/{fileName}";
@@ -46,7 +49,7 @@ public class SourceStorageService
             .WithFileName(filePath)
             .WithContentType(GetContentType(fileName));
 
-        await _minio.PutObjectAsync(putArgs);
+        await _minio.PutObjectAsync(putArgs, cancellationToken);
 
         _logger.LogInformation("Uploaded {Object} to MinIO successfully", objectName);
         return objectName;
@@ -152,19 +155,19 @@ public class SourceStorageService
         }
     }
 
-    private async Task EnsureBucketAsync()
+    private async Task EnsureBucketAsync(CancellationToken cancellationToken = default)
     {
         if (_bucketEnsured) return;
 
         try
         {
             var bucketExistsArgs = new BucketExistsArgs().WithBucket(BucketName);
-            var exists = await _minio.BucketExistsAsync(bucketExistsArgs);
+            var exists = await _minio.BucketExistsAsync(bucketExistsArgs, cancellationToken);
 
             if (!exists)
             {
                 var makeBucketArgs = new MakeBucketArgs().WithBucket(BucketName);
-                await _minio.MakeBucketAsync(makeBucketArgs);
+                await _minio.MakeBucketAsync(makeBucketArgs, cancellationToken);
                 _logger.LogInformation("Created MinIO bucket: {Bucket}", BucketName);
             }
 

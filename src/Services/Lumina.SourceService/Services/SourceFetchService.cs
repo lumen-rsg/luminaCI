@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using Lumina.SourceService.Data;
-using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,12 +15,9 @@ public class SourceFetchService
     private readonly SourceDbContext _db;
     private readonly SourceStorageService _storage;
     private readonly ILogger<SourceFetchService> _logger;
-    private readonly IConfiguration _config;
-    private readonly IServiceScopeFactory _scopeFactory;
     private readonly SourceUriValidator _uriValidator;
     private readonly string _tempDir;
     private readonly string _sourcesDir;
-    private readonly int _maxRetries;
     private readonly int _timeoutMinutes;
 
     public SourceFetchService(
@@ -29,177 +25,160 @@ public class SourceFetchService
         SourceStorageService storage,
         ILogger<SourceFetchService> logger,
         IConfiguration config,
-        IServiceScopeFactory scopeFactory,
         SourceUriValidator uriValidator)
     {
         _db = db;
         _storage = storage;
         _logger = logger;
-        _config = config;
-        _scopeFactory = scopeFactory;
         _uriValidator = uriValidator;
         _tempDir = config["Source:TempDir"] ?? "/tmp/source-fetch";
         _sourcesDir = config["Source:SourcesDir"] ?? "/opt/lumina/sources";
-        _maxRetries = int.TryParse(config["Source:MaxRetries"] ?? "3", out var r) ? r : 3;
         _timeoutMinutes = int.TryParse(config["Source:FetchTimeoutMinutes"] ?? "30", out var t) ? t : 30;
     }
 
-    /// <summary>
-    /// Fetch sources for a specific package. Creates a SourceJob record and runs the fetch.
-    /// </summary>
-    public async Task<SourceJob> FetchAsync(string packageName, string sourceUrl, SourceType sourceType,
-        string? branch = null, int maxRetries = 0)
+    /// <summary>Executes a job already leased by <see cref="SourceFetchWorker"/>.</summary>
+    public async Task ExecuteFetchAsync(
+        Guid jobId,
+        string leaseOwner,
+        CancellationToken cancellationToken)
     {
-        var effectiveRetries = maxRetries > 0 ? maxRetries : _maxRetries;
+        var job = await _db.SourceJobs.SingleOrDefaultAsync(
+            j => j.Id == jobId &&
+                 j.Status == SourceStatus.Fetching &&
+                 j.LeaseOwner == leaseOwner,
+            cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Source job {jobId} is not leased by worker {leaseOwner}.");
+        var stagingDir = Path.Combine(
+            _tempDir, job.PackageName, job.Id.ToString("N"), leaseOwner);
 
-        // Create or update the source job
-        var existingJob = await _db.SourceJobs
-            .Where(j => j.PackageName == packageName)
-            .OrderByDescending(j => j.CreatedAt)
-            .FirstOrDefaultAsync();
-
-        var job = existingJob ?? new Shared.Models.SourceJob
+        try
         {
-            Id = Guid.NewGuid(),
-            PackageName = packageName,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        job.SourceUrl = sourceUrl;
-        job.SourceType = sourceType;
-        job.SourceBranch = branch;
-        job.Status = SourceStatus.Fetching;
-        job.FetchStartedAt = DateTime.UtcNow;
-        job.FetchCompletedAt = null;
-        job.ErrorMessage = null;
-        job.RetryCount = 0;
-        job.UpdatedAt = DateTime.UtcNow;
-
-        if (existingJob == null)
-            _db.SourceJobs.Add(job);
-        else
-            _db.SourceJobs.Update(job);
-
-        await _db.SaveChangesAsync();
-
-        // Run the fetch in background
-        _ = ExecuteFetchAsync(job, effectiveRetries);
-
-        return job;
-    }
-
-    /// <summary>
-    /// Fetch all packages from config
-    /// </summary>
-    public async Task<List<SourceJob>> FetchAllAsync(ConfigParserService configParser, int maxRetries = 0)
-    {
-        var packages = configParser.ParsePackages();
-        var jobs = new List<SourceJob>();
-
-        foreach (var pkg in packages)
-        {
-            try
+            for (var attempt = job.RetryCount; attempt <= job.MaxRetries; attempt++)
             {
-                var job = await FetchAsync(pkg.Name, pkg.Source, pkg.SourceType, pkg.SourceBranch, maxRetries);
-                jobs.Add(job);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to start fetch for package {Name}", pkg.Name);
-            }
-        }
+                cancellationToken.ThrowIfCancellationRequested();
+                await _db.Entry(job).ReloadAsync(cancellationToken);
+                if (job.CancellationRequested)
+                    throw new OperationCanceledException(cancellationToken);
 
-        return jobs;
-    }
-
-    private async Task ExecuteFetchAsync(Shared.Models.SourceJob job, int maxRetries)
-    {
-        for (int attempt = 0; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                _logger.LogInformation("Fetching source for {Package} (attempt {Attempt}/{Max})",
-                    job.PackageName, attempt + 1, maxRetries + 1);
-
-                var stagingDir = Path.Combine(_tempDir, job.PackageName, job.Id.ToString("N"));
-                Directory.CreateDirectory(stagingDir);
-
-                var result = await FetchByProtocolAsync(job.SourceUrl, job.SourceType, job.SourceBranch, stagingDir);
-
-                // Create tarball from fetched content if it's a directory (git, svn, hg)
-                string archivePath;
-                if (result.IsDirectory)
-                {
-                    archivePath = await CreateTarballAsync(result.Path, stagingDir, job.PackageName);
-                }
-                else
-                {
-                    archivePath = result.Path;
-                }
-
-                // Compute hash
-                var hash = await ComputeSha256Async(archivePath);
-                var fileSize = new FileInfo(archivePath).Length;
-
-                // Upload to MinIO
-                var storagePath = await _storage.UploadAsync(job.PackageName, archivePath);
-
-                // Update job as successful — use fresh scope for background task
-                using var updateScope = _scopeFactory.CreateScope();
-                var updateDb = updateScope.ServiceProvider.GetRequiredService<SourceDbContext>();
-                var updateJob = await updateDb.SourceJobs.FindAsync(job.Id);
-
-                if (updateJob != null)
-                {
-                    updateJob.Status = SourceStatus.Ready;
-                    updateJob.StoragePath = storagePath;
-                    updateJob.FileSize = fileSize;
-                    updateJob.HashSha256 = hash;
-                    updateJob.FetchCompletedAt = DateTime.UtcNow;
-                    updateJob.UpdatedAt = DateTime.UtcNow;
-                    updateJob.RetryCount = attempt;
-                    updateDb.SourceJobs.Update(updateJob);
-                    await updateDb.SaveChangesAsync();
-                }
-
-                _logger.LogInformation(
-                    "Source fetch completed for {Package}: {Size} bytes, hash={Hash}",
-                    job.PackageName, fileSize, hash[..16] + "...");
-
-                // Cleanup staging
-                try { Directory.Delete(stagingDir, true); } catch { }
-
-                return;
-            }
-            catch (Exception ex)
-            {
+                ResetStagingDirectory(stagingDir);
                 job.RetryCount = attempt;
-                job.ErrorMessage = ex.Message;
-                _logger.LogWarning(ex,
-                    "Fetch attempt {Attempt} failed for {Package}: {Error}",
-                    attempt + 1, job.PackageName, ex.Message);
+                job.ErrorMessage = null;
+                job.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync(cancellationToken);
 
-                if (attempt < maxRetries)
+                try
                 {
-                    var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt)); // exponential backoff
-                    await Task.Delay(delay);
+                    _logger.LogInformation("Fetching source for {Package} (attempt {Attempt}/{Max})",
+                        job.PackageName, attempt + 1, job.MaxRetries + 1);
+
+                    var result = await FetchByProtocolAsync(
+                        job.SourceUrl, job.SourceType, job.SourceBranch, stagingDir, cancellationToken);
+
+                    string archivePath;
+                    if (result.IsDirectory)
+                    {
+                        archivePath = await CreateTarballAsync(
+                            result.Path, stagingDir, job.PackageName, cancellationToken);
+                    }
+                    else
+                    {
+                        archivePath = result.Path;
+                    }
+
+                    var hash = await ComputeSha256Async(archivePath, cancellationToken);
+                    var fileSize = new FileInfo(archivePath).Length;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var storagePath = await _storage.UploadAsync(
+                        job.PackageName, archivePath, cancellationToken);
+
+                    job.Status = SourceStatus.Ready;
+                    job.StoragePath = storagePath;
+                    job.FileSize = fileSize;
+                    job.HashSha256 = hash;
+                    job.FetchCompletedAt = DateTime.UtcNow;
+                    job.UpdatedAt = DateTime.UtcNow;
+                    job.LeaseOwner = null;
+                    job.LeaseExpiresAt = null;
+                    job.HeartbeatAt = null;
+                    await _db.SaveChangesAsync(cancellationToken);
+
+                    _logger.LogInformation(
+                        "Source fetch completed for {Package}: {Size} bytes, hash={Hash}",
+                        job.PackageName, fileSize, hash[..16] + "...");
+                    return;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // Another replica reclaimed the expired lease. Its claim is
+                    // authoritative; this stale executor must not update state.
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    job.RetryCount = attempt < job.MaxRetries ? attempt + 1 : attempt;
+                    job.ErrorMessage = ex.Message;
+                    job.UpdatedAt = DateTime.UtcNow;
+                    await _db.SaveChangesAsync(cancellationToken);
+                    _logger.LogWarning(ex,
+                        "Fetch attempt {Attempt} failed for {Package}: {Error}",
+                        attempt + 1, job.PackageName, ex.Message);
+
+                    if (attempt < job.MaxRetries)
+                    {
+                        var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt));
+                        await Task.Delay(delay, cancellationToken);
+                    }
                 }
             }
+
+            job.Status = SourceStatus.Failed;
+            job.FetchCompletedAt = DateTime.UtcNow;
+            job.UpdatedAt = DateTime.UtcNow;
+            job.LeaseOwner = null;
+            job.LeaseExpiresAt = null;
+            job.HeartbeatAt = null;
+            await _db.SaveChangesAsync(CancellationToken.None);
+
+            _logger.LogError("Source fetch failed for {Package} after {Attempts} attempts",
+                job.PackageName, job.MaxRetries + 1);
         }
-
-        // All retries exhausted
-        job.Status = SourceStatus.Failed;
-        job.FetchCompletedAt = DateTime.UtcNow;
-        job.UpdatedAt = DateTime.UtcNow;
-        _db.SourceJobs.Update(job);
-        await _db.SaveChangesAsync();
-
-        _logger.LogError("Source fetch failed for {Package} after {Attempts} attempts",
-            job.PackageName, maxRetries + 1);
+        catch (OperationCanceledException)
+        {
+            await _db.Entry(job).ReloadAsync(CancellationToken.None);
+            if (job.CancellationRequested)
+            {
+                job.Status = SourceStatus.Cancelled;
+                job.FetchCompletedAt = DateTime.UtcNow;
+                job.UpdatedAt = DateTime.UtcNow;
+                job.LeaseOwner = null;
+                job.LeaseExpiresAt = null;
+                job.HeartbeatAt = null;
+                job.ErrorMessage = "Cancelled by request.";
+                await _db.SaveChangesAsync(CancellationToken.None);
+            }
+            // Host shutdown leaves the lease in place. Another worker safely
+            // reclaims it after expiry and repeats the current attempt.
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            _logger.LogWarning(
+                "Worker {WorkerId} lost the lease for source job {JobId}",
+                leaseOwner, jobId);
+        }
+        finally
+        {
+            TryDeleteStagingDirectory(stagingDir);
+        }
     }
 
     private async Task<FetchResult> FetchByProtocolAsync(
-        string sourceUrl, SourceType sourceType, string? branch, string stagingDir)
+        string sourceUrl, SourceType sourceType, string? branch, string stagingDir,
+        CancellationToken cancellationToken)
     {
         // SECURITY: single choke point for SSRF / arbitrary-file-read defense.
         // conf.ini is user-writable, so sourceUrl/sourceType/branch are treated
@@ -212,20 +191,21 @@ public class SourceFetchService
 
         return sourceType switch
         {
-            SourceType.Git => await FetchGitAsync(safeUrl, safeBranch ?? "main", stagingDir),
+            SourceType.Git => await FetchGitAsync(safeUrl, safeBranch ?? "main", stagingDir, cancellationToken),
             SourceType.Tar or SourceType.Http or SourceType.Ftp
-                => await FetchHttpAsync(safeUrl, stagingDir),
-            SourceType.Rsync => await FetchRsyncAsync(safeUrl, stagingDir),
-            SourceType.Svn => await FetchSvnAsync(safeUrl, safeBranch, stagingDir),
-            SourceType.Hg => await FetchHgAsync(safeUrl, safeBranch, stagingDir),
-            SourceType.Local => await FetchLocalAsync(safeUrl, stagingDir),
+                => await FetchHttpAsync(safeUrl, stagingDir, cancellationToken),
+            SourceType.Rsync => await FetchRsyncAsync(safeUrl, stagingDir, cancellationToken),
+            SourceType.Svn => await FetchSvnAsync(safeUrl, safeBranch, stagingDir, cancellationToken),
+            SourceType.Hg => await FetchHgAsync(safeUrl, safeBranch, stagingDir, cancellationToken),
+            SourceType.Local => await FetchLocalAsync(safeUrl, stagingDir, cancellationToken),
             _ => throw new NotSupportedException($"Source type {sourceType} is not supported")
         };
     }
 
     // ─── Protocol implementations ───
 
-    private async Task<FetchResult> FetchGitAsync(string url, string branch, string stagingDir)
+    private async Task<FetchResult> FetchGitAsync(
+        string url, string branch, string stagingDir, CancellationToken cancellationToken)
     {
         var cloneDir = Path.Combine(stagingDir, "repo");
 
@@ -236,7 +216,7 @@ public class SourceFetchService
         // parsed as options if they start with "-".
         var result = await RunCommandAsync("git",
             new[] { "clone", "--depth", "50", "--branch", branch, "--", url, cloneDir },
-            stagingDir, _timeoutMinutes);
+            stagingDir, _timeoutMinutes, cancellationToken);
 
         if (result.ExitCode != 0)
             throw new Exception($"git clone failed (exit {result.ExitCode}): {result.Error}");
@@ -246,13 +226,14 @@ public class SourceFetchService
         {
             await RunCommandAsync("git",
                 new[] { "submodule", "update", "--init", "--recursive" },
-                cloneDir, _timeoutMinutes);
+                cloneDir, _timeoutMinutes, cancellationToken);
         }
 
         return new FetchResult(cloneDir, true);
     }
 
-    private async Task<FetchResult> FetchHttpAsync(string url, string stagingDir)
+    private async Task<FetchResult> FetchHttpAsync(
+        string url, string stagingDir, CancellationToken cancellationToken)
     {
         var fileName = GetFileNameFromUrl(url);
         var targetPath = Path.Combine(stagingDir, fileName);
@@ -267,14 +248,14 @@ public class SourceFetchService
         // allow-list (Source:AllowedHosts) for the initial resolution.
         var result = await RunCommandAsync("curl",
             new[] { "-L", "-f", "-o", targetPath, "--", url },
-            stagingDir, _timeoutMinutes);
+            stagingDir, _timeoutMinutes, cancellationToken);
 
         if (result.ExitCode != 0)
         {
             _logger.LogInformation("curl failed, trying wget...");
             result = await RunCommandAsync("wget",
                 new[] { "-O", targetPath, "--", url },
-                stagingDir, _timeoutMinutes);
+                stagingDir, _timeoutMinutes, cancellationToken);
 
             if (result.ExitCode != 0)
                 throw new Exception($"Download failed: curl/wget both failed for {url}");
@@ -288,20 +269,21 @@ public class SourceFetchService
         {
             var extractDir = Path.Combine(stagingDir, "extracted");
             Directory.CreateDirectory(extractDir);
-            await ExtractTarballAsync(targetPath, extractDir);
+            await ExtractTarballAsync(targetPath, extractDir, cancellationToken);
             return new FetchResult(extractDir, true);
         }
 
         return new FetchResult(targetPath, false);
     }
 
-    private async Task<FetchResult> FetchRsyncAsync(string url, string stagingDir)
+    private async Task<FetchResult> FetchRsyncAsync(
+        string url, string stagingDir, CancellationToken cancellationToken)
     {
         _logger.LogInformation("rsync {Url}", url);
 
         var result = await RunCommandAsync("rsync",
             new[] { "-az", $"--timeout={_timeoutMinutes * 60}", "--", url, $"{stagingDir}/" },
-            stagingDir, _timeoutMinutes);
+            stagingDir, _timeoutMinutes, cancellationToken);
 
         if (result.ExitCode != 0)
             throw new Exception($"rsync failed (exit {result.ExitCode}): {result.Error}");
@@ -309,7 +291,8 @@ public class SourceFetchService
         return new FetchResult(stagingDir, true);
     }
 
-    private async Task<FetchResult> FetchSvnAsync(string url, string? branch, string stagingDir)
+    private async Task<FetchResult> FetchSvnAsync(
+        string url, string? branch, string stagingDir, CancellationToken cancellationToken)
     {
         var checkoutDir = Path.Combine(stagingDir, "checkout");
 
@@ -327,7 +310,7 @@ public class SourceFetchService
 
         var result = await RunCommandAsync("svn",
             new[] { "checkout", "--non-interactive", svnUrl, checkoutDir },
-            stagingDir, _timeoutMinutes);
+            stagingDir, _timeoutMinutes, cancellationToken);
 
         if (result.ExitCode != 0)
             throw new Exception($"svn checkout failed (exit {result.ExitCode}): {result.Error}");
@@ -335,7 +318,8 @@ public class SourceFetchService
         return new FetchResult(checkoutDir, true);
     }
 
-    private async Task<FetchResult> FetchHgAsync(string url, string? branch, string stagingDir)
+    private async Task<FetchResult> FetchHgAsync(
+        string url, string? branch, string stagingDir, CancellationToken cancellationToken)
     {
         var cloneDir = Path.Combine(stagingDir, "repo");
 
@@ -351,7 +335,7 @@ public class SourceFetchService
         args.Add(url);
         args.Add(cloneDir);
 
-        var result = await RunCommandAsync("hg", args, stagingDir, _timeoutMinutes);
+        var result = await RunCommandAsync("hg", args, stagingDir, _timeoutMinutes, cancellationToken);
 
         if (result.ExitCode != 0)
             throw new Exception($"hg clone failed (exit {result.ExitCode}): {result.Error}");
@@ -359,7 +343,8 @@ public class SourceFetchService
         return new FetchResult(cloneDir, true);
     }
 
-    private async Task<FetchResult> FetchLocalAsync(string path, string stagingDir)
+    private async Task<FetchResult> FetchLocalAsync(
+        string path, string stagingDir, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Copying local source from {Path}", path);
 
@@ -376,11 +361,13 @@ public class SourceFetchService
         // Copy directory
         foreach (var dir in Directory.GetDirectories(path, "*", SearchOption.AllDirectories))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Directory.CreateDirectory(dir.Replace(path, stagingDir));
         }
 
         foreach (var file in Directory.GetFiles(path, "*", SearchOption.AllDirectories))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var destFile = file.Replace(path, stagingDir);
             Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
             File.Copy(file, destFile, true);
@@ -391,7 +378,8 @@ public class SourceFetchService
 
     // ─── Helpers ───
 
-    private async Task<string> CreateTarballAsync(string sourceDir, string stagingDir, string packageName)
+    private async Task<string> CreateTarballAsync(
+        string sourceDir, string stagingDir, string packageName, CancellationToken cancellationToken)
     {
         var tarballPath = Path.Combine(stagingDir, $"{packageName}-sources.tar.gz");
 
@@ -421,7 +409,7 @@ public class SourceFetchService
 
         var result = await RunCommandAsync("tar",
             new[] { "-czf", tarballPath, "-C", Path.GetDirectoryName(tarSource)!, Path.GetFileName(tarSource) },
-            stagingDir, _timeoutMinutes);
+            stagingDir, _timeoutMinutes, cancellationToken);
 
         if (result.ExitCode != 0)
             throw new Exception($"Failed to create tarball: {result.Error}");
@@ -429,11 +417,12 @@ public class SourceFetchService
         return tarballPath;
     }
 
-    private async Task ExtractTarballAsync(string tarballPath, string targetDir)
+    private async Task ExtractTarballAsync(
+        string tarballPath, string targetDir, CancellationToken cancellationToken)
     {
         var result = await RunCommandAsync("tar",
             new[] { "-xf", tarballPath, "-C", targetDir },
-            Path.GetDirectoryName(tarballPath)!, _timeoutMinutes);
+            Path.GetDirectoryName(tarballPath)!, _timeoutMinutes, cancellationToken);
 
         if (result.ExitCode != 0)
             throw new Exception($"Failed to extract tarball: {result.Error}");
@@ -456,17 +445,24 @@ public class SourceFetchService
         return string.IsNullOrWhiteSpace(fileName) ? "source-archive" : fileName;
     }
 
-    private static async Task<string> ComputeSha256Async(string filePath)
+    private static async Task<string> ComputeSha256Async(
+        string filePath, CancellationToken cancellationToken)
     {
         using var stream = File.OpenRead(filePath);
-        var hash = await SHA256.HashDataAsync(stream);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken);
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     private async Task<CommandResult> RunCommandAsync(
-        string command, IReadOnlyList<string> arguments, string workingDir, int timeoutMinutes)
+        string command,
+        IReadOnlyList<string> arguments,
+        string workingDir,
+        int timeoutMinutes,
+        CancellationToken cancellationToken)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(timeoutMinutes));
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(timeoutMinutes));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, timeoutCts.Token);
 
         // SECURITY: Use ArgumentList (one token per element) instead of a single
         // Arguments string. With UseShellExecute=false there is no shell, but
@@ -488,15 +484,27 @@ public class SourceFetchService
         using var process = new Process { StartInfo = psi };
         process.Start();
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cts.Token);
-        var stderrTask = process.StandardError.ReadToEndAsync(cts.Token);
-
-        await process.WaitForExitAsync(cts.Token);
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        return new CommandResult(process.ExitCode, stdout, stderr);
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        try
+        {
+            await process.WaitForExitAsync(linkedCts.Token);
+            return new CommandResult(process.ExitCode, await stdoutTask, await stderrTask);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            await stdoutTask;
+            await stderrTask;
+            if (cancellationToken.IsCancellationRequested)
+                throw;
+            throw new TimeoutException(
+                $"{command} exceeded the {timeoutMinutes}-minute source fetch timeout.");
+        }
     }
 
     private static void CopyDirectory(string sourceDir, string destDir)
@@ -506,6 +514,26 @@ public class SourceFetchService
             File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)), true);
         foreach (var dir in Directory.GetDirectories(sourceDir))
             CopyDirectory(dir, Path.Combine(destDir, Path.GetFileName(dir)));
+    }
+
+    private static void ResetStagingDirectory(string stagingDirectory)
+    {
+        if (Directory.Exists(stagingDirectory))
+            Directory.Delete(stagingDirectory, recursive: true);
+        Directory.CreateDirectory(stagingDirectory);
+    }
+
+    private void TryDeleteStagingDirectory(string stagingDirectory)
+    {
+        try
+        {
+            if (Directory.Exists(stagingDirectory))
+                Directory.Delete(stagingDirectory, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to clean source staging directory {Directory}", stagingDirectory);
+        }
     }
 
     /// <summary>
@@ -525,7 +553,8 @@ public class SourceFetchService
         _logger.LogInformation("Fetching and preparing sources for {Package} v{Version}", packageName, packageVersion);
 
         // 1. Fetch sources
-        var result = await FetchByProtocolAsync(sourceUrl, sourceType, branch, stagingDir);
+        var result = await FetchByProtocolAsync(
+            sourceUrl, sourceType, branch, stagingDir, CancellationToken.None);
 
         // 2. Determine the source directory
         string sourceContentDir;
@@ -567,7 +596,7 @@ public class SourceFetchService
         // Create tarball
         var tarResult = await RunCommandAsync("tar",
             new[] { "-czf", tarballPath, "-C", tmpTarDir, $"{packageName}-{packageVersion}" },
-            stagingDir, _timeoutMinutes);
+            stagingDir, _timeoutMinutes, CancellationToken.None);
 
         if (tarResult.ExitCode != 0)
             throw new Exception($"Failed to create source tarball: {tarResult.Error}");

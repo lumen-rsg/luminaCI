@@ -21,7 +21,9 @@ public class SourceDbContext : DbContext
             entity.Property(e => e.SourceBranch).HasMaxLength(256);
             entity.Property(e => e.StoragePath).HasMaxLength(1024);
             entity.Property(e => e.ErrorMessage).HasMaxLength(4096);
+            entity.Property(e => e.LeaseOwner).HasMaxLength(128).IsConcurrencyToken();
             entity.HasIndex(e => e.PackageName);
+            entity.HasIndex(e => new { e.Status, e.LeaseExpiresAt, e.CreatedAt });
         });
     }
 }
