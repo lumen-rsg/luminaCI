@@ -1,0 +1,43 @@
+.stages {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: .75rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.stage {
+    align-items: center;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    display: grid;
+    gap: .25rem;
+    grid-template-columns: auto 1fr;
+    padding: .75rem;
+}
+
+.stage-name {
+    font-weight: 600;
+}
+
+.stage-status {
+    font-size: .78rem;
+    grid-column: 2;
+    overflow-wrap: anywhere;
+}
+
+.stage-running {
+    border-color: var(--primary);
+}
+
+.stage-failed {
+    border-color: var(--danger);
+}
+
+@media (max-width: 575.98px) {
+    .stages {
+        grid-template-columns: 1fr;
+    }
+}

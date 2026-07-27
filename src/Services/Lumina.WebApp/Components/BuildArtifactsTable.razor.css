@@ -1,0 +1,18 @@
+.artifact-id {
+    display: block;
+    font-size: .7rem;
+    margin-top: .25rem;
+}
+
+.digest {
+    display: block;
+    font-size: .7rem;
+    max-width: 22rem;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 767.98px) {
+    .digest {
+        max-width: 10rem;
+    }
+}

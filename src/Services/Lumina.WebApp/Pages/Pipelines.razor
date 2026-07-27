@@ -372,60 +372,14 @@ else if (_showEdit && _edit != null)
 
     @foreach (var pipeline in _pipelines.Data.Pipelines)
     {
-        <div class="card animate-slide-in" style="cursor:default;">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div class="flex-1">
-                        <div class="d-flex align-items-center gap-2 mb-2">
-                            <h4 class="mb-0">@pipeline.Name</h4>
-                            <span class="@GetPipelineStatusBadge(pipeline.Status)">@pipeline.Status</span>
-                            @if (!string.IsNullOrEmpty(pipeline.GitRepoUrl))
-                            {
-                                <span class="badge bg-info" title="@pipeline.GitRepoUrl">
-                                    @ExtractHost(pipeline.GitRepoUrl)
-                                </span>
-                                @if (!string.IsNullOrEmpty(pipeline.GitBranch))
-                                {
-                                    <span class="badge bg-secondary" title="Branch">
-                                        @pipeline.GitBranch
-                                    </span>
-                                }
-                            }
-                        </div>
-                        <div class="text-sm text-muted mb-2">@pipeline.Description</div>
-                        <div class="d-flex align-items-center gap-3 text-xs text-muted">
-                            <span>@pipeline.CreatedBy</span>
-                            <span>@pipeline.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")</span>
-                            <span>@pipeline.StepCount steps</span>
-                        </div>
-                    </div>
-                        <div class="d-flex gap-2">
-                        @if (!string.IsNullOrEmpty(pipeline.GitRepoUrl))
-                            {
-                                <button class="btn btn-sm btn-success" @onclick="() => AutoBuild(pipeline.Id, pipeline.Name)" title="Auto Build — fetch from git" aria-label="Auto build @pipeline.Name">
-                                    <Icon Name="sync" /> Auto
-                                </button>
-                                <button class="btn btn-sm btn-outline-info" @onclick="() => CopyWebhookUrl(pipeline.Id)" title="Copy webhook URL" aria-label="Copy webhook URL for @pipeline.Name">
-                                    <Icon Name="link" /> Webhook
-                                </button>
-                            }
-                        <button class="btn btn-sm btn-outline-success" @onclick="() => ShowTriggerDialog(pipeline)" title="Manual Build" aria-label="Manually build @pipeline.Name">
-                            <Icon Name="play" /> Run
-                        </button>
-                        <button class="btn btn-sm btn-outline-warning" @onclick="() => ShowEditDialog(pipeline)" title="Edit Pipeline" aria-label="Edit pipeline @pipeline.Name">
-                            <Icon Name="edit" /> Edit
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(pipeline)" title="Delete Pipeline" aria-label="Delete pipeline @pipeline.Name">
-                            <Icon Name="trash" /> Delete
-                        </button>
-                        <button class="btn btn-sm @(IsSourcesExpanded(pipeline.Id) ? "btn-info" : "btn-outline-info")" @onclick="() => TogglePipelineSources(pipeline.Id)" title="Extra Sources" aria-label="Toggle extra sources for @pipeline.Name" aria-expanded="@IsSourcesExpanded(pipeline.Id)">
-                            <Icon Name="package" /> Sources
-                        </button>
-                        <a href="/builds" class="btn btn-sm btn-outline-primary" title="View Builds">
-                            <Icon Name="hammer" /> Builds
-                        </a>
-                    </div>
-                </div>
+        <PipelineSummaryCard Pipeline="pipeline"
+                             SourcesExpanded="@IsSourcesExpanded(pipeline.Id)"
+                             AutoBuild="@((PipelineSummaryResponse p) => AutoBuild(p.Id, p.Name))"
+                             CopyWebhook="@((PipelineSummaryResponse p) => CopyWebhookUrl(p.Id))"
+                             Run="ShowTriggerDialog"
+                             Edit="ShowEditDialog"
+                             Delete="ConfirmDelete"
+                             ToggleSources="@((PipelineSummaryResponse p) => TogglePipelineSources(p.Id))">
                 <!-- Extra Sources Section -->
                 @if (IsSourcesExpanded(pipeline.Id))
                 {
@@ -513,8 +467,7 @@ else if (_showEdit && _edit != null)
                         }
                     </div>
                 }
-            </div>
-        </div>
+        </PipelineSummaryCard>
     }
 
     <div class="d-flex justify-content-between align-items-center mt-3">
@@ -590,30 +543,6 @@ else
     private bool _deleteDialogInitialized;
     private Guid _deletePipelineId;
     private string _deletePipelineName = "";
-
-    private readonly string _defaultSpec = @"Name:           lumina-hello
-Version:        1.0.0
-Release:        1%{?dist}
-Summary:        Hello World from Lumina CI
-
-License:        MIT
-Source0:        %{name}-%{version}.tar.gz
-
-%description
-A simple test package built by Lumina CI.
-
-%prep
-%setup -q
-
-%install
-mkdir -p %{buildroot}/usr/bin
-echo ""#!/bin/bash"" > %{buildroot}/usr/bin/lumina-hello
-echo ""echo Hello from Lumina CI! v1.0.0"" >> %{buildroot}/usr/bin/lumina-hello
-chmod +x %{buildroot}/usr/bin/lumina-hello
-
-%files
-/usr/bin/lumina-hello
-";
 
     private string _triggerSpecContent = "";
     private string _triggerSpecFileName = "";
@@ -908,12 +837,6 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
         }
     }
 
-    private string ExtractHost(string url)
-    {
-        try { return new Uri(url).Host; }
-        catch { return url.Length > 30 ? url[..30] + "..." : url; }
-    }
-
     private async Task ShowEditDialog(PipelineSummaryResponse pipeline)
     {
         var requestVersion = ++_editRequestVersion;
@@ -1110,15 +1033,6 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
         }
     }
 
-    private string GetPipelineStatusBadge(PipelineStatus status) => status switch
-    {
-        PipelineStatus.Active => "badge bg-success",
-        PipelineStatus.Draft => "badge bg-warning",
-        PipelineStatus.Paused => "badge bg-secondary",
-        PipelineStatus.Archived => "badge bg-dark",
-        _ => "badge bg-secondary"
-    };
-
     private sealed class EditPipelineModel
     {
         public Guid Id { get; init; }
@@ -1168,7 +1082,7 @@ chmod +x %{buildroot}/usr/bin/lumina-hello
     private string GetSubfolderBinding(Guid pipelineId)
         => _subfolders.TryGetValue(pipelineId, out var val) ? val : "";
 
-    private void SetSubfolder(Guid pipelineId, string value) => _subfolders[pipelineId] = value;
+    private void SetSubfolder(Guid pipelineId, string? value) => _subfolders[pipelineId] = value ?? "";
 
     private async Task TogglePipelineSources(Guid pipelineId)
     {

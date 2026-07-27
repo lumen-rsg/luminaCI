@@ -5,14 +5,14 @@
     <button class="theme-toggle login-theme-toggle" @onclick="ToggleTheme" title="@(Theme.IsDark ? "Switch to light theme" : "Switch to dark theme")" aria-label="Toggle theme">
         <Icon Name="@(Theme.IsDark ? "sun" : "moon")" />
     </button>
-    <div class="login-container">
+    <main class="login-container">
         <div class="login-logo">
             <div class="login-logo-icon">L</div>
             <h1>Lumina CI</h1>
             <p class="text-muted">Continuous Integration Platform</p>
         </div>
         @Body
-    </div>
+    </main>
 </div>
 
 @code {

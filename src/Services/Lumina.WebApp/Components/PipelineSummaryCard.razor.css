@@ -1,0 +1,34 @@
+.pipeline-card {
+    cursor: default;
+}
+
+.pipeline-header {
+    align-items: flex-start;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.pipeline-title,
+.pipeline-meta,
+.pipeline-actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+
+.pipeline-title h2 {
+    font-size: 1.25rem;
+    margin: 0;
+}
+
+.pipeline-meta {
+    gap: 1rem;
+}
+
+@media (max-width: 991.98px) {
+    .pipeline-header {
+        flex-direction: column;
+    }
+}

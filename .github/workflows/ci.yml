@@ -74,6 +74,16 @@ jobs:
       - name: Test
         run: dotnet test "Lumina CI.sln" -c Release --no-build --logger "trx;LogFileName=tests.trx" --logger "console;verbosity=normal"
 
+      - name: Install browser accessibility tests
+        working-directory: tests/Lumina.WebApp.E2E
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run browser accessibility tests
+        working-directory: tests/Lumina.WebApp.E2E
+        run: npm test
+
       - name: Publish test results
         if: always()
         uses: actions/upload-artifact@v4

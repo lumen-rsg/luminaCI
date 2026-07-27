@@ -69,21 +69,7 @@ public class LuminaApiService
     /// GET with retry, preserving HTTP status and the API error envelope.
     /// </summary>
     private async Task<T?> GetJsonWithRetryAsync<T>(string url, string label)
-    {
-        using var response = await SendWithRetryAsync(
-            () => _http.GetAsync(url), label);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var body = await response.Content.ReadAsStringAsync();
-            var message = TryReadApiError(body) ?? response.ReasonPhrase ?? "Request failed";
-            _logger.LogWarning("{Label} returned {Status}: {Message}", label, (int)response.StatusCode, message);
-            throw new ApiRequestException(response.StatusCode, message);
-        }
-
-        return await response.Content.ReadFromJsonAsync<T>()
-            ?? throw new ApiRequestException(response.StatusCode, "The server returned an empty response.");
-    }
+        => await SendAndReadJsonAsync<T>(() => _http.GetAsync(url), label, retry: true);
 
     private static string? TryReadApiError(string body)
     {
@@ -103,14 +89,43 @@ public class LuminaApiService
     }
 
     /// <summary>
-    /// Sends a request with retry and deserialises the JSON body.
-    /// Returns null-deserialised result on failure instead of throwing.
+    /// Sends a request and applies one failure contract to every API method:
+    /// non-success status, malformed JSON, and empty bodies all throw
+    /// <see cref="ApiRequestException"/> with the server error envelope when
+    /// available. Only safe GET requests opt into transient retries.
     /// </summary>
     private async Task<T?> SendAndReadJsonAsync<T>(
-        Func<Task<HttpResponseMessage>> sendFunc, string label)
+        Func<Task<HttpResponseMessage>> sendFunc,
+        string label,
+        bool retry = false)
     {
-        var response = await SendWithRetryAsync(sendFunc, label);
-        return await response.Content.ReadFromJsonAsync<T>();
+        using var response = retry
+            ? await SendWithRetryAsync(sendFunc, label)
+            : await sendFunc();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            var message = TryReadApiError(body) ?? response.ReasonPhrase ?? "Request failed";
+            _logger.LogWarning(
+                "{Label} returned {Status}: {Message}",
+                label, (int)response.StatusCode, message);
+            throw new ApiRequestException(response.StatusCode, message);
+        }
+
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<T>()
+                ?? throw new ApiRequestException(
+                    response.StatusCode, "The server returned an empty response.");
+        }
+        catch (JsonException ex)
+        {
+            throw new ApiRequestException(
+                response.StatusCode,
+                $"The server returned invalid JSON for {label}.",
+                ex);
+        }
     }
 
     // === Builds ===
@@ -174,40 +189,32 @@ public class LuminaApiService
     }
 
     public async Task<ApiResponse<PipelineResponse>?> CreatePipelineAsync(CreatePipelineRequest request)
-    {
-        var resp = await _http.PostAsJsonAsync("/api/pipelines", request);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<PipelineResponse>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<PipelineResponse>>(
+            () => _http.PostAsJsonAsync("/api/pipelines", request), nameof(CreatePipelineAsync));
 
     public async Task<ApiResponse<PipelineResponse>?> UpdatePipelineAsync(Guid id, UpdatePipelineRequest request)
-    {
-        var resp = await _http.PutAsJsonAsync($"/api/pipelines/{id}", request);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<PipelineResponse>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<PipelineResponse>>(
+            () => _http.PutAsJsonAsync($"/api/pipelines/{id}", request), nameof(UpdatePipelineAsync));
 
     public async Task<ApiResponse<object>?> DeletePipelineAsync(Guid id)
-    {
-        var resp = await _http.DeleteAsync($"/api/pipelines/{id}");
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<object>>(
+            () => _http.DeleteAsync($"/api/pipelines/{id}"), nameof(DeletePipelineAsync));
 
     public async Task<ApiResponse<BuildJobResponse>?> TriggerPipelineAsync(Guid pipelineId)
-    {
-        var resp = await _http.PostAsync($"/api/pipelines/{pipelineId}/trigger", null);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<BuildJobResponse>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<BuildJobResponse>>(
+            () => _http.PostAsync($"/api/pipelines/{pipelineId}/trigger", null), nameof(TriggerPipelineAsync));
 
     public async Task<ApiResponse<BuildJobResponse>?> TriggerPipelineWithRequestAsync(Guid pipelineId, TriggerBuildRequest request)
-    {
-        var resp = await _http.PostAsJsonAsync($"/api/pipelines/{pipelineId}/trigger", request);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<BuildJobResponse>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<BuildJobResponse>>(
+            () => _http.PostAsJsonAsync($"/api/pipelines/{pipelineId}/trigger", request),
+            nameof(TriggerPipelineWithRequestAsync));
 
     public async Task<ApiResponse<BuildJobResponse>?> TriggerAutoBuildAsync(Guid pipelineId, string triggeredBy = "auto")
-    {
-        var resp = await _http.PostAsJsonAsync($"/api/pipelines/{pipelineId}/trigger-auto", new TriggerAutoBuildRequest(triggeredBy));
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<BuildJobResponse>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<BuildJobResponse>>(
+            () => _http.PostAsJsonAsync(
+                $"/api/pipelines/{pipelineId}/trigger-auto",
+                new TriggerAutoBuildRequest(triggeredBy)),
+            nameof(TriggerAutoBuildAsync));
 
     // === Security ===
     public async Task<ApiResponse<HashListResponse>?> GetHashRecordsAsync(int page = 1, int pageSize = 20)
@@ -217,15 +224,15 @@ public class LuminaApiService
     }
 
     public async Task<ApiResponse<object>?> GenerateKeyAsync(string keyName, string email)
-    {
-        var resp = await _http.PostAsJsonAsync("/api/security/keys/generate", new GenerateKeyRequest(keyName, email));
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<object>>(
+            () => _http.PostAsJsonAsync(
+                "/api/security/keys/generate",
+                new GenerateKeyRequest(keyName, email)),
+            nameof(GenerateKeyAsync));
 
     public async Task<ApiResponse<List<object>>?> GetKeysAsync()
-    {
-        return await _http.GetFromJsonAsync<ApiResponse<List<object>>>("/api/security/keys");
-    }
+        => await GetJsonWithRetryAsync<ApiResponse<List<object>>>(
+            "/api/security/keys", nameof(GetKeysAsync));
 
     // === Scanner ===
     // The backend GET /api/scanner/scans returns ScanPaginatedResponse (a list of
@@ -246,10 +253,8 @@ public class LuminaApiService
     }
 
     public async Task<ApiResponse<RepositoryResponse>?> CreateRepositoryAsync(CreateRepositoryRequest request)
-    {
-        var resp = await _http.PostAsJsonAsync("/api/repository", request);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<RepositoryResponse>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<RepositoryResponse>>(
+            () => _http.PostAsJsonAsync("/api/repository", request), nameof(CreateRepositoryAsync));
 
     public async Task<ApiResponse<PackageResponse>?> UploadPackageAsync(Guid repositoryId, Stream fileStream, string fileName, Stream signatureStream, string signatureFileName, string publishedBy = "upload")
     {
@@ -263,43 +268,41 @@ public class LuminaApiService
         content.Add(new StringContent(repositoryId.ToString()), "repositoryId");
         content.Add(new StringContent(publishedBy), "publishedBy");
 
-        var resp = await _http.PostAsync("/api/repository/upload", content);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<PackageResponse>>();
+        return await SendAndReadJsonAsync<ApiResponse<PackageResponse>>(
+            () => _http.PostAsync("/api/repository/upload", content), nameof(UploadPackageAsync));
     }
 
     public async Task<ApiResponse<object>?> SyncRepositoryAsync(Guid repositoryId)
-    {
-        var resp = await _http.PostAsJsonAsync("/api/repository/sync", new SyncRepositoryRequest(repositoryId));
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<object>>(
+            () => _http.PostAsJsonAsync(
+                "/api/repository/sync",
+                new SyncRepositoryRequest(repositoryId)),
+            nameof(SyncRepositoryAsync));
 
     public async Task<ApiResponse<List<PackageResponse>>?> GetRepositoryPackagesAsync(Guid repositoryId)
-    {
-        return await _http.GetFromJsonAsync<ApiResponse<List<PackageResponse>>>($"/api/repository/{repositoryId}/packages");
-    }
+        => await GetJsonWithRetryAsync<ApiResponse<List<PackageResponse>>>(
+            $"/api/repository/{repositoryId}/packages", nameof(GetRepositoryPackagesAsync));
 
     public async Task<ApiResponse<PackageResponse>?> PublishPackageAsync(Guid artifactId, Guid repositoryId, string publishedBy = "build-service")
-    {
-        var resp = await _http.PostAsJsonAsync("/api/repository/publish", new PublishPackageRequest(artifactId, repositoryId, publishedBy));
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<PackageResponse>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<PackageResponse>>(
+            () => _http.PostAsJsonAsync(
+                "/api/repository/publish",
+                new PublishPackageRequest(artifactId, repositoryId, publishedBy)),
+            nameof(PublishPackageAsync));
 
     // === Sources ===
     public async Task<ApiResponse<SourceListResponse>?> GetSourcesAsync()
-    {
-        return await _http.GetFromJsonAsync<ApiResponse<SourceListResponse>>("/api/sources");
-    }
+        => await GetJsonWithRetryAsync<ApiResponse<SourceListResponse>>(
+            "/api/sources", nameof(GetSourcesAsync));
 
     public async Task<ApiResponse<SourcePackageResponse>?> GetSourceAsync(string name)
-    {
-        return await _http.GetFromJsonAsync<ApiResponse<SourcePackageResponse>>($"/api/sources/{name}");
-    }
+        => await GetJsonWithRetryAsync<ApiResponse<SourcePackageResponse>>(
+            $"/api/sources/{Uri.EscapeDataString(name)}", nameof(GetSourceAsync));
 
     public async Task<ApiResponse<SourceFetchResponse>?> FetchSourceAsync(string name)
-    {
-        var resp = await _http.PostAsync($"/api/sources/{name}/fetch", null);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<SourceFetchResponse>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<SourceFetchResponse>>(
+            () => _http.PostAsync($"/api/sources/{Uri.EscapeDataString(name)}/fetch", null),
+            nameof(FetchSourceAsync));
 
     // === Extra Sources (pipeline & build level) ===
     public async Task<ApiResponse<List<UploadedSourceResponse>>?> GetPipelineSourcesAsync(Guid pipelineId)
@@ -324,8 +327,9 @@ public class LuminaApiService
         if (!string.IsNullOrEmpty(subFolder))
             content.Add(new StringContent(subFolder), "subFolder");
 
-        var resp = await _http.PostAsync($"/api/extra-sources/pipeline/{pipelineId}", content);
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<List<UploadedSourceResponse>>>();
+        return await SendAndReadJsonAsync<ApiResponse<List<UploadedSourceResponse>>>(
+            () => _http.PostAsync($"/api/extra-sources/pipeline/{pipelineId}", content),
+            nameof(UploadPipelineSourceAsync));
     }
 
     /// <summary>
@@ -394,23 +398,23 @@ public class LuminaApiService
     }
 
     public async Task<ApiResponse<object>?> DeletePipelineSourceAsync(Guid pipelineId, string filePath)
-    {
-        var resp = await _http.DeleteAsync($"/api/extra-sources/pipeline/{pipelineId}/{filePath}");
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<object>>(
+            () => _http.DeleteAsync(
+                $"/api/extra-sources/pipeline/{pipelineId}/{Uri.EscapeDataString(filePath)}"),
+            nameof(DeletePipelineSourceAsync));
 
     public async Task<ApiResponse<object>?> ClearPipelineSourcesAsync(Guid pipelineId)
-    {
-        var resp = await _http.DeleteAsync($"/api/extra-sources/pipeline/{pipelineId}");
-        return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
-    }
+        => await SendAndReadJsonAsync<ApiResponse<object>>(
+            () => _http.DeleteAsync($"/api/extra-sources/pipeline/{pipelineId}"),
+            nameof(ClearPipelineSourcesAsync));
 }
 
 public sealed class ApiRequestException : Exception
 {
     public HttpStatusCode StatusCode { get; }
 
-    public ApiRequestException(HttpStatusCode statusCode, string message) : base(message)
+    public ApiRequestException(HttpStatusCode statusCode, string message, Exception? innerException = null)
+        : base(message, innerException)
     {
         StatusCode = statusCode;
     }

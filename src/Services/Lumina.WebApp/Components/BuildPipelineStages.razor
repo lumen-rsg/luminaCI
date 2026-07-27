@@ -1,0 +1,56 @@
+@using Lumina.Shared.DTOs
+@using Lumina.Shared.Models.Enums
+
+<section aria-labelledby="pipeline-stages-title">
+    <h2 id="pipeline-stages-title" class="section-title">Pipeline Stages</h2>
+    <ol class="stages animate-slide-in">
+        @foreach (var stage in Stages)
+        {
+            <li class="stage @stage.CssClass">
+                <span class="@stage.DotClass" aria-hidden="true"></span>
+                <span class="stage-name">@stage.Name</span>
+                <span class="stage-status @stage.TextClass">@stage.Status</span>
+            </li>
+        }
+    </ol>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public BuildJobResponse Build { get; set; } = default!;
+
+    private IReadOnlyList<StageInfo> Stages => Build.StepRuns is not { Count: > 0 }
+        ?
+        [
+            new(
+                "Legacy build",
+                Build.Status == BuildStatus.Success ? "status-dot success" :
+                Build.Status == BuildStatus.Failed ? "status-dot failed" : "status-dot running",
+                Build.Status.ToString(),
+                Build.Status == BuildStatus.Success ? "stage-success" :
+                Build.Status == BuildStatus.Failed ? "stage-failed" : "stage-running",
+                Build.Status == BuildStatus.Failed ? "text-danger" : "text-primary")
+        ]
+        : Build.StepRuns
+            .OrderBy(step => step.Order)
+            .Select(step => step.Status switch
+            {
+                StepStatus.Success => new StageInfo(
+                    step.Name, "status-dot success", "Completed", "stage-success", "text-success"),
+                StepStatus.Running => new StageInfo(
+                    step.Name, "status-dot running", "Running", "stage-running", "text-primary"),
+                StepStatus.Failed => new StageInfo(
+                    step.Name, "status-dot failed", step.Error ?? "Failed", "stage-failed", "text-danger"),
+                StepStatus.Skipped => new StageInfo(
+                    step.Name, "status-dot pending", "Skipped", "stage-skipped", "text-muted"),
+                _ => new StageInfo(
+                    step.Name, "status-dot pending", "Pending", "stage-pending", "text-muted")
+            })
+            .ToList();
+
+    private sealed record StageInfo(
+        string Name,
+        string DotClass,
+        string Status,
+        string CssClass,
+        string TextClass);
+}

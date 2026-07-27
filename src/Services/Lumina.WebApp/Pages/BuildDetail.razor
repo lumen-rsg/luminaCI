@@ -224,81 +224,11 @@ else
         </div>
     </div>
 
-    <!-- Pipeline Stage View -->
-    <div class="section-title">Pipeline Stages</div>
-    <div class="pipeline-stages animate-slide-in">
-        @foreach (var stage in GetStages(build))
-        {
-            <div class="stage-item @stage.CssClass">
-                <div class="stage-icon"><span class="@stage.DotClass"></span></div>
-                <div class="stage-name">@stage.Name</div>
-                <div class="stage-status @stage.TextClass">@stage.Status</div>
-            </div>
-            @if (stage != GetStages(build).Last())
-            {
-                <div class="stage-connector"><Icon Name="chevron-right" /></div>
-            }
-        }
-    </div>
+    <BuildPipelineStages Build="build" />
 
-    <!-- Artifacts -->
     @if (build.Artifacts.Any())
     {
-        <div class="section-title mt-4">Artifacts</div>
-        <div class="card animate-slide-in">
-            <div class="table-responsive">
-                <table class="table table-hover">
-                    <caption class="visually-hidden">Build artifacts</caption>
-                    <thead>
-                        <tr>
-                            <th scope="col">Artifact ID</th>
-                            <th scope="col">File Name</th>
-                            <th scope="col">Size</th>
-                            <th scope="col">SHA256</th>
-                            <th scope="col">Signature</th>
-                            <th scope="col">CVE Scan</th>
-                            <th scope="col">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var artifact in build.Artifacts)
-                        {
-                            <tr>
-                                <td><code style="font-size:0.75em;" title="@artifact.Id.ToString()">@artifact.Id.ToString()[..8]...</code></td>
-                                <td><strong class="text-bright">@artifact.FileName</strong></td>
-                                <td class="text-sm">@FormatFileSize(artifact.FileSize)</td>
-                                <td>
-                                    @if (!string.IsNullOrEmpty(artifact.HashSha256))
-                                    {
-                                        <code style="font-size:0.7em;word-break:break-all;">@artifact.HashSha256</code>
-                                    }
-                                    else
-                                    {
-                                        <span class="text-muted">&mdash;</span>
-                                    }
-                                </td>
-                                <td>
-                                    @if (!string.IsNullOrEmpty(artifact.SigningKeyFingerprint))
-                                    {
-                                        <span class="badge bg-success">SIGNED</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="badge bg-danger">NOT SIGNED</span>
-                                    }
-                                </td>
-                                <td>
-                                    <span class="@GetScanBadge(artifact.CveScanStatus)">@artifact.CveScanStatus</span>
-                                </td>
-                                <td>
-                                    <button class="btn btn-sm btn-outline-success" @onclick="() => DownloadArtifact(artifact.FileName)" title="Download @artifact.FileName"><Icon Name="download" /> Download</button>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        </div>
+        <BuildArtifactsTable Artifacts="build.Artifacts" DownloadRequested="DownloadArtifact" />
     }
 
     <!-- Publish to Repository -->
@@ -708,43 +638,6 @@ else
 
     private void GoBack() => Nav.NavigateTo("/builds");
 
-    private record StageInfo(string Name, string DotClass, string Status, string CssClass, string TextClass);
-
-    private List<StageInfo> GetStages(BuildJobResponse build)
-    {
-        if (build.StepRuns is not { Count: > 0 })
-        {
-            return
-            [
-                new StageInfo(
-                    "Legacy build",
-                    build.Status == BuildStatus.Success ? "status-dot success" :
-                    build.Status == BuildStatus.Failed ? "status-dot failed" : "status-dot running",
-                    build.Status.ToString(),
-                    build.Status == BuildStatus.Success ? "stage-success" :
-                    build.Status == BuildStatus.Failed ? "stage-failed" : "stage-running",
-                    build.Status == BuildStatus.Failed ? "text-danger" : "text-primary")
-            ];
-        }
-
-        return build.StepRuns
-            .OrderBy(step => step.Order)
-            .Select(step => step.Status switch
-            {
-                StepStatus.Success => new StageInfo(
-                    step.Name, "status-dot success", "Completed", "stage-success", "text-success"),
-                StepStatus.Running => new StageInfo(
-                    step.Name, "status-dot running", "Running...", "stage-running", "text-primary"),
-                StepStatus.Failed => new StageInfo(
-                    step.Name, "status-dot failed", step.Error ?? "Failed", "stage-failed", "text-danger"),
-                StepStatus.Skipped => new StageInfo(
-                    step.Name, "status-dot pending", "Skipped", "stage-skipped", "text-muted"),
-                _ => new StageInfo(
-                    step.Name, "status-dot pending", "Pending", "stage-pending", "text-muted")
-            })
-            .ToList();
-    }
-
     private List<string> CleanLogs(string logs)
     {
         var result = new List<string>(MaxRetainedLogLines);
@@ -857,13 +750,6 @@ else
         Disconnected
     }
 
-    private string FormatFileSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
-
     private string GetStatusBorderClass(BuildStatus s) => s switch
     {
         BuildStatus.Success => "border-success",
@@ -890,15 +776,6 @@ else
         BuildStatus.Building => "text-primary",
         BuildStatus.Cancelled => "text-muted",
         _ => ""
-    };
-
-    private string GetScanBadge(ScanStatus s) => s switch
-    {
-        ScanStatus.Pending => "badge bg-warning",
-        ScanStatus.Running => "badge bg-primary",
-        ScanStatus.Completed => "badge bg-success",
-        ScanStatus.Failed => "badge bg-danger",
-        _ => "badge bg-secondary"
     };
 
     [Inject] private IJSRuntime JS { get; set; } = default!;

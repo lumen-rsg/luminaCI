@@ -544,8 +544,8 @@ thead th {
 .btn:hover { text-decoration: none; }
 .btn:active { transform: translateY(0); }
 
-.btn-primary { background: var(--accent); color: #fff; }
-.btn-primary:hover { background: var(--accent-hover); color: #fff; }
+.btn-primary { background: var(--accent); color: #10182b; }
+.btn-primary:hover { background: var(--accent-hover); color: #10182b; }
 
 .btn-success { background: var(--accent-green); color: #0f2317; }
 .btn-success:hover { background: #95dcb5; color: #0f2317; }

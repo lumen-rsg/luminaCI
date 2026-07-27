@@ -1,0 +1,82 @@
+@using Lumina.Shared.DTOs
+
+<article class="card animate-slide-in pipeline-card" aria-labelledby="@TitleId">
+    <div class="card-body">
+        <header class="pipeline-header">
+            <div>
+                <div class="pipeline-title">
+                    <h2 id="@TitleId">@Pipeline.Name</h2>
+                    <span class="@StatusBadge(Pipeline.Status)">@Pipeline.Status</span>
+                    @if (!string.IsNullOrEmpty(Pipeline.GitRepoUrl))
+                    {
+                        <span class="badge bg-info" title="@Pipeline.GitRepoUrl">@RepositoryHost</span>
+                        @if (!string.IsNullOrEmpty(Pipeline.GitBranch))
+                        {
+                            <span class="badge bg-secondary">@Pipeline.GitBranch</span>
+                        }
+                    }
+                </div>
+                <p class="text-sm text-muted mb-2">@Pipeline.Description</p>
+                <div class="pipeline-meta text-xs text-muted">
+                    <span>@Pipeline.CreatedBy</span>
+                    <span>@Pipeline.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")</span>
+                    <span>@Pipeline.StepCount steps</span>
+                </div>
+            </div>
+            <div class="pipeline-actions" role="group" aria-label="Actions for @Pipeline.Name">
+                @if (!string.IsNullOrEmpty(Pipeline.GitRepoUrl))
+                {
+                    <button class="btn btn-sm btn-success" @onclick="() => AutoBuild.InvokeAsync(Pipeline)"
+                            aria-label="Auto build @Pipeline.Name"><Icon Name="sync" /> Auto</button>
+                    <button class="btn btn-sm btn-outline-info" @onclick="() => CopyWebhook.InvokeAsync(Pipeline)"
+                            aria-label="Copy webhook URL for @Pipeline.Name"><Icon Name="link" /> Webhook</button>
+                }
+                <button class="btn btn-sm btn-outline-success" @onclick="() => Run.InvokeAsync(Pipeline)"
+                        aria-label="Manually build @Pipeline.Name"><Icon Name="play" /> Run</button>
+                <button class="btn btn-sm btn-outline-warning" @onclick="() => Edit.InvokeAsync(Pipeline)"
+                        aria-label="Edit pipeline @Pipeline.Name"><Icon Name="edit" /> Edit</button>
+                <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete.InvokeAsync(Pipeline)"
+                        aria-label="Delete pipeline @Pipeline.Name"><Icon Name="trash" /> Delete</button>
+                <button class="btn btn-sm @(SourcesExpanded ? "btn-info" : "btn-outline-info")"
+                        @onclick="() => ToggleSources.InvokeAsync(Pipeline)"
+                        aria-label="Toggle extra sources for @Pipeline.Name"
+                        aria-expanded="@SourcesExpanded">
+                    <Icon Name="package" /> Sources
+                </button>
+                <a href="/builds" class="btn btn-sm btn-outline-primary"><Icon Name="hammer" /> Builds</a>
+            </div>
+        </header>
+        @ChildContent
+    </div>
+</article>
+
+@code {
+    [Parameter, EditorRequired] public PipelineSummaryResponse Pipeline { get; set; } = default!;
+    [Parameter] public bool SourcesExpanded { get; set; }
+    [Parameter] public EventCallback<PipelineSummaryResponse> AutoBuild { get; set; }
+    [Parameter] public EventCallback<PipelineSummaryResponse> CopyWebhook { get; set; }
+    [Parameter] public EventCallback<PipelineSummaryResponse> Run { get; set; }
+    [Parameter] public EventCallback<PipelineSummaryResponse> Edit { get; set; }
+    [Parameter] public EventCallback<PipelineSummaryResponse> Delete { get; set; }
+    [Parameter] public EventCallback<PipelineSummaryResponse> ToggleSources { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private string TitleId => $"pipeline-{Pipeline.Id:N}-title";
+
+    private string RepositoryHost
+    {
+        get
+        {
+            if (Uri.TryCreate(Pipeline.GitRepoUrl, UriKind.Absolute, out var uri))
+                return uri.Host;
+            return Pipeline.GitRepoUrl ?? string.Empty;
+        }
+    }
+
+    private static string StatusBadge(Lumina.Shared.Models.Enums.PipelineStatus status) => status switch
+    {
+        Lumina.Shared.Models.Enums.PipelineStatus.Active => "badge bg-success",
+        Lumina.Shared.Models.Enums.PipelineStatus.Paused => "badge bg-warning",
+        _ => "badge bg-secondary"
+    };
+}
