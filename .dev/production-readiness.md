@@ -30,8 +30,6 @@ Passing CI run:
 
 ## Production acceptance checklist
 
-- [ ] Monitoring and actionable alerts cover the application and its
-      dependencies.
 - [ ] Expected production load and a suitable soak test pass.
 
 Production approval should be reconsidered after the release blocker is fixed

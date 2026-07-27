@@ -73,3 +73,22 @@ The source URL must serve a digest-pinned archive compatible with
 Run the `staging acceptance` workflow after every deployment. Approval requires
 the retained canary build to show four successful steps and a signed, scanned
 artifact in its dedicated repository.
+
+## Monitoring and alerts
+
+Configure the `production` GitHub Environment with `LUMINA_BASE_URL`,
+`LUMINA_RUNBOOK_URL`, and the `LUMINA_ALERT_WEBHOOK_URL` secret. The
+`production monitoring` workflow probes liveness and full dependency readiness
+every five minutes. A failed application or dependency check sends a critical
+JSON alert containing the failed check, observed status, deployment, timestamp,
+and runbook link; workflow failure is a second independent signal.
+
+Route the webhook to the on-call system, page on the first failed scheduled run,
+and page separately when the monitoring workflow itself stops running. The
+runbook must include owner contacts, log and dashboard locations, dependency
+checks, rollback steps, and the staging-canary command. Validate both the
+healthy and alert paths before each monitoring change with:
+
+```bash
+tests/ci/monitoring-alerts.sh
+```

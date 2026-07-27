@@ -1,0 +1,31 @@
+name: production monitoring
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-monitoring
+  cancel-in-progress: false
+
+jobs:
+  external-probe:
+    name: application and dependency readiness
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Probe production and alert
+        env:
+          BASE_URL: ${{ vars.LUMINA_BASE_URL }}
+          DEPLOYMENT_ENVIRONMENT: production
+          RUNBOOK_URL: ${{ vars.LUMINA_RUNBOOK_URL }}
+          ALERT_WEBHOOK_URL: ${{ secrets.LUMINA_ALERT_WEBHOOK_URL }}
+        run: scripts/monitor-production.sh

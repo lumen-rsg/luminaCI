@@ -41,6 +41,9 @@ jobs:
       - name: Test production preflight
         run: tests/ci/production-preflight.sh
 
+      - name: Test production monitoring alerts
+        run: tests/ci/monitoring-alerts.sh
+
       - name: Scan deployment configuration
         run: |
           docker run --rm \
