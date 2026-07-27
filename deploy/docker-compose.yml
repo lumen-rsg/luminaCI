@@ -104,6 +104,7 @@ services:
 
   # === Application Services ===
   api-gateway:
+    image: ${API_GATEWAY_IMAGE:-lumina-api-gateway:local}
     build:
       context: ../
       dockerfile: deploy/docker/Lumina.ApiGateway.Dockerfile
@@ -162,6 +163,7 @@ services:
       - lumina-network
 
   build-service:
+    image: ${BUILD_SERVICE_IMAGE:-lumina-build-service:local}
     build:
       context: ../
       dockerfile: deploy/docker/Lumina.BuildService.Dockerfile
@@ -295,6 +297,7 @@ services:
       - proxy-net
 
   security-service:
+    image: ${SECURITY_SERVICE_IMAGE:-lumina-security-service:local}
     build:
       context: ../
       dockerfile: deploy/docker/Lumina.SecurityService.Dockerfile
@@ -350,6 +353,7 @@ services:
       - lumina-network
 
   scanner-service:
+    image: ${SCANNER_SERVICE_IMAGE:-lumina-scanner-service:local}
     build:
       context: ../
       dockerfile: deploy/docker/Lumina.ScannerService.Dockerfile
@@ -421,6 +425,7 @@ services:
       - lumina-network
 
   repository-service:
+    image: ${REPOSITORY_SERVICE_IMAGE:-lumina-repository-service:local}
     build:
       context: ../
       dockerfile: deploy/docker/Lumina.RepositoryService.Dockerfile
@@ -463,6 +468,7 @@ services:
       - lumina-network
 
   source-service:
+    image: ${SOURCE_SERVICE_IMAGE:-lumina-source-service:local}
     build:
       context: ../
       dockerfile: deploy/docker/Lumina.SourceService.Dockerfile
@@ -521,6 +527,7 @@ services:
       - lumina-network
 
   webapp:
+    image: ${WEBAPP_IMAGE:-lumina-webapp:local}
     build:
       context: ../
       dockerfile: deploy/docker/Lumina.WebApp.Dockerfile

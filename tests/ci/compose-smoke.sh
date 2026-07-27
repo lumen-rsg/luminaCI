@@ -7,8 +7,10 @@ readonly REPOSITORY_ROOT
 readonly COMPOSE_FILE="${REPOSITORY_ROOT}/deploy/docker-compose.yml"
 readonly OVERRIDE_FILE="${REPOSITORY_ROOT}/tests/ci/docker-compose.smoke.yml"
 readonly PROJECT_NAME="lumina-ci-smoke"
-readonly CALLER_UID="$(id -u)"
-readonly CALLER_GID="$(id -g)"
+CALLER_UID="$(id -u)"
+readonly CALLER_UID
+CALLER_GID="$(id -g)"
+readonly CALLER_GID
 
 temporary_directory="$(mktemp -d)"
 readonly temporary_directory
@@ -82,3 +84,46 @@ CURL_INSECURE=1 \
 SMOKE_USERNAME=admin \
 SMOKE_PASSWORD=ci-admin-password \
     "${REPOSITORY_ROOT}/scripts/smoke-test.sh"
+
+docker tag lumina-api-gateway:local lumina-api-gateway:rollback-rehearsal
+docker tag lumina-build-service:local lumina-build-service:rollback-rehearsal
+docker tag lumina-security-service:local lumina-security-service:rollback-rehearsal
+docker tag lumina-scanner-service:local lumina-scanner-service:rollback-rehearsal
+docker tag lumina-repository-service:local lumina-repository-service:rollback-rehearsal
+docker tag lumina-source-service:local lumina-source-service:rollback-rehearsal
+docker tag lumina-webapp:local lumina-webapp:rollback-rehearsal
+
+cat >> "$environment_file" <<'EOF'
+API_GATEWAY_IMAGE=lumina-api-gateway:rollback-rehearsal
+BUILD_SERVICE_IMAGE=lumina-build-service:rollback-rehearsal
+SECURITY_SERVICE_IMAGE=lumina-security-service:rollback-rehearsal
+SCANNER_SERVICE_IMAGE=lumina-scanner-service:rollback-rehearsal
+REPOSITORY_SERVICE_IMAGE=lumina-repository-service:rollback-rehearsal
+SOURCE_SERVICE_IMAGE=lumina-source-service:rollback-rehearsal
+WEBAPP_IMAGE=lumina-webapp:rollback-rehearsal
+EOF
+
+compose up \
+    --detach \
+    --no-build \
+    --no-deps \
+    --force-recreate \
+    --wait \
+    --wait-timeout 900 \
+    api-gateway \
+    build-service \
+    security-service \
+    scanner-service \
+    repository-service \
+    source-service \
+    webapp \
+    nginx
+
+BASE_URL=https://localhost \
+CHECK_CONTAINERS=1 \
+CURL_INSECURE=1 \
+SMOKE_USERNAME=admin \
+SMOKE_PASSWORD=ci-admin-password \
+    "${REPOSITORY_ROOT}/scripts/smoke-test.sh"
+
+printf '%s\n' "Immutable-image rollback rehearsal passed."

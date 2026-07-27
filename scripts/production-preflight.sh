@@ -35,6 +35,16 @@ required_secrets=(
     SECRETS_MASTER_KEY
 )
 
+release_images=(
+    API_GATEWAY_IMAGE
+    BUILD_SERVICE_IMAGE
+    SECURITY_SERVICE_IMAGE
+    SCANNER_SERVICE_IMAGE
+    REPOSITORY_SERVICE_IMAGE
+    SOURCE_SERVICE_IMAGE
+    WEBAPP_IMAGE
+)
+
 for key in "${required_secrets[@]}"; do
     value="${environment[$key]:-}"
     if (( ${#value} < 24 )); then
@@ -43,6 +53,14 @@ for key in "${required_secrets[@]}"; do
     fi
     if [[ "$value" == *"<set-"* || "$value" == ci-* || "$value" == *password* ]]; then
         printf '%s still contains a placeholder or test value.\n' "$key" >&2
+        exit 1
+    fi
+done
+
+for key in "${release_images[@]}"; do
+    value="${environment[$key]:-}"
+    if [[ ! "$value" =~ ^[^[:space:]@]+@sha256:[[:xdigit:]]{64}$ ]]; then
+        printf '%s must be an immutable registry reference pinned by SHA-256 digest.\n' "$key" >&2
         exit 1
     fi
 done
