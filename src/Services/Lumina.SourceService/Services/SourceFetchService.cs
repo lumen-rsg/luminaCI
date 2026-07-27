@@ -200,7 +200,7 @@ public class SourceFetchService
         CancellationToken cancellationToken)
     {
         // SECURITY: single choke point for SSRF / arbitrary-file-read defense.
-        // conf.ini is user-writable, so sourceUrl/sourceType/branch are treated
+        // Package definitions are user-controlled, so URL/type/reference are treated
         // as untrusted here even though callers also validate. The validator
         // canonicalizes the URL (and, for local sources, confines the path to
         // the trusted root) before anything reaches a process or the filesystem.

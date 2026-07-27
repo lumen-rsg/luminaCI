@@ -26,12 +26,12 @@ try
         options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
 
     // Services
-    builder.Services.AddSingleton<ConfigParserService>();
     builder.Services.AddSingleton<SourceUriValidator>();
     builder.Services.AddSingleton<SourceIntegrityService>();
     builder.Services.AddScoped<SourceStorageService>();
     builder.Services.AddScoped<SourceFetchService>();
     builder.Services.AddScoped<SourceFetchQueue>();
+    builder.Services.AddScoped<PackageCatalogService>();
     builder.Services.AddHostedService<SourceFetchWorker>();
 
     // Redis distributed cache

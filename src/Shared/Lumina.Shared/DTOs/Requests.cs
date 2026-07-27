@@ -75,6 +75,18 @@ public record PublishPackageRequest(Guid ArtifactId, Guid RepositoryId, string P
 public record SyncRepositoryRequest(Guid RepositoryId);
 
 // Source DTOs
-public record FetchSourceRequest(string PackageName, int MaxRetries = 3);
+public record SavePackageSourceRequest(
+    string Slug,
+    string SourceUrl,
+    SourceType SourceType,
+    string? SourceReference = null,
+    string? ExpectedSha256 = null,
+    string? SpecPath = null,
+    string? BuildImage = null,
+    bool IsEnabled = true,
+    bool FetchAutomatically = true,
+    int? ExpectedRevision = null);
+
+public record FetchSourceOptionsRequest(int MaxRetries = 3);
 
 public record FetchAllSourcesRequest(int MaxRetries = 3);

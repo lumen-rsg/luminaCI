@@ -73,10 +73,16 @@ public record BuildQueueResponse(List<BuildJobSummaryResponse> Queued, List<Buil
 
 // Source Responses
 public record SourcePackageResponse(
+    Guid PackageId,
     string PackageName,
+    int Revision,
+    bool IsEnabled,
     string SourceUrl,
     SourceType SourceType,
     string? SourceBranch,
+    string? ExpectedSha256,
+    string? SpecPath,
+    string? BuildImage,
     SourceStatus Status,
     string? ErrorMessage,
     long? FileSize,
@@ -95,13 +101,14 @@ public record SourceFetchResponse(
     string? ResolvedRevision = null,
     string? ResolvedUrl = null);
 
+public record SourcePackageMutationResponse(
+    SourcePackageResponse Package,
+    SourceFetchResponse? Fetch);
+
 // Pre-signed download URL for a fetched source archive. Replaces the ad-hoc
 // `new { url, packageName, fileSize, hashSha256 }` shape that SourceController
 // used to return, so every source JSON response shares the ApiResponse<T> envelope.
 public record SourceDownloadResponse(string Url, string PackageName, long? FileSize, string? HashSha256);
-
-// Acknowledgement for validating and reloading the read-only legacy manifest.
-public record SourceConfigMutationResponse(string Message, int? Count = null);
 
 // Uploaded Extra Source Responses (pipeline-level & build-level)
 public record UploadedSourceResponse(string FileName, string Path, long FileSize, DateTime UploadedAt, string? SubFolder);

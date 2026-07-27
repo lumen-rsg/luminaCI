@@ -5,6 +5,7 @@ namespace Lumina.Shared.Models;
 public class SourceJob
 {
     public Guid Id { get; set; }
+    public Guid? PackageRevisionId { get; set; }
     public string PackageName { get; set; } = string.Empty;
     public string SourceUrl { get; set; } = string.Empty;
     public SourceType SourceType { get; set; }
@@ -27,4 +28,6 @@ public class SourceJob
     public DateTime? FetchCompletedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    public PackageRevision? PackageRevision { get; set; }
 }

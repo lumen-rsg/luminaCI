@@ -1,6 +1,7 @@
 using Lumina.SourceService.Data;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
+using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.SourceService.Services;
 
@@ -44,10 +45,73 @@ public sealed class SourceFetchQueue
             expectedSha256 = expectedSha256.ToLowerInvariant();
         }
 
-        var effectiveRetries = Math.Clamp(
-            maxRetries ?? _defaultMaxRetries, 0, 10);
+        var job = CreatePending(
+            packageName, sourceUrl, sourceType, branch, expectedSha256, maxRetries);
+        _db.SourceJobs.Add(job);
+        await _db.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation("Queued source fetch attempt {JobId} for {Package}", job.Id, packageName);
+        return job;
+    }
+
+    public SourceJob CreatePending(
+        PackageRevision revision,
+        string packageName,
+        int? maxRetries = null)
+    {
+        var job = CreatePending(
+            packageName,
+            revision.SourceUrl,
+            revision.SourceType,
+            revision.SourceReference,
+            revision.ExpectedSha256,
+            maxRetries);
+        job.PackageRevisionId = revision.Id;
+        job.PackageRevision = revision;
+        return job;
+    }
+
+    public async Task<List<SourceJob>> EnqueueAllAsync(
+        int? maxRetries = null,
+        CancellationToken cancellationToken = default)
+    {
+        var packages = await _db.PackageDefinitions
+            .Where(package => package.IsEnabled)
+            .Include(package => package.Revisions)
+            .ToListAsync(cancellationToken);
+        var jobs = packages.Select(package =>
+            CreatePending(
+                package.Revisions.Single(revision =>
+                    revision.RevisionNumber == package.ActiveRevisionNumber),
+                package.Slug,
+                maxRetries)).ToList();
+        _db.SourceJobs.AddRange(jobs);
+        await _db.SaveChangesAsync(cancellationToken);
+        return jobs;
+    }
+
+    private SourceJob CreatePending(
+        string packageName,
+        string sourceUrl,
+        SourceType sourceType,
+        string? branch,
+        string? expectedSha256,
+        int? maxRetries)
+    {
+        if (expectedSha256 is not null)
+        {
+            if (sourceType is not (SourceType.Tar or SourceType.Http) ||
+                expectedSha256.Length != 64 ||
+                expectedSha256.Any(character => !Uri.IsHexDigit(character)))
+            {
+                throw new ArgumentException(
+                    "Expected SHA-256 is only valid for archive sources and must contain 64 hexadecimal characters.",
+                    nameof(expectedSha256));
+            }
+            expectedSha256 = expectedSha256.ToLowerInvariant();
+        }
+
         var now = DateTime.UtcNow;
-        var job = new SourceJob
+        return new SourceJob
         {
             Id = Guid.NewGuid(),
             PackageName = packageName,
@@ -56,33 +120,9 @@ public sealed class SourceFetchQueue
             SourceBranch = branch,
             ExpectedSha256 = expectedSha256,
             Status = SourceStatus.Pending,
-            MaxRetries = effectiveRetries,
+            MaxRetries = Math.Clamp(maxRetries ?? _defaultMaxRetries, 0, 10),
             CreatedAt = now,
             UpdatedAt = now
         };
-        _db.SourceJobs.Add(job);
-        await _db.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("Queued source fetch attempt {JobId} for {Package}", job.Id, packageName);
-        return job;
-    }
-
-    public async Task<List<SourceJob>> EnqueueAllAsync(
-        ConfigParserService configParser,
-        int? maxRetries = null,
-        CancellationToken cancellationToken = default)
-    {
-        var jobs = new List<SourceJob>();
-        foreach (var package in configParser.ParsePackages())
-        {
-            jobs.Add(await EnqueueAsync(
-                package.Name,
-                package.Source,
-                package.SourceType,
-                package.SourceBranch,
-                package.ExpectedSha256,
-                maxRetries,
-                cancellationToken));
-        }
-        return jobs;
     }
 }

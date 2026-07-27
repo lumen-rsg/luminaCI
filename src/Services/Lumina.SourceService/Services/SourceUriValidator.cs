@@ -32,8 +32,8 @@ public record ValidatedSource(
 /// Validates a source before it is handed to pinned Git/HTTP retrieval or a
 /// confined local-file copy.
 /// This is the central SSRF and arbitrary-file-read defense for the source
-/// pipeline: <c>conf.ini</c> is user-writable via PUT/POST endpoints, so the
-/// raw <c>source</c>/<c>source_type</c> values can never be trusted as-is.
+/// pipeline: package definitions are user-controlled API inputs, so the raw
+/// source URL, type, and reference can never be trusted as-is.
 ///
 /// Defense layers:
 ///  * Scheme allow-list per source type — rejects <c>file://</c> on host-based

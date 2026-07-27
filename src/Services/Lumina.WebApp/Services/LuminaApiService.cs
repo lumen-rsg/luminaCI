@@ -304,6 +304,28 @@ public class LuminaApiService
             () => _http.PostAsync($"/api/sources/{Uri.EscapeDataString(name)}/fetch", null),
             nameof(FetchSourceAsync));
 
+    public async Task<ApiResponse<SourcePackageMutationResponse>?> CreateSourceAsync(
+        SavePackageSourceRequest request)
+        => await SendAndReadJsonAsync<ApiResponse<SourcePackageMutationResponse>>(
+            () => _http.PostAsJsonAsync("/api/sources", request),
+            nameof(CreateSourceAsync));
+
+    public async Task<ApiResponse<SourcePackageMutationResponse>?> UpdateSourceAsync(
+        string name,
+        SavePackageSourceRequest request)
+        => await SendAndReadJsonAsync<ApiResponse<SourcePackageMutationResponse>>(
+            () => _http.PutAsJsonAsync(
+                $"/api/sources/{Uri.EscapeDataString(name)}", request),
+            nameof(UpdateSourceAsync));
+
+    public async Task<ApiResponse<object>?> DisableSourceAsync(
+        string name,
+        int expectedRevision)
+        => await SendAndReadJsonAsync<ApiResponse<object>>(
+            () => _http.DeleteAsync(
+                $"/api/sources/{Uri.EscapeDataString(name)}?expectedRevision={expectedRevision}"),
+            nameof(DisableSourceAsync));
+
     // === Extra Sources (pipeline & build level) ===
     public async Task<ApiResponse<List<UploadedSourceResponse>>?> GetPipelineSourcesAsync(Guid pipelineId)
     {

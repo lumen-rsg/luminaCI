@@ -123,7 +123,12 @@ public class DtoRoundTripTests
         RoundTrip(new CreateRepositoryRequest("n", "disp", "el/9/baseos", "x86_64", "el9", "ops"));
         RoundTrip(new PublishPackageRequest(Guid.NewGuid(), Guid.NewGuid(), "ops"));
         RoundTrip(new SyncRepositoryRequest(Guid.NewGuid()));
-        RoundTrip(new FetchSourceRequest("pkg"));
+        RoundTrip(new SavePackageSourceRequest(
+            "pkg",
+            "https://example.test/pkg.git",
+            SourceType.Git,
+            "main"));
+        RoundTrip(new FetchSourceOptionsRequest());
         RoundTrip(new FetchAllSourcesRequest());
     }
 
@@ -274,7 +279,7 @@ public class DtoRoundTripTests
     }
 
     [Fact]
-    public void Source_Download_And_Reload_Responses_RoundTrip()
+    public void Source_Download_And_Mutation_Responses_RoundTrip()
     {
         // These DTOs back the SourceController responses that previously leaked
         // out as ad-hoc anonymous objects. Pin their shape so every source JSON
@@ -286,16 +291,17 @@ public class DtoRoundTripTests
         Assert.Equal("pkg", dlRt.PackageName);
         Assert.Equal(2048L, dlRt.FileSize);
 
-        var mutationWithCount = new SourceConfigMutationResponse("Saved", 5);
-        var mwcRt = RoundTrip(mutationWithCount);
-        Assert.Equal("Saved", mwcRt.Message);
-        Assert.Equal(5, mwcRt.Count);
-
-        // Count is optional (add/remove return only a message) — must round-trip
-        // to null, not default(int).
-        var mutationNoCount = new SourceConfigMutationResponse("Package added");
-        var mncRt = RoundTrip(mutationNoCount);
-        Assert.Equal("Package added", mncRt.Message);
-        Assert.Null(mncRt.Count);
+        var packageId = Guid.NewGuid();
+        var package = new SourcePackageResponse(
+            packageId, "pkg", 2, true,
+            "https://example.test/pkg.git", SourceType.Git, "main",
+            null, "pkg.spec", null, SourceStatus.Pending,
+            null, null, null, null);
+        var fetch = new SourceFetchResponse(
+            Guid.NewGuid(), "pkg", SourceStatus.Pending, null);
+        var mutation = RoundTrip(new SourcePackageMutationResponse(package, fetch));
+        Assert.Equal(packageId, mutation.Package.PackageId);
+        Assert.Equal(2, mutation.Package.Revision);
+        Assert.NotNull(mutation.Fetch);
     }
 }

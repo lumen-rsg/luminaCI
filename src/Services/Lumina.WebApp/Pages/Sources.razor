@@ -1,43 +1,124 @@
 @page "/sources"
 @using Lumina.Shared.DTOs
-@using Lumina.WebApp.Services
 @using Lumina.Shared.Models.Enums
+@using Lumina.WebApp.Services
 @inject LuminaApiService Api
 
 <PageTitle>Sources — Lumina CI</PageTitle>
 
 <div class="page-header">
-    <h1><Icon Name="package" /> Sources</h1>
+    <div>
+        <h1><Icon Name="package" /> Sources</h1>
+        <p class="text-muted mb-0">Revisioned package sources are fetched automatically when saved.</p>
+    </div>
     <div class="page-header-actions">
-        <button class="btn btn-outline-secondary btn-sm" @onclick="ReloadConfig">
-            <Icon Name="refresh" /> Reload Config
+        <button class="btn btn-primary btn-sm" @onclick="StartCreate">
+            <Icon Name="plus" /> Add package
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadPackages">
+            <Icon Name="refresh" /> Refresh
         </button>
     </div>
 </div>
 
-<div class="alert alert-info" role="status">
-    Source definitions are managed as read-only deployment configuration. Update
-    <code>conf.ini</code> through the deployment workflow, then reload this page.
-</div>
+@if (_editing)
+{
+    <div class="card mb-4">
+        <div class="card-body">
+            <h2 class="h5">@(_editingSlug is null ? "Add package source" : $"Edit {_editingSlug}")</h2>
+            <form @onsubmit="SavePackage" @onsubmit:preventDefault>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label" for="source-slug">Package slug</label>
+                        <input id="source-slug" class="form-control" required maxlength="100"
+                               disabled="@(_editingSlug is not null)" @bind="_draft.Slug"
+                               placeholder="my-package" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label" for="source-type">Source type</label>
+                        <select id="source-type" class="form-select" @bind="_draft.SourceType">
+                            <option value="@SourceType.Git">Git</option>
+                            <option value="@SourceType.Tar">Tar archive</option>
+                            <option value="@SourceType.Http">HTTP file</option>
+                        </select>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label" for="source-url">HTTPS source URL</label>
+                        <input id="source-url" type="url" class="form-control" required maxlength="2048"
+                               @bind="_draft.SourceUrl"
+                               placeholder="https://github.com/org/project.git" />
+                    </div>
+                    @if (_draft.SourceType == SourceType.Git)
+                    {
+                        <div class="col-md-4">
+                            <label class="form-label" for="source-reference">Branch, tag, or commit</label>
+                            <input id="source-reference" class="form-control" required maxlength="256"
+                                   @bind="_draft.SourceReference" placeholder="main" />
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="col-md-8">
+                            <label class="form-label" for="source-sha256">Expected SHA-256</label>
+                            <input id="source-sha256" class="form-control font-monospace" required
+                                   minlength="64" maxlength="64" @bind="_draft.ExpectedSha256"
+                                   placeholder="64 hexadecimal characters" />
+                        </div>
+                    }
+                    <div class="col-md-4">
+                        <label class="form-label" for="source-spec-path">Spec path in source</label>
+                        <input id="source-spec-path" class="form-control" maxlength="512"
+                               @bind="_draft.SpecPath" placeholder="packaging/package.spec" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="source-build-image">Build image override</label>
+                        <input id="source-build-image" class="form-control" maxlength="256"
+                               @bind="_draft.BuildImage" placeholder="Optional" />
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <div>
+                            <div class="form-check">
+                                <input id="source-enabled" class="form-check-input" type="checkbox"
+                                       @bind="_draft.IsEnabled" />
+                                <label class="form-check-label" for="source-enabled">Enabled</label>
+                            </div>
+                            <div class="form-check">
+                                <input id="source-auto-fetch" class="form-check-input" type="checkbox"
+                                       @bind="_draft.FetchAutomatically" />
+                                <label class="form-check-label" for="source-auto-fetch">Fetch after saving</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3 d-flex gap-2">
+                    <button class="btn btn-primary" type="submit" disabled="@_saving">
+                        @(_saving ? "Saving…" : "Save and fetch")
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button"
+                            @onclick="CancelEdit" disabled="@_saving">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+}
 
-<!-- Package List -->
 @if (_loading)
 {
     <div class="text-center py-5">
         <div class="spinner-border text-primary" role="status"></div>
     </div>
 }
-else if (_packages.Any())
+else if (_packages.Count > 0)
 {
     <div class="table-responsive">
         <table class="table table-hover align-middle">
-            <caption class="visually-hidden">Configured source packages</caption>
+            <caption class="visually-hidden">Database-backed package sources</caption>
             <thead>
                 <tr>
                     <th scope="col">Package</th>
+                    <th scope="col">Revision</th>
                     <th scope="col">Source</th>
-                    <th scope="col">Type</th>
-                    <th scope="col">Branch</th>
+                    <th scope="col">Reference</th>
                     <th scope="col">Status</th>
                     <th scope="col">Actions</th>
                 </tr>
@@ -47,35 +128,33 @@ else if (_packages.Any())
                 {
                     <tr>
                         <td class="fw-semibold">@pkg.PackageName</td>
-                        <td class="text-truncate" style="max-width:300px;" title="@pkg.SourceUrl">
+                        <td><span class="badge bg-secondary">r@pkg.Revision</span></td>
+                        <td class="text-truncate" style="max-width:360px;" title="@pkg.SourceUrl">
+                            <span class="badge bg-info me-1">@pkg.SourceType</span>
                             <small class="text-muted">@pkg.SourceUrl</small>
                         </td>
-                        <td><span class="badge bg-info">@pkg.SourceType</span></td>
-                        <td><small>@(pkg.SourceBranch ?? "—")</small></td>
+                        <td><small>@(pkg.SourceBranch ?? "SHA-256 pinned")</small></td>
                         <td>
-                            @switch (pkg.Status)
-                            {
-                                case SourceStatus.Pending:
-                                    <span class="badge bg-secondary">Pending</span>
-                                    break;
-                                case SourceStatus.Fetching:
-                                    <span class="badge bg-warning text-dark">Fetching</span>
-                                    break;
-                                case SourceStatus.Ready:
-                                    <span class="badge bg-success">Ready</span>
-                                    break;
-                                case SourceStatus.Failed:
-                                    <span class="badge bg-danger" title="@pkg.ErrorMessage">Failed</span>
-                                    break;
-                                default:
-                                    <span class="badge bg-secondary">@pkg.Status</span>
-                                    break;
-                            }
+                            <span class="badge @StatusClass(pkg.Status)" title="@pkg.ErrorMessage">
+                                @pkg.Status
+                            </span>
                         </td>
                         <td>
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-primary" @onclick="() => FetchPackage(pkg.PackageName)" title="Fetch sources" aria-label="Fetch sources for @pkg.PackageName">
+                                <button class="btn btn-outline-primary"
+                                        @onclick="() => FetchPackage(pkg.PackageName)"
+                                        aria-label="Fetch sources for @pkg.PackageName">
                                     <Icon Name="download" />
+                                </button>
+                                <button class="btn btn-outline-secondary"
+                                        @onclick="() => StartEdit(pkg)"
+                                        aria-label="Edit @pkg.PackageName">
+                                    <Icon Name="edit" />
+                                </button>
+                                <button class="btn btn-outline-danger"
+                                        @onclick="() => DisablePackage(pkg)"
+                                        aria-label="Disable @pkg.PackageName">
+                                    <Icon Name="x" />
                                 </button>
                             </div>
                         </td>
@@ -89,38 +168,41 @@ else
 {
     <div class="empty-state">
         <div class="empty-state-icon" style="font-size:2rem;"><Icon Name="package" /></div>
-        <h3>No packages configured</h3>
-        <p>Add source definitions through the deployment configuration.</p>
+        <h3>No package sources yet</h3>
+        <p>Add a package once; Lumina will validate, revision, and fetch it automatically.</p>
+        <button class="btn btn-primary" @onclick="StartCreate">Add first package</button>
     </div>
 }
 
-<!-- Status messages -->
 @if (!string.IsNullOrEmpty(_statusMessage))
 {
-    <div class="alert alert-info alert-dismissible fade show mt-3" role="alert">
+    <div class="alert alert-success alert-dismissible fade show mt-3" role="status">
         @_statusMessage
-        <button type="button" class="btn-close" @onclick="() => _statusMessage = null" aria-label="Dismiss status message"></button>
+        <button type="button" class="btn-close" @onclick="() => _statusMessage = null"
+                aria-label="Dismiss status message"></button>
     </div>
 }
 
-@if (_errorMessage != null)
+@if (_errorMessage is not null)
 {
     <div class="alert alert-danger alert-dismissible fade show mt-3" role="alert">
         @_errorMessage
-        <button type="button" class="btn-close" @onclick="() => _errorMessage = null" aria-label="Dismiss error message"></button>
+        <button type="button" class="btn-close" @onclick="() => _errorMessage = null"
+                aria-label="Dismiss error message"></button>
     </div>
 }
 
 @code {
-    private List<SourcePackageResponse> _packages = new();
+    private List<SourcePackageResponse> _packages = [];
+    private SourceDraft _draft = new();
+    private string? _editingSlug;
+    private bool _editing;
     private bool _loading = true;
+    private bool _saving;
     private string? _statusMessage;
     private string? _errorMessage;
 
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadPackages();
-    }
+    protected override Task OnInitializedAsync() => LoadPackages();
 
     private async Task LoadPackages()
     {
@@ -128,30 +210,80 @@ else
         try
         {
             var result = await Api.GetSourcesAsync();
-            _packages = result?.Data?.Packages ?? new();
+            _packages = result?.Data?.Packages ?? [];
         }
         catch (Exception ex)
         {
             _errorMessage = $"Failed to load sources: {ex.Message}";
         }
-        _loading = false;
-        StateHasChanged();
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void StartCreate()
+    {
+        _editingSlug = null;
+        _draft = new SourceDraft();
+        _editing = true;
+        _errorMessage = null;
+    }
+
+    private void StartEdit(SourcePackageResponse package)
+    {
+        _editingSlug = package.PackageName;
+        _draft = new SourceDraft
+        {
+            Slug = package.PackageName,
+            SourceUrl = package.SourceUrl,
+            SourceType = package.SourceType,
+            SourceReference = package.SourceBranch ?? "",
+            ExpectedSha256 = package.ExpectedSha256 ?? "",
+            SpecPath = package.SpecPath ?? "",
+            BuildImage = package.BuildImage ?? "",
+            IsEnabled = package.IsEnabled,
+            FetchAutomatically = true,
+            ExpectedRevision = package.Revision
+        };
+        _editing = true;
+        _errorMessage = null;
+    }
+
+    private void CancelEdit() => _editing = false;
+
+    private async Task SavePackage()
+    {
+        _saving = true;
+        _errorMessage = null;
+        try
+        {
+            var request = _draft.ToRequest();
+            var result = _editingSlug is null
+                ? await Api.CreateSourceAsync(request)
+                : await Api.UpdateSourceAsync(_editingSlug, request);
+            _statusMessage = result?.Message ??
+                (_editingSlug is null ? "Package created and fetch queued." : "Package updated and fetch queued.");
+            _editing = false;
+            await LoadPackages();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to save package: {ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 
     private async Task FetchPackage(string name)
     {
         try
         {
-            var result = await Api.FetchSourceAsync(name);
-            if (result?.Success == true)
-            {
-                _statusMessage = $"Fetch started for '{name}'";
-                await LoadPackages();
-            }
-            else
-            {
-                _errorMessage = result?.Error ?? $"Failed to fetch '{name}'";
-            }
+            await Api.FetchSourceAsync(name);
+            _statusMessage = $"Fetch queued for '{name}'.";
+            await LoadPackages();
         }
         catch (Exception ex)
         {
@@ -159,16 +291,55 @@ else
         }
     }
 
-    private async Task ReloadConfig()
+    private async Task DisablePackage(SourcePackageResponse package)
     {
         try
         {
+            await Api.DisableSourceAsync(package.PackageName, package.Revision);
+            _statusMessage = $"Package '{package.PackageName}' disabled; history was retained.";
             await LoadPackages();
-            _statusMessage = "Configuration reloaded";
         }
         catch (Exception ex)
         {
-            _errorMessage = $"Failed to reload: {ex.Message}";
+            _errorMessage = $"Failed to disable package: {ex.Message}";
         }
+    }
+
+    private static string StatusClass(SourceStatus status) => status switch
+    {
+        SourceStatus.Fetching => "bg-warning text-dark",
+        SourceStatus.Ready => "bg-success",
+        SourceStatus.Failed => "bg-danger",
+        SourceStatus.Cancelled => "bg-dark",
+        _ => "bg-secondary"
+    };
+
+    private sealed class SourceDraft
+    {
+        public string Slug { get; set; } = "";
+        public string SourceUrl { get; set; } = "";
+        public SourceType SourceType { get; set; } = SourceType.Git;
+        public string SourceReference { get; set; } = "main";
+        public string ExpectedSha256 { get; set; } = "";
+        public string SpecPath { get; set; } = "";
+        public string BuildImage { get; set; } = "";
+        public bool IsEnabled { get; set; } = true;
+        public bool FetchAutomatically { get; set; } = true;
+        public int? ExpectedRevision { get; set; }
+
+        public SavePackageSourceRequest ToRequest() => new(
+            Slug.Trim(),
+            SourceUrl.Trim(),
+            SourceType,
+            SourceType == SourceType.Git ? NullIfEmpty(SourceReference) : null,
+            SourceType == SourceType.Git ? null : NullIfEmpty(ExpectedSha256),
+            NullIfEmpty(SpecPath),
+            NullIfEmpty(BuildImage),
+            IsEnabled,
+            FetchAutomatically,
+            ExpectedRevision);
+
+        private static string? NullIfEmpty(string value)
+            => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 }

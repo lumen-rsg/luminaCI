@@ -472,7 +472,6 @@ services:
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
-      - Source__ConfigPath=/app/conf.ini
       - Source__MaxRetries=3
       - Source__FetchTimeoutMinutes=30
       - Source__MaxDownloadBytes=${SOURCE_MAX_DOWNLOAD_BYTES:-1073741824}
@@ -493,7 +492,6 @@ services:
       - Jwt__Issuer=LuminaCI
       - Jwt__Audience=LuminaCI
     volumes:
-      - ../conf.ini:/app/conf.ini:ro,z
       - source_temp:/tmp/source-fetch
       - /opt/lumina/sources:/opt/lumina/sources:z
     depends_on:

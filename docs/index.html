@@ -722,8 +722,8 @@ footer a { color: var(--ink-soft); }
       </div>
       <div class="phil-item reveal">
         <span class="icon"><svg class="svgicon"><use href="#i-plug"/></svg></span>
-        <h3>Git / Tar / rsync</h3>
-        <p>Pull sources from a Git repo, a tarball URL, or rsync. Declare them in <code>conf.ini</code> or manage them live from the console &mdash; whichever fits your flow.</p>
+        <h3>Revisioned Sources</h3>
+        <p>Add HTTPS Git or checksum-pinned archive sources from the console. Every edit creates an immutable revision and queues a durable fetch automatically.</p>
       </div>
       <div class="phil-item reveal">
         <span class="icon"><svg class="svgicon"><use href="#i-chip"/></svg></span>
@@ -735,14 +735,16 @@ footer a { color: var(--ink-soft); }
     <div class="code-block reveal" style="margin-top: 3rem;">
       <div class="code-header">
         <div class="code-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
-        conf.ini &mdash; declare a source package
+        API &mdash; create and automatically fetch a package
       </div>
-      <pre><code><span class="kw">[package]</span>
-<span class="param">name</span>=<span class="str">"aurora"</span>
-<span class="param">source</span>=<span class="str">"https://github.com/lumen-rsg/aurora.net"</span>
-<span class="param">source_type</span>=<span class="str">"git"</span>
-<span class="param">source_branch</span>=<span class="str">"main"</span>
-<span class="param">build_image</span>=<span class="str">"lumina-dotnet-build:latest"</span></code></pre>
+      <pre><code><span class="kw">POST</span> /api/sources
+{
+  <span class="param">"slug"</span>: <span class="str">"aurora"</span>,
+  <span class="param">"sourceUrl"</span>: <span class="str">"https://github.com/lumen-rsg/aurora.net"</span>,
+  <span class="param">"sourceType"</span>: 0,
+  <span class="param">"sourceReference"</span>: <span class="str">"main"</span>,
+  <span class="param">"fetchAutomatically"</span>: <span class="kw">true</span>
+}</code></pre>
     </div>
   </div>
 </section>

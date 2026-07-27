@@ -4,7 +4,7 @@ namespace Lumina.Shared.Extensions;
 
 /// <summary>
 /// Helpers that harden the boundary between untrusted user input
-/// (<c>conf.ini</c> values, request bodies) and the filesystem / external
+/// (package source definitions, request bodies) and the filesystem / external
 /// processes.
 ///
 /// <para><b>Design note.</b> Earlier versions of this type used a denylist of

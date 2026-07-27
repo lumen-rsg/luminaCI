@@ -103,7 +103,7 @@ primary UI; a REST API is available for automation and integrations.
 | `security-service` | 5002 | PGP key management, signing, hashing |
 | `scanner-service` | 5003 | Trivy CVE scanning |
 | `repository-service` | 5004 | RPM repository management & publishing |
-| `source-service` | 5006 | Pinned HTTPS source fetching (Git/tar), `conf.ini`-driven |
+| `source-service` | 5006 | Revisioned package catalog and pinned HTTPS source fetching |
 | `webapp` | 5005 | Blazor WASM UI |
 | `docker-socket-proxy` | 2375 (internal) | Least-privilege Docker API for build-service |
 | `trivy` | 8080 (internal) | CVE database & scan server |
@@ -119,8 +119,9 @@ primary UI; a REST API is available for automation and integrations.
 
 - **Pipeline-driven builds** — name, describe, tag, and trigger builds; each
   pipeline optionally wires up Git integration and a webhook secret.
-- **Multiple source types** — HTTPS Git and tarball sources, declared in `conf.ini`
-  or managed via the API/UI. Each fetch is a durable attempt processed by a
+- **Revisioned package sources** — HTTPS Git and checksum-pinned archives are
+  managed in PostgreSQL through the API/UI. Saving a package appends an
+  immutable revision and automatically queues a durable fetch processed by a
   bounded worker with leases, heartbeats, cancellation, and restart recovery.
 - **Isolated build containers** — every `rpmbuild`/`dotnet build` runs in a
   throwaway container on a dedicated network, with caps, limits, and a
@@ -319,7 +320,7 @@ Open `https://<host>/`. Pages:
 | **Pipelines** | Create, edit, tag, and trigger build pipelines |
 | **Builds** | Build history, live logs, artifacts, scan/sign status |
 | **Repositories** | Managed RPM repositories and published packages |
-| **Sources** | `conf.ini`-defined source packages; fetch/build from here |
+| **Sources** | Add and revise package sources; saves automatically queue fetching |
 | **Security** | PGP signing keys, signing history, artifact hashes |
 
 ### Create a pipeline
@@ -373,32 +374,18 @@ webhook secret, trigger = *Push events*.
 **Forgejo / Gitea** — Repository → Settings → Webhooks → Add webhook.
 Target URL as above, secret = webhook secret, trigger = *Push events*.
 
-### Sources (`conf.ini`)
+### Package sources
 
-Source packages are declared in `conf.ini` at the repo root and surfaced in the
-**Sources** page. Each `[package]` block supports pinned HTTPS `git` and `tar`
-sources:
+Add a package from the **Sources** page or `POST /api/sources`. The catalog is
+stored in PostgreSQL: package identities remain stable, edits append immutable
+revisions, and optimistic revision checks reject conflicting updates. Saving an
+enabled package queues that exact revision for fetching by default.
 
-```ini
-[package]
-name="aurora"
-source="https://github.com/lumen-rsg/aurora.net"
-source_type="git"
-source_branch="main"
-build_image="lumina-dotnet-build:f44-v1"
-
-[package]
-name="testpkg"
-source="https://cdn.example.org/testpackage.tar.gz"
-source_type="tar"
-source_sha256="<64-character expected SHA-256>"
-```
-
-From the Sources page you can fetch, check status, download, or build any
-configured package. `source_sha256` pins an archive when an upstream digest is
-available. Fetches record the final redirect URL or Git commit and store the
-result under a content-addressed object key. Git submodules and legacy
-unauthenticated transports are rejected at the trust boundary.
+Git sources require an explicit branch, tag, or commit. Archive sources require
+an expected SHA-256. Fetches record the resolved Git commit or final download
+URL and store the result under a content-addressed object key. Git submodules,
+embedded credentials, private-network targets, and unauthenticated transports
+are rejected at the trust boundary.
 
 ---
 
@@ -514,7 +501,6 @@ the Publish step requires a `repositoryId` configuration value.
 | `POST` | `/api/builds/{id}/cancel` | Cancel a running/queued build |
 | `GET` | `/api/builds/queue` | Current build queue |
 | `DELETE` | `/api/builds/queue/clear` | Clear the queue |
-| `POST` | `/api/builds/trigger-from-config` | Trigger a build from `conf.ini` |
 | `PUT` | `/api/builds/artifacts/{artifactId}/scan-status` | Record scan result |
 | `PUT` | `/api/builds/artifacts/{artifactId}/pgp-signature` | Record signature |
 | `GET` | `/api/builds/failed-logs` | List failed-build logs |
@@ -573,7 +559,9 @@ the Publish step requires a `repositoryId` configuration value.
 |---|---|---|
 | `GET` | `/api/sources` | List configured sources |
 | `GET` | `/api/sources/{name}` | Get a source by name |
-| `POST` | `/api/sources/reload-config` | Validate and reload the read-only legacy config |
+| `POST` | `/api/sources` | Create a revisioned package and optionally fetch it |
+| `PUT` | `/api/sources/{name}` | Append a package revision with optimistic concurrency |
+| `DELETE` | `/api/sources/{name}?expectedRevision=` | Disable a package while retaining history |
 | `POST` | `/api/sources/{name}/fetch` | Fetch one source |
 | `POST` | `/api/sources/fetch-all` | Fetch all sources |
 | `POST` | `/api/sources/jobs/{jobId}/cancel` | Cancel a pending or running fetch attempt |
