@@ -598,18 +598,19 @@ else
         ));
 
         // Scan stage
-        var scanDone = hasArtifacts && build.Artifacts.Any(a => a.CveScanStatus == ScanStatus.Completed);
+        var scanDone = hasArtifacts && build.Artifacts.All(a => a.CveScanStatus == ScanStatus.Completed);
         var scanRunning = hasArtifacts && build.Artifacts.Any(a => a.CveScanStatus == ScanStatus.Running);
+        var scanFailed = hasArtifacts && build.Artifacts.Any(a => a.CveScanStatus == ScanStatus.Failed);
         stages.Add(new StageInfo(
             "CVE Scan",
-            scanDone ? "status-dot success" : scanRunning ? "status-dot running" : "status-dot pending",
-            scanDone ? "Clean" : scanRunning ? "Scanning..." : isRunning || isSuccess ? "Pending" : "Skipped",
-            scanDone ? "stage-success" : scanRunning ? "stage-running" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
-            scanDone ? "text-success" : scanRunning ? "text-primary" : "text-muted"
+            scanFailed ? "status-dot failed" : scanDone ? "status-dot complete" : scanRunning ? "status-dot running" : "status-dot pending",
+            scanFailed ? "Failed" : scanDone ? "Completed" : scanRunning ? "Scanning..." : isRunning || isSuccess ? "Pending" : "Skipped",
+            scanFailed ? "stage-failed" : scanDone ? "stage-complete" : scanRunning ? "stage-running" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
+            scanFailed ? "text-danger" : scanDone || scanRunning ? "text-primary" : "text-muted"
         ));
 
         // Sign stage
-        var signed = hasArtifacts && build.Artifacts.Any(a => !string.IsNullOrEmpty(a.PgpSignature));
+        var signed = hasArtifacts && build.Artifacts.All(a => !string.IsNullOrEmpty(a.PgpSignature));
         stages.Add(new StageInfo(
             "PGP Sign",
             signed ? "status-dot success" : "status-dot pending",
@@ -618,13 +619,15 @@ else
             signed ? "text-success" : "text-muted"
         ));
 
-        // Publish stage
+        // Publication is a separate manual operation and is not represented in
+        // the build response, so never infer "Published" from build success.
+        var publishReady = isSuccess && signed && scanDone;
         stages.Add(new StageInfo(
             "Publish",
-            isSuccess ? "status-dot success" : "status-dot pending",
-            isSuccess ? "Published" : isRunning ? "Pending" : "Skipped",
-            isSuccess ? "stage-success" : !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
-            isSuccess ? "text-success" : "text-muted"
+            publishReady ? "status-dot queued" : "status-dot pending",
+            publishReady ? "Ready (manual)" : isSuccess ? "Blocked" : isRunning ? "Pending" : "Skipped",
+            !isRunning && !isSuccess ? "stage-skipped" : "stage-pending",
+            publishReady ? "text-warning" : "text-muted"
         ));
 
         return stages;

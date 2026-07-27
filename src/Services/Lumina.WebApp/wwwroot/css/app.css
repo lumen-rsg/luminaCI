@@ -705,6 +705,7 @@ select optgroup { background: var(--bg-dark); color: var(--text-primary); }
 
 .stage-item.stage-success { background: var(--tint-green); border-color: rgba(127,209,163,0.3); }
 .stage-item.stage-failed { background: var(--tint-red); border-color: rgba(240,152,154,0.3); }
+.stage-item.stage-complete { background: var(--tint-blue); border-color: rgba(124,156,245,0.3); }
 .stage-item.stage-running { background: var(--tint-blue); border-color: rgba(124,156,245,0.3); }
 .stage-item.stage-pending { opacity: 0.7; }
 .stage-item.stage-skipped { opacity: 0.45; }
@@ -1242,6 +1243,7 @@ select optgroup { background: var(--bg-dark); color: var(--text-primary); }
 
 .status-dot.success { background: var(--accent-green); }
 .status-dot.failed { background: var(--accent-red); }
+.status-dot.complete { background: var(--accent); }
 .status-dot.running { background: var(--accent); animation: pulse 1.5s ease-in-out infinite; }
 .status-dot.queued { background: var(--accent-yellow); }
 .status-dot.pending { background: var(--text-primary); }
@@ -1510,6 +1512,7 @@ select:-webkit-autofill {
 
 [data-bs-theme="light"] .stage-item.stage-success { background: var(--tint-green); border-color: rgba(31,157,87,0.25); }
 [data-bs-theme="light"] .stage-item.stage-failed { background: var(--tint-red); border-color: rgba(214,69,69,0.25); }
+[data-bs-theme="light"] .stage-item.stage-complete { background: var(--tint-blue); border-color: rgba(59,110,224,0.25); }
 [data-bs-theme="light"] .stage-item.stage-running { background: var(--tint-blue); border-color: rgba(59,110,224,0.25); }
 
 [data-bs-theme="light"] .table-danger { background: var(--tint-red) !important; }

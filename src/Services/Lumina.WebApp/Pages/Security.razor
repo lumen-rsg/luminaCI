@@ -141,6 +141,9 @@
                         <th>Artifact</th>
                         <th>Scanner</th>
                         <th>Status</th>
+                        <th>Total</th>
+                        <th>Critical</th>
+                        <th>High</th>
                         <th>Started</th>
                     </tr>
                 </thead>
@@ -152,11 +155,14 @@
                             <td><code>@scan.ArtifactId.ToString()[..8]</code></td>
                             <td class="text-sm">@scan.ScannerType</td>
                             <td>
-                                <span class="badge @GetScanBadge(scan.Status)">
-                                    <span class="badge-dot @GetScanDot(scan.Status)"></span>
-                                    @scan.Status
+                                <span class="badge @GetScanBadge(scan)">
+                                    <span class="badge-dot @GetScanDot(scan)"></span>
+                                    @GetScanStatusLabel(scan)
                                 </span>
                             </td>
+                            <td><strong>@scan.TotalVulnerabilities</strong></td>
+                            <td class="@(scan.CriticalCount > 0 ? "text-danger" : "text-muted")"><strong>@scan.CriticalCount</strong></td>
+                            <td class="@(scan.HighCount > 0 ? "text-warning" : "text-muted")"><strong>@scan.HighCount</strong></td>
                             <td class="text-sm text-muted">@scan.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</td>
                         </tr>
                     }
@@ -217,8 +223,10 @@
         finally { _signing = false; }
     }
 
-    private string GetScanBadge(Lumina.Shared.Models.Enums.ScanStatus s) => s switch
+    private static string GetScanBadge(ScanSummaryResponse scan) => scan.Status switch
     {
+        Lumina.Shared.Models.Enums.ScanStatus.Completed when scan.CriticalCount > 0 => "bg-danger",
+        Lumina.Shared.Models.Enums.ScanStatus.Completed when scan.TotalVulnerabilities > 0 => "bg-warning",
         Lumina.Shared.Models.Enums.ScanStatus.Completed => "bg-success",
         Lumina.Shared.Models.Enums.ScanStatus.Running => "bg-primary",
         Lumina.Shared.Models.Enums.ScanStatus.Failed => "bg-danger",
@@ -246,11 +254,20 @@
         finally { _generatingKey = false; }
     }
 
-    private string GetScanDot(Lumina.Shared.Models.Enums.ScanStatus s) => s switch
+    private static string GetScanDot(ScanSummaryResponse scan) => scan.Status switch
     {
+        Lumina.Shared.Models.Enums.ScanStatus.Completed when scan.CriticalCount > 0 => "red",
+        Lumina.Shared.Models.Enums.ScanStatus.Completed when scan.TotalVulnerabilities > 0 => "yellow",
         Lumina.Shared.Models.Enums.ScanStatus.Completed => "green",
         Lumina.Shared.Models.Enums.ScanStatus.Running => "blue",
         Lumina.Shared.Models.Enums.ScanStatus.Failed => "red",
         _ => "yellow"
+    };
+
+    private static string GetScanStatusLabel(ScanSummaryResponse scan) => scan.Status switch
+    {
+        Lumina.Shared.Models.Enums.ScanStatus.Completed when scan.TotalVulnerabilities > 0 => "Findings",
+        Lumina.Shared.Models.Enums.ScanStatus.Completed => "Clean",
+        _ => scan.Status.ToString()
     };
 }
