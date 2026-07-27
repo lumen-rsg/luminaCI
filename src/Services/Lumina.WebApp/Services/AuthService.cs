@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Components;
 
 namespace Lumina.WebApp.Services;
@@ -65,23 +66,34 @@ public class AuthService
     /// Posts credentials. On success the gateway sets the auth cookies; this
     /// method records the returned username/role (no token in the body anymore).
     /// </summary>
-    public async Task<bool> LoginAsync(string username, string password)
+    public async Task<LoginOutcome> LoginAsync(string username, string password)
     {
         try
         {
             var resp = await _http.PostAsJsonAsync("/api/auth/login", new { username, password });
-            if (!resp.IsSuccessStatusCode) return false;
+            if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                return LoginOutcome.InvalidCredentials;
+            if (!resp.IsSuccessStatusCode)
+                return LoginOutcome.ServiceUnavailable;
 
             var result = await resp.Content.ReadFromJsonAsync<LoginResult>();
             ApplyUser(result is not null
                 ? new CurrentUser(result.Username, result.Role)
                 : null);
             OnAuthStateChanged?.Invoke();
-            return IsAuthenticated;
+            return IsAuthenticated ? LoginOutcome.Success : LoginOutcome.ServiceUnavailable;
         }
-        catch
+        catch (HttpRequestException)
         {
-            return false;
+            return LoginOutcome.ServiceUnavailable;
+        }
+        catch (TaskCanceledException)
+        {
+            return LoginOutcome.ServiceUnavailable;
+        }
+        catch (JsonException)
+        {
+            return LoginOutcome.ServiceUnavailable;
         }
     }
 
@@ -156,6 +168,13 @@ public class AuthService
     {
         ApplyUser(user);
         OnAuthStateChanged?.Invoke();
+    }
+
+    public enum LoginOutcome
+    {
+        Success,
+        InvalidCredentials,
+        ServiceUnavailable
     }
 
     // Internal so AuthMessageHandler can reference it as the refresh result.

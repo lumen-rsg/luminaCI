@@ -50,6 +50,10 @@
         <div class="skeleton skeleton-text" style="width:70%"></div>
     </div></div>
 }
+else if (_loadError != null)
+{
+    <div class="alert alert-danger" role="alert">@_loadError</div>
+}
 else if (_build?.Data == null)
 {
     <div class="alert alert-danger">Build not found.</div>
@@ -286,7 +290,13 @@ else
                         <button type="button" class="btn-close btn-sm" @onclick="() => _publishMessage = null" style="font-size:0.6em;"></button>
                     </div>
                 }
-                @if (_repos?.Data?.Repositories == null || !_repos.Data.Repositories.Any())
+                @if (_reposLoadError != null)
+                {
+                    <div class="alert alert-danger py-2 px-3 mb-2" role="alert">
+                        @_reposLoadError
+                    </div>
+                }
+                else if (_repos?.Data?.Repositories == null || !_repos.Data.Repositories.Any())
                 {
                     <div class="text-muted text-sm mb-2">
                         No repositories available. <a href="/repositories">Create one first</a>.
@@ -421,6 +431,7 @@ else
     private ApiResponse<BuildJobResponse>? _build;
     private bool _loading = true;
     private bool _cancelling = false;
+    private string? _loadError;
     private const int MaxRetainedLogLines = 5_000;
     private readonly System.Collections.Concurrent.ConcurrentQueue<string> _pendingLogLines = new();
     private LogStreamState _streamState = LogStreamState.Disconnected;
@@ -445,6 +456,7 @@ else
 
     // Publish state
     private ApiResponse<RepositoryListResponse>? _repos;
+    private string? _reposLoadError;
     private Guid? _selectedRepoId;
     private Guid? _selectedArtifactId;
     private bool _publishing = false;
@@ -569,6 +581,7 @@ else
 
     private async Task LoadBuild()
     {
+        _loadError = null;
         try
         {
             _build = await Api.GetBuildAsync(Id);
@@ -577,8 +590,17 @@ else
             // Load repositories for publish section
             if (_build?.Data?.Status == BuildStatus.Success)
             {
-                try { _repos ??= await Api.GetRepositoriesAsync(); }
-                catch { /* non-critical */ }
+                try
+                {
+                    _repos ??= await Api.GetRepositoriesAsync();
+                    _reposLoadError = null;
+                }
+                catch (Exception ex)
+                {
+                    _repos = null;
+                    _reposLoadError = "Repositories could not be loaded; publishing is unavailable.";
+                    Logger.LogWarning(ex, "Failed to load repositories for build {BuildId}", Id);
+                }
             }
 
             // Update log lines from API data only when not streaming via SSE
@@ -592,6 +614,15 @@ else
         }
         catch (Exception ex)
         {
+            _build = null;
+            _loadError = ex is Lumina.WebApp.Services.ApiRequestException apiEx
+                ? apiEx.StatusCode switch
+                {
+                    System.Net.HttpStatusCode.NotFound => null,
+                    System.Net.HttpStatusCode.Unauthorized => "Your session has expired. Please sign in again.",
+                    _ => "Build details could not be loaded. Please retry."
+                }
+                : "Build details could not be loaded. Please retry.";
             Logger.LogError(ex, "Failed to load build {BuildId}", Id);
         }
         finally

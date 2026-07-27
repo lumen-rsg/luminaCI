@@ -45,14 +45,16 @@
         _loading = true;
         _error = null;
 
-        var success = await Auth.LoginAsync(_username, _password);
-        if (success)
+        var outcome = await Auth.LoginAsync(_username, _password);
+        if (outcome == Lumina.WebApp.Services.AuthService.LoginOutcome.Success)
         {
             Nav.NavigateTo("/", forceLoad: true);
         }
         else
         {
-            _error = "Invalid credentials.";
+            _error = outcome == Lumina.WebApp.Services.AuthService.LoginOutcome.InvalidCredentials
+                ? "Invalid credentials."
+                : "The authentication service is unavailable. Please try again.";
         }
 
         _loading = false;

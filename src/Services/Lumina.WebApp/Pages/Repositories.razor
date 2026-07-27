@@ -118,6 +118,13 @@ else if (_repos?.Data?.Repositories != null && _repos.Data.Repositories.Any())
         }
     </div>
 }
+else if (_loadError != null)
+{
+    <div class="alert alert-danger" role="alert">
+        <Icon Name="alert-circle" /> @_loadError
+        <button class="btn btn-sm btn-outline-danger ms-2" @onclick="LoadRepos">Retry</button>
+    </div>
+}
 else
 {
     <div class="empty-state animate-slide-in">
@@ -187,6 +194,7 @@ else
     private string _newDist = "";
     private string? _alertMessage;
     private string _alertClass = "alert-success";
+    private string? _loadError;
 
     // Upload state
     private bool _showUpload = false;
@@ -204,8 +212,18 @@ else
 
     private async Task LoadRepos()
     {
+        _loading = true;
+        _loadError = null;
         try { _repos = await Api.GetRepositoriesAsync(); }
-        catch (Exception ex) { Logger.LogError(ex, "Failed to load repositories"); }
+        catch (Exception ex)
+        {
+            _repos = null;
+            _loadError = ex is Lumina.WebApp.Services.ApiRequestException apiEx &&
+                         apiEx.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                ? "Your session has expired. Please sign in again."
+                : "Repositories could not be loaded. Please retry.";
+            Logger.LogError(ex, "Failed to load repositories");
+        }
         finally { _loading = false; }
     }
 

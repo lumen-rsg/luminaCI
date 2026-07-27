@@ -15,7 +15,16 @@
     </div>
 </div>
 
+@if (_loadError != null)
+{
+    <div class="alert alert-danger" role="alert">
+        <Icon Name="alert-circle" /> @_loadError
+    </div>
+}
+
 <!-- Stats -->
+@if (_loadError == null)
+{
 <div class="stats-grid animate-slide-in">
     <div class="stat-card">
         <div class="stat-icon blue"><Icon Name="clock" /></div>
@@ -53,7 +62,10 @@
         </div>
     </div>
 </div>
+}
 
+@if (_loadError == null)
+{
 <!-- Build Trend Graph -->
 @if (_builds?.Data?.Builds != null && _builds.Data.Builds.Any())
 {
@@ -276,6 +288,7 @@
         </div>
     </div>
 </div>
+}
 
 @code {
     private ApiResponse<BuildListResponse>? _builds;
@@ -283,6 +296,7 @@
     private int _successCount = 0;
     private int _failedCount = 0;
     private int _successRate = 0;
+    private string? _loadError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -291,6 +305,7 @@
 
     private async Task RefreshAll()
     {
+        _loadError = null;
         try
         {
             await Task.WhenAll(LoadBuildsAsync(), LoadQueueAsync());
@@ -299,6 +314,12 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to load dashboard data");
+            _builds = null;
+            _buildQueue = null;
+            _loadError = ex is Lumina.WebApp.Services.ApiRequestException apiEx &&
+                         apiEx.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                ? "Your session has expired. Please sign in again."
+                : "Dashboard data could not be loaded. Please retry.";
         }
     }
 

@@ -47,8 +47,9 @@ public class AuthMessageHandler : DelegatingHandler
             var user = await _auth.RefreshAndGetCurrentUserAsync();
             if (user is null)
             {
-                // Refresh failed (revoked/expired) — leave the 401 in place so
-                // the UI can redirect to /login.
+                // Refresh failed (revoked/expired): immediately clear stale
+                // client auth state and leave the 401 for the caller.
+                _auth.ApplyRefreshedUser(null);
                 return response;
             }
 

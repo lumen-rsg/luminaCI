@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Lumina.Shared.DTOs;
 
 namespace Lumina.WebApp.Services;
@@ -65,20 +66,40 @@ public class LuminaApiService
     }
 
     /// <summary>
-    /// GET with retry, then deserialise. Returns null on non-success (including 401).
+    /// GET with retry, preserving HTTP status and the API error envelope.
     /// </summary>
     private async Task<T?> GetJsonWithRetryAsync<T>(string url, string label)
     {
-        var response = await SendWithRetryAsync(
+        using var response = await SendWithRetryAsync(
             () => _http.GetAsync(url), label);
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("{Label} returned {Status}, returning null", label, (int)response.StatusCode);
-            return default;
+            var body = await response.Content.ReadAsStringAsync();
+            var message = TryReadApiError(body) ?? response.ReasonPhrase ?? "Request failed";
+            _logger.LogWarning("{Label} returned {Status}: {Message}", label, (int)response.StatusCode, message);
+            throw new ApiRequestException(response.StatusCode, message);
         }
 
-        return await response.Content.ReadFromJsonAsync<T>();
+        return await response.Content.ReadFromJsonAsync<T>()
+            ?? throw new ApiRequestException(response.StatusCode, "The server returned an empty response.");
+    }
+
+    private static string? TryReadApiError(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var json = JsonDocument.Parse(body);
+            foreach (var name in new[] { "error", "message" })
+            {
+                if (json.RootElement.TryGetProperty(name, out var value) &&
+                    value.ValueKind == JsonValueKind.String)
+                    return value.GetString();
+            }
+        }
+        catch (JsonException) { }
+        return null;
     }
 
     /// <summary>
@@ -215,7 +236,8 @@ public class LuminaApiService
     // === Repositories ===
     public async Task<ApiResponse<RepositoryListResponse>?> GetRepositoriesAsync()
     {
-        return await _http.GetFromJsonAsync<ApiResponse<RepositoryListResponse>>("/api/repository");
+        return await GetJsonWithRetryAsync<ApiResponse<RepositoryListResponse>>(
+            "/api/repository", nameof(GetRepositoriesAsync));
     }
 
     public async Task<ApiResponse<RepositoryResponse>?> CreateRepositoryAsync(CreateRepositoryRequest request)
@@ -376,5 +398,15 @@ public class LuminaApiService
     {
         var resp = await _http.DeleteAsync($"/api/extra-sources/pipeline/{pipelineId}");
         return await resp.Content.ReadFromJsonAsync<ApiResponse<object>>();
+    }
+}
+
+public sealed class ApiRequestException : Exception
+{
+    public HttpStatusCode StatusCode { get; }
+
+    public ApiRequestException(HttpStatusCode statusCode, string message) : base(message)
+    {
+        StatusCode = statusCode;
     }
 }
