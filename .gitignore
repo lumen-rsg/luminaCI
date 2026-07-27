@@ -28,6 +28,7 @@ nuget.exe
 *.swo
 *~
 .DS_Store
+.dev/*
 
 ## Environment
 .env.local
