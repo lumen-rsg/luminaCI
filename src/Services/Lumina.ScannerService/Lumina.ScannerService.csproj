@@ -26,4 +26,8 @@
     <ProjectReference Include="..\..\Shared\Lumina.Web.Shared\Lumina.Web.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Lumina.ScannerService.Tests" />
+  </ItemGroup>
+
 </Project>

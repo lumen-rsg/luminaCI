@@ -32,6 +32,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lumina.SourceService.Tests"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lumina.BuildService.Tests", "tests\Lumina.BuildService.Tests\Lumina.BuildService.Tests.csproj", "{E960665C-C529-4115-B268-89A7A729D7A1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lumina.ScannerService.Tests", "tests\Lumina.ScannerService.Tests\Lumina.ScannerService.Tests.csproj", "{8686317D-10D3-4F9A-9719-97CAEC049ED0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -186,6 +188,18 @@ Global
 		{E960665C-C529-4115-B268-89A7A729D7A1}.Release|x64.Build.0 = Release|Any CPU
 		{E960665C-C529-4115-B268-89A7A729D7A1}.Release|x86.ActiveCfg = Release|Any CPU
 		{E960665C-C529-4115-B268-89A7A729D7A1}.Release|x86.Build.0 = Release|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Debug|x64.Build.0 = Debug|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Debug|x86.Build.0 = Debug|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Release|x64.ActiveCfg = Release|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Release|x64.Build.0 = Release|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Release|x86.ActiveCfg = Release|Any CPU
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -205,5 +219,6 @@ Global
 		{DECB03BD-6DD3-43C3-82FC-6300EA8E551D} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{DFD5174C-B231-4E6C-9F72-681433A73F63} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{E960665C-C529-4115-B268-89A7A729D7A1} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{8686317D-10D3-4F9A-9719-97CAEC049ED0} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

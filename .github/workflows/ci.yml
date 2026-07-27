@@ -4,7 +4,8 @@ name: ci
 #
 # This is the gate that catches regressions in the security-critical
 # components — ProcessArgumentSanitizer, WebhookSignatureVerifier,
-# ConfigParserService, and PipelineEngine — before they reach staging.
+# ConfigParserService, PipelineEngine, and Trivy response parsing — before they
+# reach staging.
 # The unit tests here are intentionally infrastructure-free (no Docker,
 # RabbitMQ, Redis, or Postgres required) so they run fast and deterministically
 # in CI exactly as they do locally.

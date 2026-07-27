@@ -11,6 +11,18 @@ using Microsoft.EntityFrameworkCore;
 namespace Lumina.ScannerService.Services;
 
 /// <summary>
+/// Outcome of a single Trivy invocation. A successful result means the payload
+/// matched a recognized Trivy schema, even when no vulnerabilities were found.
+/// </summary>
+internal sealed class TrivyScanResult
+{
+    public List<Vulnerability> Vulnerabilities { get; init; } = new();
+    public string? RawOutput { get; init; }
+    public string? Error { get; init; }
+    public bool Success => Error == null;
+}
+
+/// <summary>
 /// Trivy scanner service that uses the Trivy Server HTTP API (/twirp/trivy.v1.Scanner/Scan).
 /// Requires TRIVY_SERVER_URL to be configured (e.g., http://trivy-server:8080).
 /// Falls back to CLI mode if server is unavailable.
@@ -23,25 +35,6 @@ public class TrivyScannerService
     private readonly IConfiguration _config;
     private readonly RedisCacheService _cache;
     private readonly string _artifactsRoot;
-
-    /// <summary>
-    /// Outcome of a single Trivy invocation (server or CLI). Carries the parsed
-    /// vulnerabilities, the raw scanner output (for diagnosis), and — critically
-    /// — a <see cref="Success"/> flag that distinguishes "scan ran and found
-    /// nothing" from "we could not understand the scanner's output". The previous
-    /// design returned a bare <c>List&lt;Vulnerability&gt;</c>, which made a parse
-    /// failure indistinguishable from a clean scan and let unsigned artifacts
-    /// through the signing gate.
-    /// </summary>
-    private sealed class TrivyScanResult
-    {
-        public List<Vulnerability> Vulnerabilities { get; init; } = new();
-        /// <summary>Raw JSON exactly as Trivy returned it. Persisted on both success and failure.</summary>
-        public string? RawOutput { get; init; }
-        /// <summary>Non-null when parsing or invocation failed.</summary>
-        public string? Error { get; init; }
-        public bool Success => Error == null;
-    }
 
     public TrivyScannerService(
         ScannerDbContext db,
@@ -294,49 +287,39 @@ public class TrivyScannerService
     /// <summary>
     /// Parse Trivy Server API JSON response into Vulnerability objects.
     /// </summary>
-    private TrivyScanResult ParseTrivyServerResponse(string jsonResponse)
+    internal static TrivyScanResult ParseTrivyServerResponse(string jsonResponse)
     {
         try
         {
             using var doc = JsonDocument.Parse(jsonResponse);
             var root = doc.RootElement;
             var vulnerabilities = new List<Vulnerability>();
+            JsonElement results;
 
-            // Trivy Server response has a "results" array
-            if (root.TryGetProperty("results", out var results))
+            if (root.ValueKind == JsonValueKind.Object)
             {
-                foreach (var result in results.EnumerateArray())
+                if (!root.TryGetProperty("results", out results) || results.ValueKind != JsonValueKind.Array)
                 {
-                    if (result.TryGetProperty("vulnerabilities", out var vulns))
-                    {
-                        foreach (var vuln in vulns.EnumerateArray())
-                            vulnerabilities.Add(ParseVulnerability(vuln));
-                    }
+                    return InvalidTrivyPayload(jsonResponse, "server response must contain a results array");
                 }
             }
-            // Sometimes the response is a direct array of results
             else if (root.ValueKind == JsonValueKind.Array)
             {
-                foreach (var result in root.EnumerateArray())
-                {
-                    if (result.TryGetProperty("vulnerabilities", out var vulns))
-                    {
-                        foreach (var vuln in vulns.EnumerateArray())
-                            vulnerabilities.Add(ParseVulnerability(vuln));
-                    }
-                }
+                results = root;
             }
-            // A well-formed Trivy payload may legitimately contain zero results
-            // (e.g. an empty array or an object with no "results" key). That is a
-            // clean scan, NOT a parse failure — distinguishing the two is the
-            // whole point of carrying Success separately from the vuln count.
+            else
+            {
+                return InvalidTrivyPayload(jsonResponse, "server response must be an object or result array");
+            }
+
+            var parseError = ParseResults(results, "vulnerabilities", vulnerabilities);
+            if (parseError != null)
+                return InvalidTrivyPayload(jsonResponse, parseError);
+
             return new TrivyScanResult { Vulnerabilities = vulnerabilities, RawOutput = jsonResponse };
         }
         catch (Exception ex)
         {
-            // Do NOT swallow this as "0 vulnerabilities". Return failure so the
-            // report is marked Failed and the signing gate blocks.
-            _logger.LogWarning(ex, "Failed to parse Trivy Server response");
             return new TrivyScanResult { Error = ex.Message, RawOutput = jsonResponse };
         }
     }
@@ -344,7 +327,7 @@ public class TrivyScannerService
     /// <summary>
     /// Parse Trivy CLI JSON output into Vulnerability objects.
     /// </summary>
-    private TrivyScanResult ParseTrivyCliResponse(string jsonResponse)
+    internal static TrivyScanResult ParseTrivyCliResponse(string jsonResponse)
     {
         try
         {
@@ -352,29 +335,60 @@ public class TrivyScannerService
             var root = doc.RootElement;
             var vulnerabilities = new List<Vulnerability>();
 
-            // CLI output has a "Results" array
-            if (root.TryGetProperty("Results", out var results))
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("Results", out var results) ||
+                results.ValueKind != JsonValueKind.Array)
             {
-                foreach (var result in results.EnumerateArray())
-                {
-                    if (result.TryGetProperty("Vulnerabilities", out var vulns))
-                    {
-                        foreach (var vuln in vulns.EnumerateArray())
-                            vulnerabilities.Add(ParseVulnerability(vuln));
-                    }
-                }
+                return InvalidTrivyPayload(jsonResponse, "CLI response must contain a Results array");
             }
-            // See ParseTrivyServerResponse: a "Results": [] with no vulns is clean.
+
+            var parseError = ParseResults(results, "Vulnerabilities", vulnerabilities);
+            if (parseError != null)
+                return InvalidTrivyPayload(jsonResponse, parseError);
+
             return new TrivyScanResult { Vulnerabilities = vulnerabilities, RawOutput = jsonResponse };
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to parse Trivy CLI response");
             return new TrivyScanResult { Error = ex.Message, RawOutput = jsonResponse };
         }
     }
 
-    private string GetStringProperty(JsonElement vuln, params string[] names)
+    private static string? ParseResults(
+        JsonElement results,
+        string vulnerabilitiesProperty,
+        List<Vulnerability> vulnerabilities)
+    {
+        foreach (var result in results.EnumerateArray())
+        {
+            if (result.ValueKind != JsonValueKind.Object)
+                return "each result must be an object";
+
+            if (!result.TryGetProperty(vulnerabilitiesProperty, out var vulns) ||
+                vulns.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            if (vulns.ValueKind != JsonValueKind.Array)
+                return $"{vulnerabilitiesProperty} must be an array or null";
+
+            foreach (var vuln in vulns.EnumerateArray())
+            {
+                if (vuln.ValueKind != JsonValueKind.Object)
+                    return "each vulnerability must be an object";
+
+                vulnerabilities.Add(ParseVulnerability(vuln));
+            }
+        }
+
+        return null;
+    }
+
+    private static TrivyScanResult InvalidTrivyPayload(string rawOutput, string error) =>
+        new() { Error = error, RawOutput = rawOutput };
+
+    private static string GetStringProperty(JsonElement vuln, params string[] names)
     {
         foreach (var name in names)
         {
@@ -387,7 +401,7 @@ public class TrivyScannerService
         return "";
     }
 
-    private Vulnerability ParseVulnerability(JsonElement vuln)
+    private static Vulnerability ParseVulnerability(JsonElement vuln)
     {
         var cveId = GetStringProperty(vuln, "VulnerabilityID", "vulnerability_id");
         var severity = GetStringProperty(vuln, "Severity", "severity");
