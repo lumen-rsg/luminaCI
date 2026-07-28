@@ -165,10 +165,15 @@ cd lumina-ci
 ### 2. Configure environment
 
 ```bash
-cd deploy
-cp .env.example .env
-# Edit .env and fill in every <set-…> placeholder (see Configuration below).
+./scripts/init-env.sh
 ```
+
+The guided initializer offers local and production profiles, generates unique
+credentials and encryption keys, creates the file-backed signing secret and
+master-key fingerprint, and writes everything with private permissions.
+Existing files are never replaced without confirmation and timestamped backups.
+For automation, run `./scripts/init-env.sh --help` to see the non-interactive
+interface.
 
 Lumina CI has **no default credentials**. The stack will refuse to start unless
 at least these are set:
@@ -184,13 +189,15 @@ GPG_PASSPHRASE_FILE=…      # path to the RPM signing secret file
 ADMIN_PASSWORD=…           # initial admin password (seeded on first boot)
 ```
 
-Create the signing secret file referenced by `GPG_PASSPHRASE_FILE` before
-starting Compose. For the example value in `.env.example`:
+The initializer creates the signing secret referenced by
+`GPG_PASSPHRASE_FILE`. If you choose to assemble `.env` manually instead,
+create that file before starting Compose. For the example value in
+`.env.example`:
 
 ```bash
-mkdir -p secrets
-openssl rand -base64 48 > secrets/gpg-passphrase
-chmod 0400 secrets/gpg-passphrase
+mkdir -p deploy/secrets
+openssl rand -base64 48 > deploy/secrets/gpg-passphrase
+chmod 0400 deploy/secrets/gpg-passphrase
 ```
 
 ### 3. Provide a TLS certificate (required)
@@ -209,7 +216,8 @@ chmod 0400 deploy/nginx/certs/console.key
 ### 4. Bring the stack up
 
 ```bash
-docker compose up -d --build
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml \
+  up -d --build
 ```
 
 The first build takes ~5–10 minutes (compiling .NET services and build images,
@@ -601,6 +609,7 @@ deploy/
     nginx/                    nginx config + certs/
     .env.example              canonical env reference
 scripts/
+    init-env.sh              guided local/production configuration wizard
     build-rpm.sh              local/standalone RPM build driver
     sign-package.sh           standalone PGP signing helper
     smoke-test.sh             end-to-end API smoke test

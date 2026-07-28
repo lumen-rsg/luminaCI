@@ -1,5 +1,22 @@
 # Lumina CI Operations
 
+## Initial configuration
+
+Run `./scripts/init-env.sh` from the repository root. The terminal wizard
+creates `deploy/.env`, generates independent strong secrets, and writes the GPG
+passphrase and secrets-master-key fingerprint under `deploy/secrets/`. Choose
+the production profile to enter the seven immutable image references required
+by the production preflight. The initializer never silently overwrites an
+existing deployment; confirmed replacements receive timestamped backups.
+Replacement generates a completely new credential set and is only appropriate
+for a fresh deployment whose existing data can be discarded.
+
+For unattended provisioning, use `--non-interactive`, select a profile with
+`--profile`, and supply the documented `LUMINA_INIT_*` overrides. Generated
+login passwords are intentionally not printed in unattended mode; retrieve
+them from the mode-0600 environment file through your secret-management
+workflow.
+
 ## Backup and restore
 
 Take backups before every deployment and on the production retention schedule.
