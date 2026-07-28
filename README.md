@@ -27,6 +27,7 @@ files** safely.
 - [Usage](#usage)
 - [Build security model](#build-security-model)
 - [API reference](#api-reference)
+- [MCP server for agents](#mcp-server-for-agents)
 - [Development](#development)
 - [Service management](#service-management)
 - [Troubleshooting](#troubleshooting)
@@ -573,12 +574,76 @@ the Publish step requires a `repositoryId` configuration value.
 | `POST` | `/api/sources/{name}/fetch` | Fetch one source |
 | `POST` | `/api/sources/fetch-all` | Fetch all sources |
 | `POST` | `/api/sources/jobs/{jobId}/cancel` | Cancel a pending or running fetch attempt |
-| `POST` | `/api/sources/{name}/build` | Build a source |
 | `GET` | `/api/sources/{name}/status` | Fetch status for a source |
 | `GET` | `/api/sources/{name}/download` | Download a fetched source |
 
 > Interactive docs (Swagger) are available at `https://localhost/swagger` when
 > the gateway runs in Development mode.
+
+---
+
+## MCP server for agents
+
+`Lumina.McpServer` is a local stdio MCP adapter for the authenticated Lumina
+API. It lets an agent inspect package sources, fetch a source, find a configured
+pipeline, start a package build, check steps and RPM artifacts, and read a
+bounded build-log tail. Builds still run through the normal isolated Lumina
+pipeline; the MCP process has no Docker socket or shell tool.
+
+Build it once:
+
+```bash
+dotnet build src/Tools/Lumina.McpServer/Lumina.McpServer.csproj -c Release
+```
+
+Then add a stdio server like this to your MCP client's configuration, replacing
+the repository path and credentials:
+
+```json
+{
+  "mcpServers": {
+    "lumina": {
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "/absolute/path/to/luminaCI/src/Tools/Lumina.McpServer/Lumina.McpServer.csproj",
+        "--configuration",
+        "Release",
+        "--no-build"
+      ],
+      "env": {
+        "LUMINA_URL": "https://localhost",
+        "LUMINA_USERNAME": "<username>",
+        "LUMINA_PASSWORD": "<password>",
+        "LUMINA_INSECURE_TLS": "true"
+      }
+    }
+  }
+}
+```
+
+`LUMINA_INSECURE_TLS=true` is only for a local self-signed certificate. Omit it
+when the gateway has a trusted production certificate. Use a dedicated
+least-privilege Lumina account: the MCP server logs in with cookie
+authentication and retries once after an expired session.
+
+Available tools:
+
+| Tool | Effect |
+|---|---|
+| `lumina_list_packages` | List package sources and fetch state |
+| `lumina_get_package` | Inspect one package source and revision |
+| `lumina_fetch_package` | Queue a source fetch |
+| `lumina_list_pipelines` | Find a configured build pipeline |
+| `lumina_build_package` | Trigger that pipeline's automatic Git build |
+| `lumina_list_builds` | List and filter recent builds |
+| `lumina_check_build` | Check steps, artifacts, hashes, scan, signing, and publication |
+| `lumina_get_build_logs` | Return at most 1,000 trailing log lines |
+
+Package sources and pipelines are separate Lumina objects. Consequently,
+`lumina_build_package` accepts a pipeline UUID (from
+`lumina_list_pipelines`), not a package-source slug.
 
 ---
 
@@ -599,10 +664,13 @@ src/
   Shared/
     Lumina.Shared/            shared models, DTOs, JWT/auth wiring
     Lumina.Web.Shared/        shared web concerns (authorization policies)
+  Tools/
+    Lumina.McpServer/         stdio MCP adapter for build agents
 tests/
     Lumina.Shared.Tests/
     Lumina.SourceService.Tests/
     Lumina.BuildService.Tests/
+    Lumina.McpServer.Tests/
 deploy/
     docker-compose.yml        full stack
     docker/                   service + build Dockerfiles
