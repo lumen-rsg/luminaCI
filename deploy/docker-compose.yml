@@ -136,6 +136,7 @@ services:
       - Auth__AdminUsername=${ADMIN_USERNAME:-admin}
       - Auth__AdminPassword=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env (see deploy/.env.example)}
       - Auth__DeveloperUsername=${DEVELOPER_USERNAME:-developer}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - Auth__DeveloperPassword=${DEVELOPER_PASSWORD:-}
       - Auth__MaxFailedLogins=${AUTH_MAX_FAILED_LOGINS:-5}
       - Auth__LockoutMinutes=${AUTH_LOCKOUT_MINUTES:-15}
@@ -208,6 +209,7 @@ services:
       # without it. NEVER change it after secrets are written, or they become
       # undecryptable.
       - Secrets__MasterKey=${SECRETS_MASTER_KEY:?SECRETS_MASTER_KEY must be set in .env (see deploy/.env.example)}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - /opt/lumina/builds:/app/builds
       - /opt/lumina/builds:/opt/lumina/builds:z
@@ -322,6 +324,7 @@ services:
       - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
       - Jwt__Issuer=LuminaCI
       - Jwt__Audience=LuminaCI
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - gpg_keys:/app/keys
       - gpg_gnupghome:/app/.gnupg
@@ -376,6 +379,7 @@ services:
       - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
       - Jwt__Issuer=LuminaCI
       - Jwt__Audience=LuminaCI
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     user: "root"
     volumes:
       - /opt/lumina/builds:/app/builds:z
@@ -448,6 +452,7 @@ services:
       - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
       - Jwt__Issuer=LuminaCI
       - Jwt__Audience=LuminaCI
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - repo_data:/app/repos
     depends_on:
@@ -504,6 +509,7 @@ services:
       - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}
       - Jwt__Issuer=LuminaCI
       - Jwt__Audience=LuminaCI
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - source_temp:/tmp/source-fetch
       - /opt/lumina/sources:/opt/lumina/sources:z

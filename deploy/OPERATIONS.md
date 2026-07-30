@@ -105,6 +105,13 @@ operations. The gateway preserves that identifier across downstream HTTP
 requests, and application logs expose it as the structured `CorrelationId`
 property.
 
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is configured, confirm the internal
+Collector is accepting both trace and metric OTLP pipelines before enabling
+the exporters in production. Alert on sustained export failures, collector
+queue growth, request error rate, request latency, build queue age, and runtime
+resource pressure. Do not expose OTLP receiver ports through the public nginx
+boundary.
+
 Route the webhook to the on-call system, page on the first failed scheduled run,
 and page separately when the monitoring workflow itself stops running. The
 runbook must include owner contacts, log and dashboard locations, dependency

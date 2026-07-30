@@ -23,6 +23,9 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
+    builder.Services.AddLuminaOpenTelemetry(
+        builder.Configuration, "lumina-build-service");
+
     builder.Host.UseSerilog((ctx, config) => config
         .ReadFrom.Configuration(ctx.Configuration)
         .Enrich.FromLogContext()

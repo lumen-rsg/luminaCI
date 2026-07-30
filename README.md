@@ -306,6 +306,24 @@ are intentionally tight — only relax them if you understand the impact.
 | `BUILD_PIDS_LIMIT` | `512` | Max processes per container (blunt fork-bomb guard) |
 | `BUILD_CPU_QUOTA` | `150000` | CPU quota in µs per 100 000 µs period (`150000` = 1.5 CPUs) |
 
+### Observability
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to the internal HTTP(S) endpoint of an
+OpenTelemetry Collector (for example, `http://otel-collector:4317`) to export
+traces and metrics. When it is empty or absent, the exporters are not
+registered and local development has no collector dependency.
+
+Each service reports a stable `service.name`, its application version, and the
+container hostname as `service.instance.id`. Instrumentation covers ASP.NET
+Core requests, outbound HTTP, MassTransit activities, .NET runtime metrics, and
+recorded HTTP exceptions. High-frequency startup and liveness probes are
+excluded from traces; they remain visible through HTTP metrics.
+
+Use the standard OpenTelemetry environment variables for exporter tuning, such
+as `OTEL_METRIC_EXPORT_INTERVAL` and `OTEL_TRACES_SAMPLER`. Keep the Collector
+on the internal network and export from it to the organization’s approved
+metrics and tracing backends.
+
 ### DNS (production)
 
 For hostname-based access, add DNS records or `/etc/hosts` entries:
