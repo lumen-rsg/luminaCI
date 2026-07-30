@@ -85,6 +85,15 @@ SMOKE_USERNAME=admin \
 SMOKE_PASSWORD=ci-admin-password \
     "${REPOSITORY_ROOT}/scripts/smoke-test.sh"
 
+if compose exec -T postgres \
+    psql --username lumina --dbname lumina_ci --set ON_ERROR_STOP=1 \
+    --command 'UPDATE audit.audit_logs SET "Action" = "Action";'
+then
+    printf '%s\n' "Audit ledger unexpectedly allowed an UPDATE." >&2
+    exit 1
+fi
+printf '%s\n' "Audit ledger rejected an in-place UPDATE."
+
 BASE_URL=https://localhost \
 CANARY_SOURCE_URL=https://raw.githubusercontent.com/rpm-software-management/rpm/c1fe256483b4802af27c2fe67a31443ac4045bd4/tests/data/SOURCES/hello-1.0.tar.gz \
 CANARY_SOURCE_SHA256=7da10c0f91e120beff34b1d1077f1a77b2422dab7cb158379d44de4e83f90f30 \

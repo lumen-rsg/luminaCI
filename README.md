@@ -524,6 +524,20 @@ curl -skb cookies.txt https://localhost/api/auth/me
 | `POST` | `/api/auth/logout` | Revoke refresh token server-side, clear cookies |
 | `GET` | `/api/auth/me` | Current user (`{ username, role }`) |
 
+### Audit ledger
+
+Every public `POST`, `PUT`, `PATCH`, and `DELETE` attempt is recorded as an
+append-only request/outcome pair. Entries contain actor, target, status,
+duration, client address, and correlation ID, but never request bodies, query
+strings, cookies, tokens, or headers. PostgreSQL rejects updates, deletes, and
+truncation of ledger rows; a SHA-256 hash chain makes other tampering
+detectable. Both endpoints require the Admin role.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/audit?page=&pageSize=&actor=&entityType=&correlationId=` | Query newest ledger entries (maximum page size 200) |
+| `GET` | `/api/audit/integrity` | Stream and verify the complete hash chain |
+
 ### Pipelines
 
 | Method | Endpoint | Description |

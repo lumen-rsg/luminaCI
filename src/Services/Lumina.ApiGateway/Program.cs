@@ -3,10 +3,12 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Lumina.ApiGateway.Data;
+using Lumina.ApiGateway.Endpoints;
 using Lumina.ApiGateway.Services;
 using Lumina.Shared.Models;
 using Lumina.Web.Shared;
 using Lumina.Web.Shared.Authorization;
+using Lumina.Web.Shared.Auditing;
 using Lumina.Web.Shared.Health;
 using Lumina.Web.Shared.Observability;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -46,6 +48,7 @@ try
     // User credential store (Postgres)
     builder.Services.AddDbContext<AuthDbContext>(options =>
         options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
+    builder.Services.AddScoped<IAuditLedgerWriter, PostgresAuditLedgerWriter>();
 
     // Redis distributed cache — backs the refresh-token store (SEC-05).
     // The gateway already received Redis__ConnectionString in compose but never
@@ -231,6 +234,9 @@ try
     });
 
     app.UseAuthentication();
+    // Wrap authorization as well as endpoint execution so denied mutation
+    // attempts are retained alongside successful and failed operations.
+    app.UseLuminaAuditLedger();
     app.UseAuthorization();
 
     // Per-route request body limits (SEC-015 follow-up).
@@ -270,6 +276,7 @@ try
 
     app.MapReverseProxy();
     app.MapLuminaHealthChecks();
+    app.MapAuditEndpoints();
 
     // Login endpoint — verifies against the DB credential store and issues:
     //   • a short-lived access JWT inside the lumina_access HttpOnly cookie, and
@@ -338,6 +345,8 @@ try
 
         cookies.SetAccessCookie(ctx.Response, accessJwt, accessExpiresUtc);
         cookies.SetRefreshCookie(ctx.Response, refreshToken, refreshRecord.ExpiresAt);
+        ctx.Items[AuditRequestMiddleware.AuthenticatedActorItemKey] =
+            user.Username;
 
         return Results.Ok(new
         {

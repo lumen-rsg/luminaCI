@@ -50,6 +50,28 @@ MinIO objects in `tests/ci/backup-restore.sh`. Production operators must run
 the same exercise against a disposable restore environment on the retention
 schedule and record the recovery point and recovery time.
 
+## Audit ledger
+
+The gateway records every public API mutation attempt and outcome in
+`audit.audit_logs`. Ledger rows are append-only at the database boundary and
+linked by SHA-256 hashes. Admins should verify the chain after deployments,
+restores, and suspected incidents:
+
+```bash
+curl -skb cookies.txt https://localhost/api/audit/integrity | jq
+```
+
+Approval requires `valid: true`; retain the reported entry count with the
+release or incident record. A false result identifies the first broken
+sequence and must be investigated before normal operations resume. Correlate
+records with application logs using `correlationId`.
+
+Do not run retention deletes against this table: the database rejects update,
+delete, and truncate operations by design. Capacity planning must include
+ledger growth. If archival is introduced later, export and independently
+anchor a verified chain before adding a reviewed chain-rotation migration.
+Backups must continue to include the entire audit schema.
+
 ## Rollback
 
 Every release record must contain the seven application image references pinned

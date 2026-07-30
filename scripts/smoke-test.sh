@@ -178,6 +178,18 @@ expect_status "Session cookie authenticates requests" 200
 expect_json "Current-user response matches the smoke account" \
     --arg username "$SMOKE_USERNAME" '.username == $username'
 
+request GET "/api/audit?page=1&pageSize=10"
+expect_status "Admin can query the audit ledger" 200
+expect_json "Audit ledger contains the login request and outcome" \
+    '.totalCount >= 2 and (.logs | type == "array") and
+     ([.logs[].phase] | index("Requested") != null) and
+     ([.logs[].phase] | index("Completed") != null)'
+
+request GET "/api/audit/integrity"
+expect_status "Admin can verify audit integrity" 200
+expect_json "Audit hash chain is intact" \
+    '.valid == true and .entryCount >= 2 and .brokenSequence == null'
+
 section "Gateway service routes"
 request GET "/api/pipelines?page=1&pageSize=1"
 expect_status "BuildService pipeline route" 200

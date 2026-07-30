@@ -62,9 +62,25 @@ public record PackageResponse(Guid Id, Guid RepositoryId, string Name, string Ve
 public record RepositoryListResponse(List<RepositoryResponse> Repositories, int TotalCount, int Page, int PageSize);
 
 // Audit Responses
-public record AuditLogResponse(Guid Id, string Action, string EntityType, string EntityId, string PerformedBy, DateTime Timestamp, string Details, string? IpAddress);
+public record AuditLogResponse(
+    Guid Id,
+    long Sequence,
+    string Action,
+    string EntityType,
+    string EntityId,
+    string PerformedBy,
+    DateTimeOffset Timestamp,
+    string Details,
+    string? IpAddress,
+    string CorrelationId,
+    string Phase,
+    int? StatusCode,
+    string PreviousHash,
+    string EntryHash);
 
 public record AuditLogListResponse(List<AuditLogResponse> Logs, int TotalCount, int Page, int PageSize);
+
+public record AuditIntegrityResponse(bool Valid, long EntryCount, long? BrokenSequence);
 
 // Dashboard Responses
 public record DashboardStatsResponse(int TotalPipelines, int ActiveBuilds, int CompletedToday, int FailedToday, int VulnerablePackages, int TotalPackages);
