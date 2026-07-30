@@ -9,7 +9,8 @@ import type { Pipeline } from "../types";
 
 const defaultDraft = {
   name: "", description: "", gitRepoUrl: "", gitBranch: "main", specPath: "",
-  buildImage: "", targetDistribution: "fedora", targetRelease: "44", targetArchitecture: "aarch64"
+  buildImage: "", targetDistribution: "fedora", targetRelease: "44", targetArchitecture: "aarch64",
+  webhookSecret: `${crypto.randomUUID()}${crypto.randomUUID()}`
 };
 
 export function Pipelines() {
@@ -41,7 +42,7 @@ export function Pipelines() {
     {message && <Notice kind={message.includes("Unable") ? "danger" : "success"} onClose={() => setMessage("")}>{message}</Notice>}
     <form className="searchbar" onSubmit={event => { event.preventDefault(); setQuery(search.trim()); }}><Search /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search pipelines by name…" aria-label="Search pipelines" />{search && <button type="button" onClick={() => { setSearch(""); setQuery(""); }} aria-label="Clear search"><X /></button>}<button className="button button--secondary">Search</button></form>
     {state.loading ? <Loading label="Loading pipeline definitions" /> : state.error ? <ErrorState error={state.error} retry={state.reload} /> : pipelines.length ? <div className="pipeline-grid">{pipelines.map(pipeline => <article className="pipeline-card" key={pipeline.id}>
-      <header><span className="pipeline-card__icon"><GitBranch /></span><Status value={pipeline.status} /><button className="icon-button" aria-label={`More actions for ${pipeline.name}`}><MoreHorizontal /></button></header>
+      <header><span className="pipeline-card__icon"><GitBranch /></span><Status value={pipeline.status} domain="pipeline" /><button className="icon-button" aria-label={`More actions for ${pipeline.name}`}><MoreHorizontal /></button></header>
       <h2>{pipeline.name}</h2><p>{pipeline.description || "No description provided."}</p>
       <div className="pipeline-source"><GitBranch /><span><small>Source</small><strong>{hostName(pipeline.gitRepoUrl)}</strong></span><code>{pipeline.gitBranch || "—"}</code></div>
       <dl><div><dt>Stages</dt><dd>{pipeline.stepCount}</dd></div><div><dt>Owner</dt><dd>{pipeline.createdBy}</dd></div><div><dt>Created</dt><dd>{dateTime(pipeline.createdAt)}</dd></div></dl>
@@ -62,9 +63,9 @@ function PipelineModal({ pipeline, onClose, onSaved }: { pipeline?: Pipeline; on
     const payload = {
       ...draft,
       steps: pipeline?.steps?.map(({ type, name, order, configuration }) => ({ type, name, order, configuration })) ?? [
-        { type: "Build", name: "Build package", order: 1, configuration: {} },
-        { type: "Sign", name: "Sign artifact", order: 2, configuration: {} },
-        { type: "Scan", name: "Security scan", order: 3, configuration: {} }
+        { type: 0, name: "Build package", order: 1, configuration: {} },
+        { type: 2, name: "Security scan", order: 2, configuration: {} },
+        { type: 1, name: "Sign artifact", order: 3, configuration: {} }
       ],
       tags: pipeline?.tags ?? [], buildProfile: `${draft.targetDistribution}-${draft.targetRelease}-${draft.targetArchitecture}`,
       expectedUpdatedAt: pipeline?.updatedAt
@@ -80,6 +81,7 @@ function PipelineModal({ pipeline, onClose, onSaved }: { pipeline?: Pipeline; on
     <label className="span-2">Pipeline name<input required maxLength={120} value={draft.name} onChange={event => update("name", event.target.value)} placeholder="release-packages" /></label>
     <label className="span-2">Description<textarea rows={3} maxLength={500} value={draft.description} onChange={event => update("description", event.target.value)} placeholder="What this delivery pipeline produces" /></label>
     <label className="span-2">Git repository URL<input type="url" value={draft.gitRepoUrl || ""} onChange={event => update("gitRepoUrl", event.target.value)} placeholder="https://github.com/org/project.git" /></label>
+    {!pipeline && <label className="span-2">Webhook secret<input required minLength={16} value={draft.webhookSecret} onChange={event => update("webhookSecret", event.target.value)} autoComplete="new-password" /><small>Save this generated secret in your Git provider; it cannot be retrieved later.</small></label>}
     <label>Branch<input value={draft.gitBranch || ""} onChange={event => update("gitBranch", event.target.value)} /></label>
     <label>Spec path<input value={draft.specPath || ""} onChange={event => update("specPath", event.target.value)} placeholder="packaging/app.spec" /></label>
     <label>Distribution<input value={draft.targetDistribution || ""} onChange={event => update("targetDistribution", event.target.value)} /></label>

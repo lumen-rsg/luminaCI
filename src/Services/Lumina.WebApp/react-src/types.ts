@@ -5,7 +5,7 @@ export type ApiResponse<T> = {
   message?: string;
 };
 
-export type Status = string;
+export type Status = string | number;
 
 export interface Pipeline {
   id: string;
@@ -31,7 +31,7 @@ export interface Pipeline {
 
 export interface PipelineStep {
   id?: string;
-  type: string;
+  type: string | number;
   name: string;
   order: number;
   configuration: Record<string, string>;
@@ -63,7 +63,7 @@ export interface Build {
 
 export interface BuildStep {
   id: string;
-  type: string;
+  type: string | number;
   name: string;
   order: number;
   status: Status;
@@ -119,7 +119,7 @@ export interface SourcePackage {
   revision: number;
   isEnabled: boolean;
   sourceUrl: string;
-  sourceType: string;
+  sourceType: string | number;
   sourceBranch?: string;
   expectedSha256?: string;
   specPath?: string;

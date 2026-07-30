@@ -2,7 +2,7 @@ import {
   AlertTriangle, CheckCircle2, Inbox, LoaderCircle, RefreshCw, XCircle
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { tone } from "../lib/format";
+import { statusLabel, tone, type StatusDomain } from "../lib/format";
 
 export function PageHeader({ eyebrow, title, description, actions }: {
   eyebrow: string; title: string; description: string; actions?: ReactNode;
@@ -19,8 +19,8 @@ export function PageHeader({ eyebrow, title, description, actions }: {
   );
 }
 
-export function Status({ value }: { value?: string }) {
-  return <span className={`status status--${tone(value)}`}><span />{value || "Unknown"}</span>;
+export function Status({ value, domain }: { value?: string | number; domain?: StatusDomain }) {
+  return <span className={`status status--${tone(value, domain)}`}><span />{statusLabel(value, domain)}</span>;
 }
 
 export function Loading({ label = "Loading workspace" }: { label?: string }) {

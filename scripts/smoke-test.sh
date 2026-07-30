@@ -207,7 +207,7 @@ expect_json "Scanner response envelope" \
 request GET "/api/repository?page=1&pageSize=1"
 expect_status "RepositoryService route" 200
 expect_json "Repository response envelope" \
-    '.success == true and (.data | type == "array")'
+    '.success == true and (.data.repositories | type == "array")'
 
 section "Session lifecycle"
 request POST "/api/auth/refresh"

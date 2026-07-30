@@ -25,8 +25,8 @@ test("authenticated dashboard is responsive and has no serious WCAG violations",
       "/api/auth/me": { username: "operator", role: "admin" },
       "/api/builds/stats": { success: true, data: { totalCount: 42, successfulCount: 38, failedCount: 4 } },
       "/api/builds/queue": { success: true, data: { queued: [], running: [], queuedCount: 0, runningCount: 0 } },
-      "/api/builds": { success: true, data: { builds: [{ id: "018f1670-dff0-7000-8000-000000000001", pipelineId: "018f1670-dff0-7000-8000-000000000002", status: "Success", specName: "lumina-agent.spec", createdAt: now, triggeredBy: "operator" }], totalCount: 1, page: 1, pageSize: 20 } },
-      "/api/pipelines": { success: true, data: { pipelines: [{ id: "018f1670-dff0-7000-8000-000000000002", name: "Release packages", description: "Build, verify, and publish the stable channel.", status: "Active", createdBy: "operator", createdAt: now, stepCount: 4 }], totalCount: 1, page: 1, pageSize: 20 } },
+      "/api/builds": { success: true, data: { builds: [{ id: "018f1670-dff0-7000-8000-000000000001", pipelineId: "018f1670-dff0-7000-8000-000000000002", status: 2, specName: "lumina-agent.spec", createdAt: now, triggeredBy: "operator" }], totalCount: 1, page: 1, pageSize: 20 } },
+      "/api/pipelines": { success: true, data: { pipelines: [{ id: "018f1670-dff0-7000-8000-000000000002", name: "Release packages", description: "Build, verify, and publish the stable channel.", status: 1, createdBy: "operator", createdAt: now, stepCount: 4 }], totalCount: 1, page: 1, pageSize: 20 } },
       "/api/scanner/scans": { success: true, data: { scans: [], totalCount: 0, page: 1, pageSize: 20 } }
     };
     const body = bodies[path];
