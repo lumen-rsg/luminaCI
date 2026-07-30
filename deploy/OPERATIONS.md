@@ -112,6 +112,25 @@ queue growth, request error rate, request latency, build queue age, and runtime
 resource pressure. Do not expose OTLP receiver ports through the public nginx
 boundary.
 
+The repository-provided single-host stack is started by adding
+`deploy/docker-compose.observability.yml` to the normal Compose command.
+Grafana is loopback-only; access it through an authenticated SSH or VPN tunnel.
+Back up the `grafana_data`, `prometheus_data`, and `tempo_data` volumes with the
+rest of the deployment. The default retention is 30 days for metrics and seven
+days for traces; adjust `PROMETHEUS_RETENTION` and `tempo.yml` only after
+checking disk growth under representative load.
+
+Prometheus evaluates initial rules for Collector availability, HTTP 5xx ratio,
+p95 request latency, and managed-heap pressure. These rules are visible in
+Grafana but do not page anyone by themselves. Connect Prometheus to the
+organization's authenticated Alertmanager or translate the rules into the
+existing production monitoring webhook before treating them as an on-call
+signal. Validate every topology or dashboard change with:
+
+```bash
+tests/ci/observability-stack.sh
+```
+
 Route the webhook to the on-call system, page on the first failed scheduled run,
 and page separately when the monitoring workflow itself stops running. The
 runbook must include owner contacts, log and dashboard locations, dependency

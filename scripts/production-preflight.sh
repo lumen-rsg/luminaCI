@@ -57,6 +57,23 @@ for key in "${required_secrets[@]}"; do
     fi
 done
 
+grafana_password="${environment[GRAFANA_ADMIN_PASSWORD]:-}"
+if [[ -n "$grafana_password" ]]; then
+    if (( ${#grafana_password} < 24 )) ||
+       [[ "$grafana_password" == *"<set-"* ||
+          "$grafana_password" == ci-* ||
+          "$grafana_password" == *password* ]]; then
+        printf 'GRAFANA_ADMIN_PASSWORD must be a strong non-placeholder value.\n' >&2
+        exit 1
+    fi
+    for key in "${required_secrets[@]}"; do
+        if [[ "$grafana_password" == "${environment[$key]}" ]]; then
+            printf 'GRAFANA_ADMIN_PASSWORD and %s must be unique.\n' "$key" >&2
+            exit 1
+        fi
+    done
+fi
+
 for key in "${release_images[@]}"; do
     value="${environment[$key]:-}"
     if [[ ! "$value" =~ ^[^[:space:]@]+@sha256:[[:xdigit:]]{64}$ ]]; then

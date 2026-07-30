@@ -1,0 +1,57 @@
+groups:
+  - name: lumina-control-plane
+    rules:
+      - alert: LuminaTelemetryCollectorUnavailable
+        expr: up{job="lumina-services"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Lumina telemetry collector is unavailable
+          description: Prometheus has been unable to scrape exported Lumina metrics for five minutes.
+
+      - alert: LuminaHighHttpServerErrorRate
+        expr: |
+          (
+            sum by (service_name) (
+              rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m])
+            )
+            /
+            clamp_min(
+              sum by (service_name) (
+                rate(http_server_request_duration_seconds_count[5m])
+              ),
+              0.001
+            )
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: High HTTP 5xx rate for {{ $labels.service_name }}
+          description: More than 5 percent of requests have failed for ten minutes.
+
+      - alert: LuminaHighHttpP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (service_name, le) (
+              rate(http_server_request_duration_seconds_bucket[5m])
+            )
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: High HTTP latency for {{ $labels.service_name }}
+          description: Server p95 latency has exceeded two seconds for ten minutes.
+
+      - alert: LuminaHighManagedHeap
+        expr: |
+          sum by (service_name) (process_runtime_dotnet_gc_heap_size_bytes) > 1073741824
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: High managed heap for {{ $labels.service_name }}
+          description: The managed heap has exceeded 1 GiB for fifteen minutes.

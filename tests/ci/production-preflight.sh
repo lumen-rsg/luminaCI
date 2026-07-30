@@ -43,6 +43,7 @@ ADMIN_PASSWORD=preflight-admin-0000000000000000000000000000001
 SECRETS_MASTER_KEY=${master_key}
 SECRETS_MASTER_KEY_FINGERPRINT_FILE=${temporary_directory}/master.sha256
 GPG_PASSPHRASE_FILE=${temporary_directory}/gpg-passphrase
+GRAFANA_ADMIN_PASSWORD=preflight-grafana-000000000000000000000000000001
 API_GATEWAY_IMAGE=registry.invalid/api-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000001
 BUILD_SERVICE_IMAGE=registry.invalid/build-service@sha256:0000000000000000000000000000000000000000000000000000000000000002
 SECURITY_SERVICE_IMAGE=registry.invalid/security-service@sha256:0000000000000000000000000000000000000000000000000000000000000003
@@ -62,6 +63,18 @@ CERT_DIR="$temporary_directory/certs" \
 PRODUCTION_HOST=localhost \
 EXPECTED_PUBLIC_IP=127.0.0.1 \
     "$REPOSITORY_ROOT/scripts/production-preflight.sh"
+
+cp "$temporary_directory/production.env" "$temporary_directory/grafana-invalid.env"
+sed -i 's/^GRAFANA_ADMIN_PASSWORD=.*/GRAFANA_ADMIN_PASSWORD=<set-a-password>/' \
+    "$temporary_directory/grafana-invalid.env"
+chmod 0600 "$temporary_directory/grafana-invalid.env"
+if ENV_FILE="$temporary_directory/grafana-invalid.env" \
+   CERT_DIR="$temporary_directory/certs" \
+   PRODUCTION_HOST=localhost \
+       "$REPOSITORY_ROOT/scripts/production-preflight.sh" >/dev/null 2>&1; then
+    printf 'Production preflight accepted a placeholder Grafana password.\n' >&2
+    exit 1
+fi
 
 sed -i 's/preflight-postgres-[0-9]*/password/' "$temporary_directory/production.env"
 if ENV_FILE="$temporary_directory/production.env" \

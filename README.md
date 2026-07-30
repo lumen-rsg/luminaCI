@@ -324,6 +324,25 @@ as `OTEL_METRIC_EXPORT_INTERVAL` and `OTEL_TRACES_SAMPLER`. Keep the Collector
 on the internal network and export from it to the organization’s approved
 metrics and tracing backends.
 
+Lumina also ships an optional single-host observability stack with an
+OpenTelemetry Collector, Prometheus, Tempo, Grafana, provisioned data sources,
+the **Lumina CI Control Plane** dashboard, and initial availability/error
+rate/latency/heap alerts. Set a unique `GRAFANA_ADMIN_PASSWORD`, then start it
+alongside the application:
+
+```bash
+docker compose --env-file deploy/.env \
+  -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.observability.yml \
+  up -d
+```
+
+Grafana binds only to `127.0.0.1:${GRAFANA_PORT:-3000}`. Reach it locally or
+through an authenticated SSH/VPN tunnel; Collector, Prometheus, and Tempo have
+no published host ports. Prometheus retains 30 days by default and Tempo
+retains seven days. Treat their named volumes as deployment data and include
+them in backup and capacity planning.
+
 ### DNS (production)
 
 For hostname-based access, add DNS records or `/etc/hosts` entries:
