@@ -1,11 +1,11 @@
 export const shortId = (value?: string) => value ? value.slice(0, 8) : "—";
-export const dateTime = (value?: string) => value
-  ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
+export const dateTime = (value?: string, locale?: string) => value
+  ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
   : "—";
-export const timeAgo = (value?: string) => {
+export const timeAgo = (value?: string, locale?: string) => {
   if (!value) return "—";
   const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
-  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
   if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
   const minutes = Math.round(seconds / 60);
   if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
