@@ -8,6 +8,7 @@ using Lumina.Shared.Models;
 using Lumina.Web.Shared;
 using Lumina.Web.Shared.Authorization;
 using Lumina.Web.Shared.Health;
+using Lumina.Web.Shared.Observability;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -25,6 +26,7 @@ try
 
     builder.Host.UseSerilog((ctx, config) => config
         .ReadFrom.Configuration(ctx.Configuration)
+        .Enrich.FromLogContext()
         .WriteTo.Console());
 
     // JWT Authentication — shared with every downstream service so they can
@@ -203,6 +205,7 @@ try
     // the real client IP. Must run early — before anything that consumes
     // Connection.RemoteIpAddress / scheme (SEC-012 follow-up).
     app.UseForwardedHeaders();
+    app.UseLuminaRequestCorrelation();
 
     app.UseRateLimiter();
 

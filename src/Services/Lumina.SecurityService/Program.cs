@@ -5,6 +5,7 @@ using Lumina.SecurityService.Services;
 using Lumina.Shared.Extensions;
 using Lumina.Web.Shared;
 using Lumina.Web.Shared.Health;
+using Lumina.Web.Shared.Observability;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -21,6 +22,7 @@ try
 
     builder.Host.UseSerilog((ctx, config) => config
         .ReadFrom.Configuration(ctx.Configuration)
+        .Enrich.FromLogContext()
         .WriteTo.Console());
 
     builder.Services.AddDbContext<SecurityDbContext>(options =>
@@ -119,6 +121,7 @@ try
         app.UseSwaggerUI();
     }
 
+    app.UseLuminaRequestCorrelation();
     app.UseAuthentication();
     app.UseAuthorization();
 

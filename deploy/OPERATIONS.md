@@ -100,6 +100,11 @@ every five minutes. A failed application or dependency check sends a critical
 JSON alert containing the failed check, observed status, deployment, timestamp,
 and runbook link; workflow failure is a second independent signal.
 
+Capture the `X-Correlation-ID` response header when investigating failed API
+operations. The gateway preserves that identifier across downstream HTTP
+requests, and application logs expose it as the structured `CorrelationId`
+property.
+
 Route the webhook to the on-call system, page on the first failed scheduled run,
 and page separately when the monitoring workflow itself stops running. The
 runbook must include owner contacts, log and dashboard locations, dependency

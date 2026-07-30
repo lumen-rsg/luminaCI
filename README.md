@@ -461,6 +461,13 @@ sessions authenticate via the `lumina_access` HttpOnly cookie automatically;
 API clients should use the cookie jar from `/api/auth/login` (recommended) or
 send `Authorization: Bearer <access-token>`.
 
+Every HTTP response includes `X-Correlation-ID`. Automation may supply a
+single identifier containing ASCII letters, digits, `-`, `_`, `.`, or `:` (up
+to 128 characters); otherwise Lumina generates a safe trace identifier. The
+gateway forwards the value to downstream services and every service includes
+it in structured log context, so one request can be followed across the
+control plane.
+
 ### Authentication
 
 ```bash
