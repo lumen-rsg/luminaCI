@@ -30,10 +30,15 @@ public class RepositoryController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<List<PackageRepository>>>> ListRepositories()
+    public async Task<ActionResult<ApiResponse<RepositoryListResponse>>> ListRepositories()
     {
         var repos = await _storage.ListRepositoriesAsync();
-        return Ok(new ApiResponse<List<PackageRepository>>(true, repos, null, null));
+        var response = new RepositoryListResponse(
+            repos,
+            repos.Count,
+            Page: 1,
+            PageSize: repos.Count);
+        return Ok(new ApiResponse<RepositoryListResponse>(true, response, null, null));
     }
 
     [HttpPost]

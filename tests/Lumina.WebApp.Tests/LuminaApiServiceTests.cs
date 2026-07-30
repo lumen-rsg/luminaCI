@@ -55,6 +55,49 @@ public class LuminaApiServiceTests
         await Assert.ThrowsAsync<ApiRequestException>(() => api.GetBuildStatsAsync());
     }
 
+    [Fact]
+    public async Task Repositories_deserialize_the_list_response_contract()
+    {
+        var repositoryId = Guid.NewGuid();
+        var handler = new StubHandler(request =>
+        {
+            Assert.Equal("/api/repository", request.RequestUri!.AbsolutePath);
+            return Json(
+                HttpStatusCode.OK,
+                $$"""
+                {
+                  "success": true,
+                  "data": {
+                    "repositories": [{
+                      "id": "{{repositoryId}}",
+                      "name": "stable",
+                      "displayName": "Stable",
+                      "basePath": "stable",
+                      "arch": "aarch64",
+                      "distribution": "fedora",
+                      "isActive": true,
+                      "createdAt": "2026-07-30T00:00:00Z",
+                      "packageCount": 3
+                    }],
+                    "totalCount": 1,
+                    "page": 1,
+                    "pageSize": 1
+                  },
+                  "error": null,
+                  "message": null
+                }
+                """);
+        });
+        var api = CreateApi(handler);
+
+        var response = await api.GetRepositoriesAsync();
+
+        var repository = Assert.Single(response!.Data!.Repositories);
+        Assert.Equal(repositoryId, repository.Id);
+        Assert.Equal(3, repository.PackageCount);
+        Assert.Equal(1, response.Data.TotalCount);
+    }
+
     private static LuminaApiService CreateApi(HttpMessageHandler handler) =>
         new(
             new HttpClient(handler) { BaseAddress = new Uri("https://lumina.test") },

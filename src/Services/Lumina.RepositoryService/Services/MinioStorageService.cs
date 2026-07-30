@@ -1,4 +1,5 @@
 using Lumina.RepositoryService.Data;
+using Lumina.Shared.DTOs;
 using Lumina.Shared.Errors;
 using Lumina.Shared.Events;
 using Lumina.Shared.Models;
@@ -468,9 +469,21 @@ public class MinioStorageService
         _logger.LogInformation("Repository {RepoName} sync completed", repo.Name);
     }
 
-    public async Task<List<PackageRepository>> ListRepositoriesAsync()
+    public async Task<List<RepositoryResponse>> ListRepositoriesAsync()
     {
-        return await _db.Repositories.OrderByDescending(r => r.CreatedAt).ToListAsync();
+        return await _db.Repositories
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new RepositoryResponse(
+                r.Id,
+                r.Name,
+                r.DisplayName,
+                r.BasePath,
+                r.Arch,
+                r.Distribution,
+                r.IsActive,
+                r.CreatedAt,
+                r.Packages.Count))
+            .ToListAsync();
     }
 
     public async Task<List<Package>> ListPackagesAsync(Guid repositoryId)
