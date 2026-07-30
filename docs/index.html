@@ -1014,14 +1014,14 @@ X-Hub-Signature-256: sha256=<span class="str">&hellip;</span>   <span class="cm"
       <div class="section-label">Stack</div>
       <div class="section-title">Boring, proven,<br>production-grade.</div>
       <p class="section-subtitle">
-        No exotic dependencies. Lumina CI is .NET 10 services and a Blazor WASM console on top of
+        No exotic dependencies. Lumina CI is .NET 10 services and a React console on top of
         off-the-shelf infrastructure you already operate.
       </p>
     </div>
 
     <div class="perf-grid">
-      <div class="perf-card reveal"><div class="perf-num">.NET 10</div><div class="perf-name">Runtime</div><div class="perf-note">services + Blazor</div></div>
-      <div class="perf-card reveal"><div class="perf-num">Blazor</div><div class="perf-name">Web console</div><div class="perf-note">WASM, client-side</div></div>
+      <div class="perf-card reveal"><div class="perf-num">.NET 10</div><div class="perf-name">Runtime</div><div class="perf-note">backend services</div></div>
+      <div class="perf-card reveal"><div class="perf-num">React</div><div class="perf-name">Web console</div><div class="perf-note">TypeScript, client-side</div></div>
       <div class="perf-card reveal"><div class="perf-num">YARP</div><div class="perf-name">Gateway</div><div class="perf-note">reverse proxy + auth</div></div>
       <div class="perf-card reveal"><div class="perf-num">Postgres 16</div><div class="perf-name">State</div><div class="perf-note">users, pipelines, builds</div></div>
       <div class="perf-card reveal"><div class="perf-num">RabbitMQ 3</div><div class="perf-name">Messaging</div><div class="perf-note">build / scan / sign jobs</div></div>
@@ -1052,7 +1052,7 @@ X-Hub-Signature-256: sha256=<span class="str">&hellip;</span>   <span class="cm"
       <div class="module-card reveal"><div class="mod-name">scanner-service</div><div class="mod-desc">Trivy CVE scanning, per-artifact findings</div></div>
       <div class="module-card reveal"><div class="mod-name">repository-service</div><div class="mod-desc">RPM repository management &amp; publishing</div></div>
       <div class="module-card reveal"><div class="mod-name">source-service</div><div class="mod-desc">git / tar / rsync source fetching</div></div>
-      <div class="module-card reveal"><div class="mod-name">webapp</div><div class="mod-desc">Blazor WASM console</div></div>
+      <div class="module-card reveal"><div class="mod-name">webapp</div><div class="mod-desc">React + TypeScript console</div></div>
       <div class="module-card reveal"><div class="mod-name">docker-socket-proxy</div><div class="mod-desc">Least-privilege Docker API for builds</div></div>
       <div class="module-card reveal"><div class="mod-name">trivy</div><div class="mod-desc">CVE database &amp; scan server</div></div>
       <div class="module-card reveal"><div class="mod-name">nginx</div><div class="mod-desc">TLS termination &amp; repository HTTP</div></div>

@@ -27,6 +27,9 @@ deploy/.env.*
 **/bin/
 **/obj/
 **/publish/
+**/node_modules/
+**/dist/
+**/test-results/
 
 # Docker volumes
 postgres_data/

@@ -11,7 +11,8 @@ module.exports = defineConfig({
     ...devices["Desktop Chrome"]
   },
   webServer: {
-    command: "dotnet run --project ../../src/Services/Lumina.WebApp/Lumina.WebApp.csproj --configuration Release --no-build --no-launch-profile --urls http://127.0.0.1:5188",
+    command: "npm run dev -- --host 127.0.0.1",
+    cwd: "../../src/Services/Lumina.WebApp",
     url: "http://127.0.0.1:5188/login",
     reuseExistingServer: !process.env.CI,
     timeout: 120000

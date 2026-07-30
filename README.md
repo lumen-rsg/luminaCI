@@ -10,7 +10,7 @@ fetches sources, builds RPMs in isolated containers, **PGP-signs** them,
 **CVE-scans** them with Trivy, and **publishes** them to a managed repository —
 triggered manually from the web console or automatically on a Git push.
 
-It is built on .NET 10 (services + Blazor WASM UI) and orchestrated with Docker
+It is built on .NET 10 services with a React + TypeScript UI and orchestrated with Docker
 Compose, with a security model designed around running **untrusted `.spec`
 files** safely.
 
@@ -49,7 +49,7 @@ Lumina CI automates the RPM release pipeline end to end:
    nginx.
 
 Everything is fronted by a YARP **API gateway** that owns authentication and
-fans requests out to the individual services. A Blazor **WASM** web app is the
+fans requests out to the individual services. A React **single-page app** is the
 primary UI; a REST API is available for automation and integrations.
 
 ---
@@ -59,7 +59,7 @@ primary UI; a REST API is available for automation and integrations.
 ```
                         ┌──────────────┐
                         │   Browser    │
-                        │ (Blazor WASM)│
+                        │ (React + TS) │
                         └──────┬───────┘
                                │ :443 / :80 (TLS terminated here)
                         ┌──────▼───────┐
@@ -105,7 +105,7 @@ primary UI; a REST API is available for automation and integrations.
 | `scanner-service` | 5003 | Trivy CVE scanning |
 | `repository-service` | 5004 | RPM repository management & publishing |
 | `source-service` | 5006 | Revisioned package catalog and pinned HTTPS source fetching |
-| `webapp` | 5005 | Blazor WASM UI |
+| `webapp` | 5005 | React + TypeScript UI |
 | `docker-socket-proxy` | 2375 (internal) | Least-privilege Docker API for build-service |
 | `trivy` | 8080 (internal) | CVE database & scan server |
 
@@ -660,7 +660,7 @@ src/
     Lumina.ScannerService/    Trivy scanning
     Lumina.RepositoryService/ RPM repo management
     Lumina.SourceService/     source fetching
-    Lumina.WebApp/            Blazor WASM UI
+    Lumina.WebApp/            React + TypeScript UI
   Shared/
     Lumina.Shared/            shared models, DTOs, JWT/auth wiring
     Lumina.Web.Shared/        shared web concerns (authorization policies)
