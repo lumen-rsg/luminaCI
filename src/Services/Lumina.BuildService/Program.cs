@@ -50,15 +50,25 @@ try
     // plaintext by accident. See AesSecretProtector for the on-disk format.
     builder.Services.AddSingleton<ISecretProtector, AesSecretProtector>();
     builder.Services.AddSingleton<BuildExecutionCoordinator>();
+    builder.Services.AddScoped<IBuildSlotClaimer, BuildSlotClaimService>();
     builder.Services.AddHostedService<BuildMonitorHostedService>();
 
     // Register every lifecycle backend lazily. Recovery resolves the immutable
     // backend recorded on each job, while PipelineEngine uses only the globally
     // selected backend for new work.
     builder.Services.AddScoped<DockerBuildService>();
+    builder.Services.AddSingleton<k8s.Kubernetes>(_ =>
+        new k8s.Kubernetes(k8s.KubernetesClientConfiguration.BuildDefaultConfig()));
+    builder.Services.AddSingleton<IKubernetesApiOperations, KubernetesApiOperations>();
+    builder.Services.AddSingleton<IKubernetesBuildResourceClient, KubernetesBuildResourceClient>();
+    builder.Services.AddScoped<IKubernetesBuildCompletion, KubernetesBuildCompletion>();
+    builder.Services.AddScoped<KubernetesBuildExecutor>();
     builder.Services.AddSingleton(new BuildExecutorRegistration(
         BuildExecutorBackend.Docker,
         services => services.GetRequiredService<DockerBuildService>()));
+    builder.Services.AddSingleton(new BuildExecutorRegistration(
+        BuildExecutorBackend.Kubernetes,
+        services => services.GetRequiredService<KubernetesBuildExecutor>()));
     builder.Services.AddScoped<IBuildExecutorResolver, BuildExecutorResolver>();
     builder.Services.AddScoped<IBuildLauncher>(services =>
         services.GetRequiredService<IBuildExecutorResolver>().Resolve(executorSelection.Backend));

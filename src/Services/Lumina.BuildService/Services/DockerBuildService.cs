@@ -26,6 +26,7 @@ public class DockerBuildService : IBuildExecutor
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRpmArtifactValidator _rpmArtifactValidator;
     private readonly BuildExecutionCoordinator _execution;
+    private readonly IBuildSlotClaimer _slotClaimer;
 
     /// <summary>
     /// Docker daemon endpoint (unix socket or HTTP proxy URL). When fronted by a
@@ -92,7 +93,8 @@ public class DockerBuildService : IBuildExecutor
         IConfiguration config,
         IServiceScopeFactory scopeFactory,
         IRpmArtifactValidator rpmArtifactValidator,
-        BuildExecutionCoordinator execution)
+        BuildExecutionCoordinator execution,
+        IBuildSlotClaimer slotClaimer)
     {
         _db = db;
         _logger = logger;
@@ -100,6 +102,7 @@ public class DockerBuildService : IBuildExecutor
         _scopeFactory = scopeFactory;
         _rpmArtifactValidator = rpmArtifactValidator;
         _execution = execution;
+        _slotClaimer = slotClaimer;
 
         // The Docker endpoint may be a raw unix socket (unix:///var/run/docker.sock),
         // a host:port, or an http(s):// URL fronting a docker-socket-proxy. The proxy
@@ -400,7 +403,7 @@ public class DockerBuildService : IBuildExecutor
                     $"Runner '{imageName}' is {resolvedImage.Architecture}, but build {job.Id} targets {job.TargetArchitecture}.");
             }
 
-            await AcquireDistributedBuildSlotAsync(job);
+            await _slotClaimer.ClaimAsync(job);
 
             // Container-internal path for artifact scanning (matches docker-compose volume mount)
             var artifactDir = $"/app/builds/{job.Id}";
@@ -560,39 +563,6 @@ public class DockerBuildService : IBuildExecutor
             if (ownsExecutionSlot)
                 _execution.Release(job.Id);
             throw;
-        }
-    }
-
-    private async Task AcquireDistributedBuildSlotAsync(BuildJob job)
-    {
-        while (true)
-        {
-            await using var transaction = await _db.Database.BeginTransactionAsync();
-            // Serialize the count-and-claim across every BuildService replica.
-            // The fixed key is private to Lumina's build-slot allocation.
-            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(4867564)");
-
-            var now = DateTime.UtcNow;
-            var active = await _db.BuildJobs.CountAsync(item =>
-                item.Status == BuildStatus.Building
-                && item.LeaseExpiresAt != null
-                && item.LeaseExpiresAt > now);
-            if (active < _execution.MaxConcurrentBuilds)
-            {
-                job.Status = BuildStatus.Building;
-                job.StartedAt = now;
-                job.LeaseOwner = _execution.WorkerId;
-                job.LastHeartbeatAt = now;
-                job.LeaseExpiresAt = now + _execution.LeaseDuration;
-                job.DeadlineAt = now + _execution.MaxBuildDuration;
-                _db.BuildJobs.Update(job);
-                await _db.SaveChangesAsync();
-                await transaction.CommitAsync();
-                return;
-            }
-
-            await transaction.RollbackAsync();
-            await Task.Delay(_execution.HeartbeatInterval);
         }
     }
 
