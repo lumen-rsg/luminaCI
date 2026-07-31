@@ -295,6 +295,9 @@ public sealed class KubernetesBuildResourceClientTests
             Policy.Metadata.NamespaceProperty = buildNamespace;
             Policy.Metadata.Uid = "policy-uid-1";
             Policy.Metadata.ResourceVersion = "1";
+            // Kubernetes normalizes an explicit empty ingress array to an
+            // omitted field when persisting a deny-all NetworkPolicy.
+            Policy.Spec.Ingress = null;
             return Task.FromResult(Policy);
         }
 
@@ -316,6 +319,7 @@ public sealed class KubernetesBuildResourceClientTests
             Calls.Add("replace-policy");
             Policy = policy;
             Policy.Metadata.ResourceVersion = "2";
+            Policy.Spec.Ingress = null;
             return Task.FromResult(Policy);
         }
 

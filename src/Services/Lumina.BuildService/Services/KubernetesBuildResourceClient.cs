@@ -668,14 +668,16 @@ internal sealed class KubernetesBuildResourceClient(IKubernetesApiOperations api
         if (string.IsNullOrWhiteSpace(expectedBuildId) ||
             !string.Equals(persisted.Metadata?.Name, requested.Metadata?.Name, StringComparison.Ordinal) ||
             Label(persisted.Metadata?.Labels, BuildIdLabel) != expectedBuildId ||
-            Label(persisted.Spec?.PodSelector?.MatchLabels, BuildIdLabel) != expectedBuildId ||
-            persisted.Spec?.Ingress is not { Count: 0 } ||
+            persisted.Spec?.PodSelector?.MatchLabels is not { Count: 1 } selectorLabels ||
+            Label(selectorLabels, BuildIdLabel) != expectedBuildId ||
+            persisted.Spec?.Ingress is { Count: > 0 } ||
             !HasRequiredEgressShape(requested.Spec?.Egress) ||
+            !HasRequiredEgressShape(persisted.Spec?.Egress) ||
             !string.Equals(
-                KubernetesJson.Serialize(requested.Spec),
-                KubernetesJson.Serialize(persisted.Spec),
+                KubernetesJson.Serialize(requested.Spec?.Egress),
+                KubernetesJson.Serialize(persisted.Spec?.Egress),
                 StringComparison.Ordinal) ||
-            persisted.Spec.PolicyTypes?.ToHashSet(StringComparer.Ordinal) is not { } types ||
+            persisted.Spec?.PolicyTypes?.ToHashSet(StringComparer.Ordinal) is not { } types ||
             !types.SetEquals(["Ingress", "Egress"]))
         {
             throw new ConflictException("Existing Kubernetes NetworkPolicy is not the required narrow-egress policy.");
