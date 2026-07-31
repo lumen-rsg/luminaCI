@@ -1,6 +1,4 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
-using System.Threading.Channels;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Lumina.BuildService.Data;
@@ -11,9 +9,8 @@ using Microsoft.EntityFrameworkCore;
 namespace Lumina.BuildService.Services;
 
 /// <summary>
-/// Manages Docker-based builds with real-time log streaming.
-/// Logs are streamed from Docker containers as they arrive and made available
-/// to SSE subscribers via Channel-based pub/sub.
+/// Manages Docker-based builds and publishes their output through the shared
+/// backend-neutral log stream hub.
 /// </summary>
 public class DockerBuildService : IBuildExecutor
 {
@@ -27,6 +24,7 @@ public class DockerBuildService : IBuildExecutor
     private readonly IRpmArtifactValidator _rpmArtifactValidator;
     private readonly BuildExecutionCoordinator _execution;
     private readonly IBuildSlotClaimer _slotClaimer;
+    private readonly IBuildLogStreamHub _logStreams;
 
     /// <summary>
     /// Docker daemon endpoint (unix socket or HTTP proxy URL). When fronted by a
@@ -50,43 +48,6 @@ public class DockerBuildService : IBuildExecutor
     /// <summary>CPU quota per build container in microseconds/period (default 150000 = 1.5 CPUs).</summary>
     private readonly long _buildCpuQuota;
 
-    /// <summary>
-    /// Hard cap on the in-memory log buffer kept per build job, in characters. Once a
-    /// build's accumulated logs exceed this, the buffer is truncated from the head
-    /// (newest tail retained) so memory stays bounded regardless of how verbose
-    /// <c>dnf builddep</c> gets. The full log is still persisted to the database and
-    /// to the failed-build-log file on disk; only the in-memory SSE buffer is bounded.
-    /// </summary>
-    private readonly long _maxLogBufferChars;
-
-    /// <summary>
-    /// Maximum number of concurrent live SSE subscribers across the whole service.
-    /// Each subscriber holds a channel and an open response stream; an unbounded
-    /// count is an easy DoS amplification point (a few clients opening many streams).
-    /// Once the limit is reached, new live-stream requests fall back to replay mode.
-    /// </summary>
-    private readonly int _maxConcurrentSseSubscribers;
-
-    /// <summary>
-    /// Capacity of each per-subscriber SSE channel. Bounded so a slow client cannot
-    /// force the service to buffer unbounded log lines in its channel; when full,
-    /// new lines are dropped (the slow client lags but the build keeps streaming).
-    /// </summary>
-    private readonly int _sseChannelCapacity;
-
-    /// <summary>
-    /// Global semaphore gating live SSE subscribers across all builds. Counts
-    /// subscribers process-wide (the field is static because the dictionaries below
-    /// are static and shared across all DI scopes of this service).
-    /// </summary>
-    private static SemaphoreSlim? _sseSubscriberGate;
-
-    /// <summary>Full accumulated logs per build job (in-memory buffer, head-truncated at <see cref="_maxLogBufferChars"/>).</summary>
-    private static readonly ConcurrentDictionary<Guid, string> _logBuffers = new();
-
-    /// <summary>Subscribers per build job that receive new log lines in real-time.</summary>
-    private static readonly ConcurrentDictionary<Guid, List<Channel<string>>> _subscribers = new();
-
     public DockerBuildService(
         BuildDbContext db,
         ILogger<DockerBuildService> logger,
@@ -94,7 +55,8 @@ public class DockerBuildService : IBuildExecutor
         IServiceScopeFactory scopeFactory,
         IRpmArtifactValidator rpmArtifactValidator,
         BuildExecutionCoordinator execution,
-        IBuildSlotClaimer slotClaimer)
+        IBuildSlotClaimer slotClaimer,
+        IBuildLogStreamHub logStreams)
     {
         _db = db;
         _logger = logger;
@@ -103,6 +65,7 @@ public class DockerBuildService : IBuildExecutor
         _rpmArtifactValidator = rpmArtifactValidator;
         _execution = execution;
         _slotClaimer = slotClaimer;
+        _logStreams = logStreams;
 
         // The Docker endpoint may be a raw unix socket (unix:///var/run/docker.sock),
         // a host:port, or an http(s):// URL fronting a docker-socket-proxy. The proxy
@@ -126,31 +89,6 @@ public class DockerBuildService : IBuildExecutor
         _buildMemoryBytes = ParseLongConfig(config, "Docker:BuildMemoryBytes", 2L * 1024 * 1024 * 1024);
         _buildPidsLimit = ParseLongConfig(config, "Docker:BuildPidsLimit", 512);
         _buildCpuQuota = ParseLongConfig(config, "Docker:BuildCpuQuota", 150_000); // 1.5 CPUs (period 100000 µs)
-
-        // Log-streaming resource bounds. The static dictionaries and the subscriber
-        // gate outlive any single DI scope (the service is scoped but the streaming
-        // state is deliberately process-global so MonitorBuildAsync can keep
-        // publishing after the triggering request ends), so their limits must be
-        // process-global too. Initialize the gate once from the first constructor
-        // call; a consistent config is assumed across scopes.
-        _maxLogBufferChars = ParseLongConfig(config, "BuildStreaming:MaxLogBufferChars", 2L * 1024 * 1024); // 2 MiB chars
-        _maxConcurrentSseSubscribers = (int)ParseLongConfig(config, "BuildStreaming:MaxConcurrentSseSubscribers", 64);
-        _sseChannelCapacity = (int)ParseLongConfig(config, "BuildStreaming:SseChannelCapacity", 1024);
-
-        if (_maxConcurrentSseSubscribers <= 0) _maxConcurrentSseSubscribers = 64;
-        if (_sseChannelCapacity <= 0) _sseChannelCapacity = 1024;
-        if (_maxLogBufferChars <= 0) _maxLogBufferChars = 2L * 1024 * 1024;
-
-        // Lazily create the global subscriber gate. The dictionaries above are
-        // initialized once per process; do the same for the semaphore so the limit
-        // reflects the configured value rather than being reset per scope.
-        if (_sseSubscriberGate is null)
-        {
-            Interlocked.CompareExchange(
-                ref _sseSubscriberGate,
-                new SemaphoreSlim(_maxConcurrentSseSubscribers, _maxConcurrentSseSubscribers),
-                null);
-        }
     }
 
     /// <summary>Parse a long configuration value, returning <paramref name="defaultValue"/> when missing or invalid.</summary>
@@ -159,222 +97,6 @@ public class DockerBuildService : IBuildExecutor
         var raw = config[key];
         if (string.IsNullOrWhiteSpace(raw)) return defaultValue;
         return long.TryParse(raw.Trim(), out var v) ? v : defaultValue;
-    }
-
-    /// <summary>
-    /// Get current accumulated logs for a build job (from in-memory buffer or database).
-    /// </summary>
-    public async Task<string> GetLogsAsync(Guid jobId)
-    {
-        if (_logBuffers.TryGetValue(jobId, out var logs))
-            return logs;
-
-        // Fallback to database
-        var job = await _db.BuildJobs
-            .Include(item => item.StepRuns)
-            .SingleOrDefaultAsync(item => item.Id == jobId);
-        return job?.Logs ?? "";
-    }
-
-    /// <summary>
-    /// Result of an attempt to subscribe to a build's live log stream.
-    /// </summary>
-    public sealed record LogSubscription(
-        bool IsLive,            // true only if a live channel was actually attached
-        string ExistingLogs,    // accumulated logs captured atomically with the (attempted) attach
-        ChannelReader<string>? Reader,
-        bool SubscriberLimitReached); // true when the global SSE gate was full and live attach was refused
-
-    /// <summary>
-    /// Attempt to subscribe to real-time log updates for a build job.
-    ///
-    /// The "is this build currently streaming?" decision and the actual channel
-    /// registration are performed atomically (under the per-build subscriber lock
-    /// while re-checking the live buffer), eliminating the TOCTOU window where a
-    /// build could finish between <see cref="IsStreaming"/> and the old
-    /// <c>SubscribeToLogs</c>. Callers that get <see cref="LogSubscription.IsLive"/>
-    /// == false must fall back to replay.
-    ///
-    /// A global semaphore bounds the number of concurrent live subscribers; once it
-    /// is exhausted, requests are downgraded to replay rather than rejected, so a
-    /// flood of clients cannot exhaust memory.
-    /// </summary>
-    public async Task<LogSubscription> SubscribeToLogsAsync(Guid jobId)
-    {
-        var gate = _sseSubscriberGate!;
-        var entered = await gate.WaitAsync(TimeSpan.Zero);
-
-        if (!entered)
-        {
-            // Global SSE subscriber limit reached: do not hold a live slot. Return
-            // whatever buffer we currently have so the caller can replay it.
-            var snapshot = _logBuffers.TryGetValue(jobId, out var buf) ? buf : "";
-            return new LogSubscription(IsLive: false, ExistingLogs: snapshot, Reader: null, SubscriberLimitReached: true);
-        }
-
-        // We hold a slot in the global gate from here until UnsubscribeFromLogs.
-        // Register the channel atomically with re-checking the live buffer so a
-        // build cannot complete (and drop its buffer) between the check and the
-        // subscription.
-        Channel<string>? channel = null;
-        string existingLogs;
-        bool isLive;
-
-        var list = _subscribers.GetOrAdd(jobId, _ => new List<Channel<string>>());
-        lock (list)
-        {
-            existingLogs = _logBuffers.TryGetValue(jobId, out var buf) ? buf : "";
-            isLive = existingLogs.Length > 0 || _logBuffers.ContainsKey(jobId);
-
-            if (!isLive)
-            {
-                // The build is not (or no longer) streaming live. Don't attach a
-                // channel that would never receive [BUILD ...]; let the caller
-                // replay the existing logs instead.
-                if (list.Count == 0)
-                    _subscribers.TryRemove(jobId, out _);
-            }
-            else
-            {
-                channel = Channel.CreateBounded<string>(new BoundedChannelOptions(_sseChannelCapacity)
-                {
-                    SingleReader = true,
-                    SingleWriter = false,
-                    // Drop oldest lines for a slow client rather than blocking the
-                    // writer (the streaming task) or growing without bound.
-                    FullMode = BoundedChannelFullMode.DropOldest
-                });
-                list.Add(channel);
-            }
-        }
-
-        if (channel is null)
-        {
-            // Not live — release the gate slot we briefly held.
-            gate.Release();
-        }
-
-        return new LogSubscription(
-            IsLive: channel is not null,
-            ExistingLogs: existingLogs,
-            Reader: channel?.Reader,
-            SubscriberLimitReached: false);
-    }
-
-    /// <summary>
-    /// Unsubscribe from log updates. Must be called exactly once for each
-    /// successful live subscription (i.e. when <see cref="LogSubscription.IsLive"/>
-    /// is true) when the SSE connection closes, to release the global subscriber
-    /// slot. Safe to call for non-live subscriptions (no-op).
-    /// </summary>
-    public void UnsubscribeFromLogs(Guid jobId, ChannelReader<string>? reader)
-    {
-        if (reader is null) return; // non-live subscription — nothing to release
-
-        if (_subscribers.TryGetValue(jobId, out var list))
-        {
-            lock (list)
-            {
-                list.RemoveAll(ch => ReferenceEquals(ch.Reader, reader));
-                if (list.Count == 0)
-                    _subscribers.TryRemove(jobId, out _);
-            }
-        }
-
-        // Release the global SSE slot acquired in SubscribeToLogsAsync. Wrap in
-        // try/catch: a duplicate or rogue release throws SemaphoreFullException,
-        // which must not crash the streaming pipeline.
-        try { _sseSubscriberGate!.Release(); }
-        catch (SemaphoreFullException) { /* over-release guard */ }
-    }
-
-    /// <summary>
-    /// Check if a build is currently being monitored (streaming logs).
-    ///
-    /// NOTE: this is only suitable for diagnostics/monitoring. SSE endpoints must
-    /// NOT use this to decide between live and replay — that decision must be made
-    /// atomically with the subscription via <see cref="SubscribeToLogsAsync"/> to
-    /// avoid a TOCTOU race.
-    /// </summary>
-    public static bool IsStreaming(Guid jobId) => _logBuffers.ContainsKey(jobId);
-
-    private void PublishLogLine(Guid jobId, string line)
-    {
-        if (!_subscribers.TryGetValue(jobId, out var list)) return;
-        lock (list)
-        {
-            foreach (var channel in list)
-            {
-                // Bounded channel: TryWrite cannot block; with DropOldest it
-                // returns true and discards the oldest pending item when full.
-                channel.Writer.TryWrite(line);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Append <paramref name="text"/> to the per-build log builder and mirror the
-    /// truncated result into the shared in-memory buffer, then return the list of
-    /// newly completed lines to publish to subscribers. Caller must hold the
-    /// per-build <paramref name="logLock"/>; the only work done under the lock is
-    /// the append, the head-truncation, and a single substring over the appended
-    /// chunk (no full ToString() of the entire buffer).
-    /// </summary>
-    private List<string> AppendLogChunk(Guid jobId, object logLock, System.Text.StringBuilder logBuilder, string text)
-    {
-        lock (logLock)
-        {
-            logBuilder.Append(text);
-
-            // Enforce the per-build buffer cap by truncating the head. Done in the
-            // same lock that owns logBuilder so the buffer and the StringBuilder
-            // never diverge. The cap is in characters, not bytes; this keeps the
-            // in-memory SSE buffer bounded. The DB persists the full (untruncated)
-            // log from a separate flush of logBuilder, which is also bounded by the
-            // same Remove below, so DB and memory stay consistent.
-            if (logBuilder.Length > _maxLogBufferChars)
-            {
-                var overflow = logBuilder.Length - (int)_maxLogBufferChars;
-                logBuilder.Remove(0, overflow);
-            }
-
-            // Snapshot once for the shared buffer (subscribers read this on attach).
-            _logBuffers[jobId] = logBuilder.ToString();
-
-            // Only the just-appended chunk is split into lines; we never resplit
-            // the whole buffer. This is O(chunk size), independent of total log
-            // length, fixing the previous O(n^2) behavior.
-            return text.Split('\n').ToList();
-        }
-    }
-
-    private void CleanupLogStreaming(Guid jobId)
-    {
-        // Atomically tear down streaming state for this job. Taking the per-build
-        // subscriber lock here is what closes the TOCTOU window: SubscribeToLogsAsync
-        // reads _logBuffers under this same lock, so any subscriber that observes
-        // isLive=true is guaranteed to already be in `snapshot` when we complete the
-        // channels below — it can never end up on a channel that misses both the
-        // [BUILD ...] marker and channel completion.
-        var list = _subscribers.GetOrAdd(jobId, _ => new List<Channel<string>>());
-        List<Channel<string>> snapshot;
-        lock (list)
-        {
-            _logBuffers.TryRemove(jobId, out _);
-            snapshot = list.ToList();
-            list.Clear();
-        }
-        _subscribers.TryRemove(jobId, out _);
-
-        // Completing the channel unblocks any subscriber currently awaiting
-        // ReadAllAsync, which then runs its own finally -> UnsubscribeFromLogs,
-        // where the global SSE slot is released exactly once. We must NOT release
-        // the gate here, or that single UnsubscribeFromLogs release would be a
-        // double release (SemaphoreFullException).
-        foreach (var channel in snapshot)
-        {
-            channel.Writer.TryComplete();
-        }
     }
 
     public virtual async Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl, string? buildImage = null, string? gitUsername = null, string? gitToken = null, string? extraSourcesPipelineDir = null)
@@ -588,8 +310,7 @@ public class DockerBuildService : IBuildExecutor
         var timedOut = false;
         var leaseLost = 0;
 
-        // Initialize the in-memory log buffer for SSE subscribers
-        _logBuffers[job.Id] = "";
+        _logStreams.Start(job.Id, job.Logs ?? string.Empty);
 
         try
         {
@@ -621,20 +342,7 @@ public class DockerBuildService : IBuildExecutor
 
                         if (string.IsNullOrEmpty(text)) continue;
 
-                        // Append to log builder and update buffer. AppendLogChunk
-                        // enforces the buffer cap and returns just the new lines —
-                        // no full-buffer rebuild or resplit, so cost is O(chunk).
-                        List<string> newLines = AppendLogChunk(job.Id, logLock, logBuilder, text);
-
-                        // Publish each new line to SSE subscribers
-                        foreach (var line in newLines)
-                        {
-                            var trimmed = line.TrimEnd('\r');
-                            if (!string.IsNullOrEmpty(trimmed))
-                            {
-                                PublishLogLine(job.Id, trimmed);
-                            }
-                        }
+                        _logStreams.Append(job.Id, logLock, logBuilder, text);
                     }
                 }
                 catch (OperationCanceledException)
@@ -709,7 +417,7 @@ public class DockerBuildService : IBuildExecutor
             {
                 timedOut = true;
                 _logger.LogError("Build {JobId} exceeded its wall-clock deadline {Deadline}", job.Id, deadline);
-                PublishLogLine(job.Id, $"[BUILD TIMED OUT after {_execution.MaxBuildDuration}]");
+                _logStreams.Publish(job.Id, $"[BUILD TIMED OUT after {_execution.MaxBuildDuration}]");
                 await _docker.Containers.StopContainerAsync(
                     containerId,
                     new ContainerStopParameters { WaitBeforeKillSeconds = 10 },
@@ -754,11 +462,11 @@ public class DockerBuildService : IBuildExecutor
                     {
                         logBuilder.Clear();
                         logBuilder.Append(finalLogs);
-                        if (logBuilder.Length > _maxLogBufferChars)
+                        if (logBuilder.Length > _logStreams.MaximumBufferCharacters)
                         {
-                            logBuilder.Remove(0, logBuilder.Length - (int)_maxLogBufferChars);
+                            logBuilder.Remove(0, logBuilder.Length - _logStreams.MaximumBufferCharacters);
                         }
-                        _logBuffers[job.Id] = logBuilder.ToString();
+                        _logStreams.UpdateSnapshot(job.Id, logBuilder.ToString());
                     }
                 }
             }
@@ -794,7 +502,7 @@ public class DockerBuildService : IBuildExecutor
             if (dbJob.Status == BuildStatus.Cancelled)
             {
                 await db.SaveChangesAsync();
-                PublishLogLine(job.Id, "[BUILD CANCELLED]");
+                _logStreams.Publish(job.Id, "[BUILD CANCELLED]");
                 return;
             }
 
@@ -814,7 +522,7 @@ public class DockerBuildService : IBuildExecutor
                         _logger.LogWarning(
                             "Build job {JobId} exited successfully but produced no valid RPM artifacts",
                             job.Id);
-                        PublishLogLine(job.Id, "[BUILD FAILED - no valid RPM artifacts]");
+                        _logStreams.Publish(job.Id, "[BUILD FAILED - no valid RPM artifacts]");
                         SaveFailedBuildLog(job.Id, job.SpecName, logs);
                     }
                     else
@@ -828,7 +536,7 @@ public class DockerBuildService : IBuildExecutor
                 {
                     dbJob.Status = BuildStatus.Failed;
                     _logger.LogError(ex, "Artifact validation failed for job {JobId}", job.Id);
-                    PublishLogLine(job.Id, "[BUILD FAILED - artifact validation error]");
+                    _logStreams.Publish(job.Id, "[BUILD FAILED - artifact validation error]");
                     SaveFailedBuildLog(job.Id, job.SpecName, logs);
                 }
             }
@@ -846,7 +554,7 @@ public class DockerBuildService : IBuildExecutor
 
             // Notify SSE subscribers that build is complete
             var buildResult = dbJob.Status == BuildStatus.Building ? "SUCCESS" : "FAILED";
-            PublishLogLine(job.Id, $"[BUILD {buildResult}]");
+            _logStreams.Publish(job.Id, $"[BUILD {buildResult}]");
 
             var coordinator = scope.ServiceProvider.GetRequiredService<PipelineRunCoordinator>();
             if (dbJob.Status == BuildStatus.Building)
@@ -892,14 +600,14 @@ public class DockerBuildService : IBuildExecutor
             _logger.LogError(ex, "Error monitoring build job {JobId}", job.Id);
 
             // Notify subscribers about the error
-            PublishLogLine(job.Id, "[BUILD ERROR - monitoring failed]");
+            _logStreams.Publish(job.Id, "[BUILD ERROR - monitoring failed]");
             try
             {
                 lock (logLock)
                 {
-                    if (logBuilder.Length > _maxLogBufferChars)
-                        logBuilder.Remove(0, logBuilder.Length - (int)_maxLogBufferChars);
-                    _logBuffers[job.Id] = logBuilder.ToString();
+                    if (logBuilder.Length > _logStreams.MaximumBufferCharacters)
+                        logBuilder.Remove(0, logBuilder.Length - _logStreams.MaximumBufferCharacters);
+                    _logStreams.UpdateSnapshot(job.Id, logBuilder.ToString());
                 }
             }
             catch { }
@@ -933,7 +641,7 @@ public class DockerBuildService : IBuildExecutor
         {
             _execution.Release(job.Id);
             // Clean up in-memory streaming state (subscribers will get channel completion)
-            CleanupLogStreaming(job.Id);
+            _logStreams.Complete(job.Id);
         }
     }
 

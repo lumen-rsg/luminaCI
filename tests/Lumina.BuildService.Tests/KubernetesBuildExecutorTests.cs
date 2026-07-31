@@ -37,6 +37,9 @@ public sealed class KubernetesBuildExecutorTests
         job.LeaseOwner = execution.WorkerId;
         await SeedAsync(services, job);
         await execution.AcquireAsync(job.Id, recovered: true);
+        var logStreams = services.GetRequiredService<IBuildLogStreamHub>();
+        logStreams.Start(job.Id);
+        var subscription = await logStreams.SubscribeAsync(job.Id);
 
         await using (var scope = services.CreateAsyncScope())
         {
@@ -53,6 +56,9 @@ public sealed class KubernetesBuildExecutorTests
         Assert.True(resources.EnsureCalled);
         Assert.True(resources.DeleteCalled);
         Assert.Equal((job.Id, true, "build output", "Completed"), completion.Call);
+        Assert.Equal("build output", await subscription.Reader!.ReadAsync());
+        Assert.Equal("[BUILD SUCCESS]", await subscription.Reader.ReadAsync());
+        logStreams.Unsubscribe(job.Id, subscription.Reader);
     }
 
     [Fact]
@@ -93,7 +99,8 @@ public sealed class KubernetesBuildExecutorTests
         resources,
         execution,
         services.GetRequiredService<IServiceScopeFactory>(),
-        NullLogger<KubernetesBuildExecutor>.Instance);
+        NullLogger<KubernetesBuildExecutor>.Instance,
+        services.GetRequiredService<IBuildLogStreamHub>());
 
     private static ServiceProvider Services(
         IKubernetesBuildResourceClient resources,
@@ -112,6 +119,7 @@ public sealed class KubernetesBuildExecutorTests
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(configuration);
         services.AddSingleton<BuildExecutionCoordinator>();
+        services.AddSingleton<IBuildLogStreamHub, BuildLogStreamHub>();
         services.AddSingleton(resources);
         services.AddSingleton(completion);
         var options = new DbContextOptionsBuilder<BuildDbContext>()

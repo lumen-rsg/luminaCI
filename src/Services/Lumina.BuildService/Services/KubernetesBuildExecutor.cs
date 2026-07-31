@@ -23,6 +23,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
     private readonly BuildExecutionCoordinator _execution;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<KubernetesBuildExecutor> _logger;
+    private readonly IBuildLogStreamHub _logStreams;
     private readonly TimeSpan _pollInterval;
 
     public KubernetesBuildExecutor(
@@ -33,7 +34,8 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
         IKubernetesBuildResourceClient resources,
         BuildExecutionCoordinator execution,
         IServiceScopeFactory scopeFactory,
-        ILogger<KubernetesBuildExecutor> logger)
+        ILogger<KubernetesBuildExecutor> logger,
+        IBuildLogStreamHub logStreams)
     {
         _db = db;
         _configuration = configuration;
@@ -43,6 +45,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
         _execution = execution;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _logStreams = logStreams;
         _pollInterval = TimeSpan.FromSeconds(Math.Max(
             2,
             configuration.GetValue("Kubernetes:Monitoring:PollSeconds", 5)));
@@ -99,6 +102,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
                 createdIdentity.JobName,
                 createdIdentity.JobUid,
                 job.Id);
+            _logStreams.Start(job.Id, job.Logs ?? string.Empty);
             _ = ObserveMonitorAsync(job.Id);
             return job;
         }
@@ -136,6 +140,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
         if (job.ExecutionBackend != BuildExecutorBackend.Kubernetes)
             throw new BuildExecutorIdentityException("Kubernetes executor cannot monitor a non-Kubernetes build.");
 
+        _logStreams.Start(job.Id, job.Logs ?? string.Empty);
         try
         {
             var identity = await RecoverIdentityAsync(job.Id, cancellationToken);
@@ -158,6 +163,8 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
                         _logger.LogDebug(ex, "Kubernetes logs are not yet available for build {BuildJobId}", job.Id);
                     }
                 }
+                if (logs != null)
+                    _logStreams.UpdateSnapshot(job.Id, logs);
 
                 var heartbeat = await HeartbeatAsync(
                     job.Id,
@@ -209,11 +216,13 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
         catch (DomainException ex)
         {
             _logger.LogError(ex, "Kubernetes resource identity failed for build {BuildJobId}", job.Id);
+            _logStreams.Publish(job.Id, "[BUILD ERROR - Kubernetes resource identity failed]");
             await FailOwnedBuildBestEffortAsync(job.Id, ex.Message);
         }
         finally
         {
             _execution.Release(job.Id);
+            _logStreams.Complete(job.Id);
         }
     }
 
@@ -258,6 +267,8 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
             step.Error = "Build cancelled.";
         }
         await _db.SaveChangesAsync(cancellationToken);
+        _logStreams.Publish(job.Id, "[BUILD CANCELLED]");
+        _logStreams.Complete(job.Id);
         _execution.Release(job.Id);
         return true;
     }
@@ -372,6 +383,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
                 error,
                 cancellationToken);
         }
+        _logStreams.Publish(buildJobId, succeeded ? "[BUILD SUCCESS]" : "[BUILD FAILED]");
         try
         {
             await _resources.DeleteAsync(identity, cancellationToken);

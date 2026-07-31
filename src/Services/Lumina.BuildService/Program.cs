@@ -50,6 +50,7 @@ try
     // plaintext by accident. See AesSecretProtector for the on-disk format.
     builder.Services.AddSingleton<ISecretProtector, AesSecretProtector>();
     builder.Services.AddSingleton<BuildExecutionCoordinator>();
+    builder.Services.AddSingleton<IBuildLogStreamHub, BuildLogStreamHub>();
     builder.Services.AddScoped<IBuildSlotClaimer, BuildSlotClaimService>();
     builder.Services.AddHostedService<BuildMonitorHostedService>();
 

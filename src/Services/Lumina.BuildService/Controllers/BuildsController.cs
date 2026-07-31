@@ -15,18 +15,18 @@ public class BuildsController : ControllerBase
 {
     private readonly Services.PipelineEngine _engine;
     private readonly Services.IBuildExecutorResolver _executors;
-    private readonly Services.DockerBuildService _dockerBuild;
+    private readonly Services.IBuildLogStreamHub _logStreams;
     private readonly ILogger<BuildsController> _logger;
 
     public BuildsController(
         Services.PipelineEngine engine,
         Services.IBuildExecutorResolver executors,
-        Services.DockerBuildService dockerBuild,
+        Services.IBuildLogStreamHub logStreams,
         ILogger<BuildsController> logger)
     {
         _engine = engine;
         _executors = executors;
-        _dockerBuild = dockerBuild;
+        _logStreams = logStreams;
         _logger = logger;
     }
 
@@ -145,16 +145,16 @@ public class BuildsController : ControllerBase
         // Decide live-vs-replay ATOMICALLY with the subscription. The previous
         // flow checked IsStreaming() here, then subscribed separately — a build
         // that completed in between left the client on a channel that never
-        // received [BUILD …]. SubscribeToLogsAsync re-checks liveness under the
+        // received [BUILD …]. The shared log hub re-checks liveness under the
         // per-build lock while attaching, so the answer is consistent.
         //
         // It also enforces the global concurrent-SSE limit: when full it returns
         // IsLive=false (replay) instead of refusing, so an unbounded number of
         // clients can't exhaust server memory.
-        Services.DockerBuildService.LogSubscription? sub = null;
+        Services.BuildLogSubscription? sub = null;
         if (isRunning)
         {
-            sub = await _dockerBuild.SubscribeToLogsAsync(id);
+            sub = await _logStreams.SubscribeAsync(id);
         }
 
         var liveReader = sub?.IsLive == true ? sub.Reader : null;
@@ -232,7 +232,7 @@ public class BuildsController : ControllerBase
         }
         finally
         {
-            _dockerBuild.UnsubscribeFromLogs(id, liveReader);
+            _logStreams.Unsubscribe(id, liveReader);
         }
 
         async Task WriteSseEvent(string data)
