@@ -103,6 +103,18 @@ public static class KubernetesJobFactory
                             ["kubernetes.io/arch"] = runner.Architecture,
                             [WorkerLabel] = "true"
                         },
+                        // The controlled HTTPS origin is hosted on the K3s
+                        // server. Resolve it to the private worker-mesh address
+                        // without weakening TLS hostname verification or
+                        // depending on a workstation's public/VPN route.
+                        HostAliases =
+                        [
+                            new V1HostAlias
+                            {
+                                Ip = network.EgressCidr[..network.EgressCidr.LastIndexOf('/')],
+                                Hostnames = [new Uri(network.FedoraRepositoryBaseUrl).Host]
+                            }
+                        ],
                         Tolerations =
                         [
                             new V1Toleration

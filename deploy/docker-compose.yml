@@ -190,7 +190,7 @@ services:
       # HTTPS origin; they never receive the MinIO credentials above.
       - MinIO__RunnerEndpoint=${KUBERNETES_RUNNER_ENDPOINT:-packages.lumina.1t.ru:443}
       - MinIO__RunnerUseSSL=true
-      - Kubernetes__Network__EgressCidr=${KUBERNETES_BUILD_EGRESS_CIDR:-146.120.224.52/32}
+      - Kubernetes__Network__EgressCidr=${KUBERNETES_BUILD_EGRESS_CIDR:-10.77.0.1/32}
       - Kubernetes__Network__HttpsPort=443
       - Kubernetes__Network__FedoraRepositoryBaseUrl=${KUBERNETES_FEDORA_BASE_URL:-https://packages.lumina.1t.ru/fedora}
       - BuildExecutor__Type=${BUILD_EXECUTOR_TYPE:-Docker}

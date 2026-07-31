@@ -116,6 +116,9 @@ public sealed class KubernetesJobFactoryTests
         Assert.Null(pod.SecurityContext.FsGroup);
         Assert.Equal("arm64", pod.NodeSelector["kubernetes.io/arch"]);
         Assert.Equal("true", pod.NodeSelector[KubernetesJobFactory.WorkerLabel]);
+        var hostAlias = Assert.Single(pod.HostAliases);
+        Assert.Equal("10.77.0.1", hostAlias.Ip);
+        Assert.Equal(["packages.lumina.1t.ru"], hostAlias.Hostnames);
         Assert.Equal("NoSchedule", Assert.Single(pod.Tolerations).Effect);
         Assert.Equal(Digest, container.Image);
         Assert.False(container.SecurityContext.RunAsNonRoot);
@@ -168,7 +171,7 @@ public sealed class KubernetesJobFactoryTests
         Assert.Empty(policy.Spec.Ingress);
         Assert.Equal(2, policy.Spec.Egress.Count);
         var https = policy.Spec.Egress[0];
-        Assert.Equal("146.120.224.52/32", Assert.Single(https.To).IpBlock.Cidr);
+        Assert.Equal("10.77.0.1/32", Assert.Single(https.To).IpBlock.Cidr);
         Assert.Equal("443", Assert.Single(https.Ports).Port.Value);
         var dns = policy.Spec.Egress[1];
         Assert.Equal("kube-system", Assert.Single(dns.To).NamespaceSelector
@@ -222,7 +225,7 @@ public sealed class KubernetesJobFactoryTests
     };
 
     private static KubernetesBuildNetworkPolicy Network() => new(
-        "146.120.224.52/32",
+        "10.77.0.1/32",
         443,
         "https://packages.lumina.1t.ru/fedora");
 

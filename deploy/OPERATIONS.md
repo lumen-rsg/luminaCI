@@ -88,6 +88,18 @@ kubectl taint node NODE_NAME lumina.1t.ru/build-worker=true:NoSchedule
 kubectl get node NODE_NAME -L kubernetes.io/arch,lumina.1t.ru/build-worker
 ```
 
+On Fedora workers with firewalld enabled, permit forwarding only for the K3s
+Pod and Service CIDRs after NetworkPolicy evaluation:
+
+```bash
+sudo scripts/configure-k3s-worker-firewall.sh
+```
+
+The control plane advertises `10.77.0.1` on `wg-lumina`; workers must use that
+private endpoint. Build Jobs resolve `packages.lumina.1t.ru` to the same private
+address while retaining HTTPS hostname verification, and their per-Job policy
+allows only `10.77.0.1/32:443` plus CoreDNS.
+
 Do not add a toleration for this taint to ordinary services. Fedora runner
 images must be configured for both `fedora-44-x86_64` and
 `fedora-44-aarch64`, each by full `sha256` digest; startup rejects missing,

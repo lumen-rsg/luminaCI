@@ -14,6 +14,10 @@ spec:
   nodeSelector:
     kubernetes.io/arch: amd64
     lumina.1t.ru/build-worker: "true"
+  hostAliases:
+    - ip: 10.77.0.1
+      hostnames:
+        - packages.lumina.1t.ru
   containers:
     - name: smoke
       image: fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
@@ -58,7 +62,7 @@ spec:
   egress:
     - to:
         - ipBlock:
-            cidr: 146.120.224.52/32
+            cidr: 10.77.0.1/32
       ports:
         - protocol: TCP
           port: 443
