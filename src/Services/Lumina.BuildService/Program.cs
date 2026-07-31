@@ -53,6 +53,7 @@ try
     builder.Services.AddSingleton<IRpmArtifactValidator, RpmArtifactValidator>();
     builder.Services.AddScoped<ISigningKeyGate, SigningKeyGate>();
     builder.Services.AddScoped<PipelineEngine>();
+    builder.Services.AddScoped<BuildProjectService>();
     builder.Services.AddScoped<PipelineRunCoordinator>();
     builder.Services.AddScoped<ArtifactStorageService>();
     builder.Services.AddHttpClient("ArtifactStorage", client =>

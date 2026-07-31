@@ -20,6 +20,7 @@ public class BuildDbContext : DbContext
     }
 
     public DbSet<Pipeline> Pipelines => Set<Pipeline>();
+    public DbSet<BuildProject> BuildProjects => Set<BuildProject>();
     public DbSet<PipelineStep> PipelineSteps => Set<PipelineStep>();
     public DbSet<BuildJob> BuildJobs => Set<BuildJob>();
     public DbSet<BuildArtifact> BuildArtifacts => Set<BuildArtifact>();
@@ -32,6 +33,32 @@ public class BuildDbContext : DbContext
         modelBuilder.AddOutboxStateEntity(entity => entity.ToTable("outbox_state", "build"));
 
         var protector = _secretProtector;
+
+        modelBuilder.Entity<BuildProject>(entity =>
+        {
+            entity.ToTable("build_projects", "build");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(128);
+            entity.HasIndex(e => e.Name).IsUnique();
+            entity.Property(e => e.GitRepoUrl).IsRequired().HasMaxLength(2048);
+            entity.Property(e => e.GitBranch).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.ManifestPath).IsRequired().HasMaxLength(512);
+            entity.Property(e => e.CreatedBy).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.GitUsername).HasMaxLength(256);
+            entity.Property(e => e.UpdatedAt).IsConcurrencyToken();
+            entity.Property(e => e.WebhookSecret).IsRequired().HasColumnType("text");
+            entity.Property(e => e.GitToken).HasColumnType("text");
+
+            if (protector != null)
+            {
+                entity.Property(e => e.WebhookSecret).HasConversion(
+                    value => protector.Protect(value)!,
+                    value => protector.Unprotect(value)!);
+                entity.Property(e => e.GitToken).HasConversion(
+                    value => protector.Protect(value),
+                    value => protector.Unprotect(value));
+            }
+        });
 
         modelBuilder.Entity<Pipeline>(entity =>
         {

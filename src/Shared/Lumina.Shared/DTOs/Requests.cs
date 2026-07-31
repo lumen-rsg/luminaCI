@@ -43,6 +43,28 @@ public record UpdatePipelineRequest(
 
 public record CreatePipelineStepRequest(StepType Type, string Name, int Order, Dictionary<string, string> Configuration);
 
+// Build project DTOs
+public record CreateBuildProjectRequest(
+    string Name,
+    string GitRepoUrl,
+    string GitBranch,
+    string ManifestPath,
+    string WebhookSecret,
+    string? GitUsername = null,
+    string? GitToken = null);
+
+public record UpdateBuildProjectRequest(
+    string Name,
+    string GitRepoUrl,
+    string GitBranch,
+    string ManifestPath,
+    bool IsActive,
+    DateTime ExpectedUpdatedAt,
+    string? WebhookSecret = null,
+    string? GitUsername = null,
+    string? GitToken = null,
+    bool ClearGitCredentials = false);
+
 // Build DTOs
 public record TriggerBuildRequest(string SpecName, string SpecContent, string? SourceUrl, string TriggeredBy, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null, string? IdempotencyKey = null);
 

@@ -15,6 +15,28 @@ public record PipelineListResponse(List<PipelineSummaryResponse> Pipelines, int 
 
 public record PipelineSummaryResponse(Guid Id, string Name, string Description, PipelineStatus Status, string CreatedBy, DateTime CreatedAt, int StepCount, string? GitRepoUrl = null, string? GitBranch = null);
 
+// Build project responses
+public record BuildProjectResponse(
+    Guid Id,
+    string Name,
+    string GitRepoUrl,
+    string GitBranch,
+    string ManifestPath,
+    bool IsActive,
+    string CreatedBy,
+    DateTime CreatedAt,
+    DateTime UpdatedAt,
+    string WebhookUrl,
+    bool HasWebhookSecret,
+    string? GitUsername,
+    bool HasGitToken);
+
+public record BuildProjectListResponse(
+    List<BuildProjectResponse> Projects,
+    int TotalCount,
+    int Page,
+    int PageSize);
+
 // Build Responses
 public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null, List<BuildStepRunResponse>? StepRuns = null, string? TargetDistribution = null, string? TargetRelease = null, string? TargetArchitecture = null, string? BuildProfile = null, string? RunnerImageReference = null, string? RunnerImageDigest = null);
 
