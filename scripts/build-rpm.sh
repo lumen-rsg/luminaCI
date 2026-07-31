@@ -650,6 +650,7 @@ export -f preparation_phase
 export BUILD_DIR SPEC_NAME ARTIFACTS_DIR RPMBUILDER_HOME AUTO_DOWNLOAD
 export SOURCE_DIR SOURCE_URL SPEC_CONTENT SPEC_PATH_IN_REPO
 export TARGET_ARCHITECTURE
+export HOME="${RPMBUILDER_HOME}"
 setpriv --reuid 1000 --regid 1654 --clear-groups -- bash -c 'preparation_phase'
 
 SOURCE_RPM="$(< /tmp/lumina-source-rpm-path)"
