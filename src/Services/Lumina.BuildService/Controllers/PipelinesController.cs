@@ -95,7 +95,8 @@ public class PipelinesController : ControllerBase
                 job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor,
                 job.StepRuns.Select(ToStepRunResponse).ToList(),
                 job.TargetDistribution, job.TargetRelease, job.TargetArchitecture, job.BuildProfile,
-                job.RunnerImageReference, job.RunnerImageDigest);
+                job.RunnerImageReference, job.RunnerImageDigest, job.ExecutionBackend,
+                job.KubernetesNamespace, job.KubernetesJobName, job.KubernetesJobUid, job.KubernetesPodName);
             return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Build triggered"));
         }
         catch (Exception ex)
@@ -164,7 +165,8 @@ public class PipelinesController : ControllerBase
                 job.SourceUrl, job.CommitSha, job.Branch, job.CommitMessage, job.CommitAuthor,
                 job.StepRuns.Select(ToStepRunResponse).ToList(),
                 job.TargetDistribution, job.TargetRelease, job.TargetArchitecture, job.BuildProfile,
-                job.RunnerImageReference, job.RunnerImageDigest);
+                job.RunnerImageReference, job.RunnerImageDigest, job.ExecutionBackend,
+                job.KubernetesNamespace, job.KubernetesJobName, job.KubernetesJobUid, job.KubernetesPodName);
             return Ok(new ApiResponse<BuildJobResponse>(true, response, null, "Auto build triggered — sources will be fetched from git"));
         }
         catch (Exception ex)

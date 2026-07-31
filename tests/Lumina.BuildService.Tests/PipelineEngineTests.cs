@@ -448,6 +448,21 @@ public class PipelineEngineTests
         Assert.Equal(StepStatus.Failed, job.StepRuns.Single().Status);
     }
 
+    [Fact]
+    public async Task TriggerBuildAsync_SnapshotsSelectedExecutionBackend()
+    {
+        await using var sp = BuildServiceProvider(nameof(TriggerBuildAsync_SnapshotsSelectedExecutionBackend));
+        var engine = await NewEngineAsync(sp);
+        var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
+        sp.GetRequiredService<FakeBuildLauncher>().Backend = BuildExecutorBackend.Kubernetes;
+
+        var job = await engine.TriggerBuildAsync(
+            pipeline.Id,
+            new TriggerBuildRequest("pkg.spec", "Name: pkg", null, "ops"));
+
+        Assert.Equal(BuildExecutorBackend.Kubernetes, job.ExecutionBackend);
+    }
+
     // ─── TriggerAutoBuildAsync ───────────────────────────────────────────
 
     [Fact]
@@ -540,6 +555,7 @@ public class PipelineEngineTests
     /// </summary>
     public sealed class FakeBuildLauncher : IBuildLauncher
     {
+        public BuildExecutorBackend Backend { get; set; } = BuildExecutorBackend.Docker;
         public bool WasLaunched { get; private set; }
         public int LaunchCount { get; private set; }
         public string? LastSourceUrl { get; private set; }
@@ -558,7 +574,14 @@ public class PipelineEngineTests
             return Task.FromResult(job);
         }
 
-        public void Reset() { WasLaunched = false; LaunchCount = 0; LastSourceUrl = null; ThrowOnNextLaunch = null; }
+        public void Reset()
+        {
+            Backend = BuildExecutorBackend.Docker;
+            WasLaunched = false;
+            LaunchCount = 0;
+            LastSourceUrl = null;
+            ThrowOnNextLaunch = null;
+        }
     }
 
     /// <summary>

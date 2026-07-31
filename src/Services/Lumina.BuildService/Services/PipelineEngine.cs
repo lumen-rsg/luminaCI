@@ -194,6 +194,7 @@ public class PipelineEngine
             TargetRelease = target.Release,
             TargetArchitecture = target.Architecture,
             BuildProfile = target.Profile,
+            ExecutionBackend = _buildLauncher.Backend,
             StepRuns = pipeline.Steps
                 .OrderBy(step => step.Order)
                 .Select(step => new BuildStepRun

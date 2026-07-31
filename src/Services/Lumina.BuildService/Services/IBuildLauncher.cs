@@ -1,4 +1,5 @@
 using Lumina.Shared.Models;
+using Lumina.Shared.Models.Enums;
 
 namespace Lumina.BuildService.Services;
 
@@ -11,6 +12,8 @@ namespace Lumina.BuildService.Services;
 /// </summary>
 public interface IBuildLauncher
 {
+    BuildExecutorBackend Backend { get; }
+
     /// <inheritdoc cref="DockerBuildService.StartBuildAsync"/>
     Task<BuildJob> StartBuildAsync(
         BuildJob job,

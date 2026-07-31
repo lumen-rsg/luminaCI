@@ -144,10 +144,18 @@ public class BuildDbContext : DbContext
 
         modelBuilder.Entity<BuildJob>(entity =>
         {
-            entity.ToTable("build_jobs", "build", table => table.HasCheckConstraint(
-                "CK_build_jobs_project_dispatch_binding",
-                "(\"ProjectWebhookDeliveryId\" IS NULL AND \"ProjectPackageId\" IS NULL AND \"ProjectStageOrder\" IS NULL) OR " +
-                "(\"ProjectWebhookDeliveryId\" IS NOT NULL AND \"ProjectPackageId\" IS NOT NULL AND \"ProjectStageOrder\" IS NOT NULL AND \"ProjectStageOrder\" >= 0)"));
+            entity.ToTable("build_jobs", "build", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_build_jobs_project_dispatch_binding",
+                    "(\"ProjectWebhookDeliveryId\" IS NULL AND \"ProjectPackageId\" IS NULL AND \"ProjectStageOrder\" IS NULL) OR " +
+                    "(\"ProjectWebhookDeliveryId\" IS NOT NULL AND \"ProjectPackageId\" IS NOT NULL AND \"ProjectStageOrder\" IS NOT NULL AND \"ProjectStageOrder\" >= 0)");
+                table.HasCheckConstraint(
+                    "CK_build_jobs_executor_identity",
+                    "(\"ExecutionBackend\" = 0 AND \"KubernetesNamespace\" IS NULL AND \"KubernetesJobName\" IS NULL AND \"KubernetesJobUid\" IS NULL AND \"KubernetesPodName\" IS NULL) OR " +
+                    "(\"ExecutionBackend\" = 1 AND ((\"KubernetesNamespace\" IS NULL AND \"KubernetesJobName\" IS NULL AND \"KubernetesJobUid\" IS NULL AND \"KubernetesPodName\" IS NULL) OR " +
+                    "(\"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL)))");
+            });
             entity.HasKey(e => e.Id);
             entity.Property(e => e.SpecName).IsRequired().HasMaxLength(256);
             entity.Property(e => e.TriggeredBy).IsRequired().HasMaxLength(256);
@@ -165,9 +173,17 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.BuildProfile).IsRequired().HasMaxLength(128);
             entity.Property(e => e.RunnerImageReference).HasMaxLength(512);
             entity.Property(e => e.RunnerImageDigest).HasMaxLength(512);
+            entity.Property(e => e.KubernetesNamespace).HasMaxLength(63);
+            entity.Property(e => e.KubernetesJobName).HasMaxLength(63);
+            entity.Property(e => e.KubernetesJobUid).HasMaxLength(128);
+            entity.Property(e => e.KubernetesPodName).HasMaxLength(253);
             entity.Property(e => e.ProjectPackageId).HasMaxLength(128);
             entity.Property(e => e.LeaseOwner).HasMaxLength(128);
             entity.HasIndex(e => new { e.Status, e.LeaseExpiresAt });
+            entity.HasIndex(e => new { e.ExecutionBackend, e.Status });
+            entity.HasIndex(e => new { e.KubernetesNamespace, e.KubernetesJobName })
+                .IsUnique()
+                .HasFilter("\"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL");
             entity.HasIndex(e => new { e.ProjectWebhookDeliveryId, e.ProjectPackageId })
                 .IsUnique()
                 .HasFilter("\"ProjectWebhookDeliveryId\" IS NOT NULL AND \"ProjectPackageId\" IS NOT NULL");

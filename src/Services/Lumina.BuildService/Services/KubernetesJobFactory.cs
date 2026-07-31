@@ -25,7 +25,7 @@ public static class KubernetesJobFactory
         ArgumentNullException.ThrowIfNull(runner);
         ArgumentNullException.ThrowIfNull(limits);
         Validate(job, runner, limits);
-        var name = $"lumina-build-{job.Id:N}";
+        var name = KubernetesBuildIdentity.JobName(job.Id);
         var labels = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["app.kubernetes.io/name"] = "lumina-rpm-build",

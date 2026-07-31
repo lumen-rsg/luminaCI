@@ -38,6 +38,14 @@ public class BuildJob
     public string? RunnerImageReference { get; set; }
     public string? RunnerImageDigest { get; set; }
 
+    // Durable executor identity. Kubernetes names are deterministic and may be
+    // persisted before the API create call; UID and pod name arrive later.
+    public BuildExecutorBackend ExecutionBackend { get; set; } = BuildExecutorBackend.Docker;
+    public string? KubernetesNamespace { get; set; }
+    public string? KubernetesJobName { get; set; }
+    public string? KubernetesJobUid { get; set; }
+    public string? KubernetesPodName { get; set; }
+
     // Repository-project provenance. These fields are populated together for
     // builds created by a selective project dispatch and remain null for
     // manual and legacy per-pipeline builds.

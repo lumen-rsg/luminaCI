@@ -268,7 +268,8 @@ public class WebhooksController : ControllerBase
                     step.Id, step.Type, step.Name, step.Order, step.Status,
                     step.StartedAt, step.CompletedAt, step.Error)).ToList(),
                 job.TargetDistribution, job.TargetRelease, job.TargetArchitecture, job.BuildProfile,
-                job.RunnerImageReference, job.RunnerImageDigest);
+                job.RunnerImageReference, job.RunnerImageDigest, job.ExecutionBackend,
+                job.KubernetesNamespace, job.KubernetesJobName, job.KubernetesJobUid, job.KubernetesPodName);
 
             return Ok(new ApiResponse<BuildJobResponse?>(true, response, null, "Build triggered from webhook"));
         }

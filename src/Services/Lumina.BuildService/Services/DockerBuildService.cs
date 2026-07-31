@@ -17,6 +17,8 @@ namespace Lumina.BuildService.Services;
 /// </summary>
 public class DockerBuildService : IBuildLauncher
 {
+    public BuildExecutorBackend Backend => BuildExecutorBackend.Docker;
+
     private readonly DockerClient _docker;
     private readonly BuildDbContext _db;
     private readonly ILogger<DockerBuildService> _logger;

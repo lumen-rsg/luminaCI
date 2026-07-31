@@ -24,6 +24,13 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
+    // Kubernetes remains unavailable until its durable transport is complete.
+    // An operator selecting it early receives a startup failure instead of a
+    // silent fallback to Docker or partially monitored cluster Jobs.
+    var executorSelection = BuildExecutorSelectionPolicy.Resolve(
+        builder.Configuration, kubernetesTransportAvailable: false);
+    builder.Services.AddSingleton(executorSelection);
+
     builder.Services.AddLuminaOpenTelemetry(
         builder.Configuration, "lumina-build-service");
 
