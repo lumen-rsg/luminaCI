@@ -42,6 +42,22 @@ internal interface IKubernetesApiOperations
         string name,
         CancellationToken cancellationToken);
 
+    Task<V1Job> ReplaceJobAsync(
+        string buildNamespace,
+        string name,
+        V1Job job,
+        CancellationToken cancellationToken);
+
+    Task<V1Secret> CreateSecretAsync(
+        string buildNamespace,
+        V1Secret secret,
+        CancellationToken cancellationToken);
+
+    Task<V1Secret> ReadSecretAsync(
+        string buildNamespace,
+        string name,
+        CancellationToken cancellationToken);
+
     Task<V1PodList> ListPodsAsync(
         string buildNamespace,
         string labelSelector,
@@ -122,6 +138,39 @@ internal sealed class KubernetesApiOperations(Kubernetes client) : IKubernetesAp
         string name,
         CancellationToken cancellationToken) =>
         TranslateAsync(() => client.ReadNamespacedJobAsync(
+            name,
+            buildNamespace,
+            cancellationToken: cancellationToken));
+
+    public Task<V1Job> ReplaceJobAsync(
+        string buildNamespace,
+        string name,
+        V1Job job,
+        CancellationToken cancellationToken) =>
+        TranslateAsync(() => client.ReplaceNamespacedJobAsync(
+            job,
+            name,
+            buildNamespace,
+            fieldManager: FieldManager,
+            fieldValidation: "Strict",
+            cancellationToken: cancellationToken));
+
+    public Task<V1Secret> CreateSecretAsync(
+        string buildNamespace,
+        V1Secret secret,
+        CancellationToken cancellationToken) =>
+        TranslateAsync(() => client.CreateNamespacedSecretAsync(
+            secret,
+            buildNamespace,
+            fieldManager: FieldManager,
+            fieldValidation: "Strict",
+            cancellationToken: cancellationToken));
+
+    public Task<V1Secret> ReadSecretAsync(
+        string buildNamespace,
+        string name,
+        CancellationToken cancellationToken) =>
+        TranslateAsync(() => client.ReadNamespacedSecretAsync(
             name,
             buildNamespace,
             cancellationToken: cancellationToken));
@@ -221,6 +270,63 @@ internal sealed class KubernetesBuildResourceClient(IKubernetesApiOperations api
             RequireValue(persistedJob.Metadata?.Name, "Kubernetes Job name is missing."),
             jobUid,
             null);
+    }
+
+    public async Task ActivateAsync(
+        KubernetesBuildResourceIdentity identity,
+        V1Secret transportSecret,
+        KubernetesBuildTransport requestedTransport,
+        CancellationToken cancellationToken)
+    {
+        ValidateIdentity(identity);
+        var job = await ReadJobForIdentityAsync(identity, cancellationToken);
+        ValidateTransportVolume(job, identity);
+        V1Secret persistedSecret;
+        try
+        {
+            persistedSecret = await api.CreateSecretAsync(
+                identity.Namespace,
+                transportSecret,
+                cancellationToken);
+        }
+        catch (KubernetesResourceAlreadyExistsException)
+        {
+            persistedSecret = await ReadAfterCreateConflictAsync(
+                () => api.ReadSecretAsync(
+                    identity.Namespace,
+                    KubernetesBuildTransportPolicy.SecretName(identity.JobName),
+                    cancellationToken),
+                "Kubernetes transport Secret disappeared during create reconciliation.");
+        }
+        _ = KubernetesBuildTransportPolicy.ValidateSecret(
+            persistedSecret,
+            identity,
+            requestedTransport);
+
+        if (job.Spec?.Suspend == false)
+            return;
+        if (job.Spec?.Suspend != true)
+            throw new ConflictException("Kubernetes Job suspension state is invalid.");
+        job.Spec.Suspend = false;
+        V1Job activated;
+        try
+        {
+            activated = await api.ReplaceJobAsync(
+                identity.Namespace,
+                identity.JobName,
+                job,
+                cancellationToken);
+        }
+        catch (KubernetesResourceAlreadyExistsException exception)
+        {
+            throw new ConflictException(
+                "Kubernetes Job changed while activation was in progress.",
+                exception);
+        }
+        ValidateIdentity(activated, identity);
+        ValidateTransportVolume(activated, identity);
+        if (activated.Spec?.Suspend != false)
+            throw new ConflictException("Kubernetes Job did not leave suspended state.");
     }
 
     public async Task<KubernetesBuildObservation> ObserveAsync(
@@ -443,6 +549,25 @@ internal sealed class KubernetesBuildResourceClient(IKubernetesApiOperations api
         return pods.ToList();
     }
 
+    private async Task<V1Job> ReadJobForIdentityAsync(
+        KubernetesBuildResourceIdentity identity,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var job = await api.ReadJobAsync(
+                identity.Namespace,
+                identity.JobName,
+                cancellationToken);
+            ValidateIdentity(job, identity);
+            return job;
+        }
+        catch (KubernetesResourceNotFoundException exception)
+        {
+            throw new NotFoundException("Kubernetes Job no longer exists.", exception);
+        }
+    }
+
     private async Task DeleteOrphanedNetworkPolicyAsync(
         KubernetesBuildResourceIdentity identity,
         CancellationToken cancellationToken)
@@ -479,10 +604,14 @@ internal sealed class KubernetesBuildResourceClient(IKubernetesApiOperations api
             throw new ValidationException("Kubernetes NetworkPolicy name does not match the Job.");
         if (!jobName.StartsWith("lumina-build-", StringComparison.Ordinal) ||
             !Guid.TryParseExact(BuildIdFromJobName(jobName), "N", out _) ||
-            Label(job.Metadata?.Labels, BuildIdLabel) != BuildIdFromJobName(jobName))
+            Label(job.Metadata?.Labels, BuildIdLabel) != BuildIdFromJobName(jobName) ||
+            job.Spec?.Suspend != true)
         {
-            throw new ValidationException("Kubernetes Job identity label is invalid.");
+            throw new ValidationException("Kubernetes Job creation intent is invalid.");
         }
+        ValidateTransportVolume(
+            job,
+            new KubernetesBuildResourceIdentity(buildNamespace, jobName, "pending", null));
         ValidateNetworkPolicy(networkPolicy, networkPolicy);
     }
 
@@ -506,6 +635,30 @@ internal sealed class KubernetesBuildResourceClient(IKubernetesApiOperations api
             !(actualContainer.Args ?? []).SequenceEqual(expectedContainer.Args ?? []))
         {
             throw new ConflictException("Existing Kubernetes Job workload differs from this build request.");
+        }
+    }
+
+    private static void ValidateTransportVolume(
+        V1Job job,
+        KubernetesBuildResourceIdentity identity)
+    {
+        var pod = job.Spec?.Template?.Spec;
+        var container = pod?.Containers?.SingleOrDefault();
+        var volume = pod?.Volumes?.SingleOrDefault(item =>
+            string.Equals(item.Name, KubernetesJobFactory.TransportVolumeName, StringComparison.Ordinal));
+        var mount = container?.VolumeMounts?.SingleOrDefault(item =>
+            string.Equals(item.Name, KubernetesJobFactory.TransportVolumeName, StringComparison.Ordinal));
+        if (pod?.AutomountServiceAccountToken != false ||
+            !string.Equals(pod.ServiceAccountName, KubernetesJobFactory.RunnerServiceAccountName, StringComparison.Ordinal) ||
+            !string.Equals(
+                volume?.Secret?.SecretName,
+                KubernetesBuildTransportPolicy.SecretName(identity.JobName),
+                StringComparison.Ordinal) ||
+            volume?.Secret?.Optional != false ||
+            mount?.ReadOnlyProperty != true ||
+            !string.Equals(mount.MountPath, KubernetesJobFactory.TransportMountPath, StringComparison.Ordinal))
+        {
+            throw new ConflictException("Kubernetes Job transport mount is invalid.");
         }
     }
 

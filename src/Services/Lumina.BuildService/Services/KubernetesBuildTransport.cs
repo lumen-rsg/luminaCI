@@ -69,6 +69,12 @@ internal static class KubernetesBuildTransportPolicy
     public const string SecretDataKey = "transport.json";
     private const int ExpiryBufferSeconds = 15 * 60;
     private const int MaximumPresignedExpirySeconds = 7 * 24 * 60 * 60;
+    private static readonly JsonSerializerOptions TransportJson = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = false,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        MaxDepth = 8
+    };
 
     public static async Task<KubernetesBuildTransport> CreateAsync(
         BuildJob job,
@@ -122,7 +128,7 @@ internal static class KubernetesBuildTransportPolicy
         ValidateTransportIdentity(jobName, transport);
         if (string.IsNullOrWhiteSpace(buildNamespace))
             throw new ValidationException("Kubernetes build namespace is required.");
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(transport);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(transport, TransportJson);
         return new V1Secret
         {
             ApiVersion = "v1",
@@ -154,6 +160,54 @@ internal static class KubernetesBuildTransportPolicy
         };
     }
 
+    public static KubernetesBuildTransport ValidateSecret(
+        V1Secret secret,
+        KubernetesBuildResourceIdentity identity,
+        KubernetesBuildTransport requested)
+    {
+        ArgumentNullException.ThrowIfNull(secret);
+        ArgumentNullException.ThrowIfNull(identity);
+        ArgumentNullException.ThrowIfNull(requested);
+        ValidateTransportIdentity(identity.JobName, requested);
+        if (!string.Equals(secret.Metadata?.Name, SecretName(identity.JobName), StringComparison.Ordinal) ||
+            !string.Equals(secret.Metadata?.NamespaceProperty, identity.Namespace, StringComparison.Ordinal) ||
+            secret.Immutable != true ||
+            secret.Data is not { Count: 1 } ||
+            !secret.Data.TryGetValue(SecretDataKey, out var bytes) ||
+            secret.Metadata?.OwnerReferences?.Count != 1 ||
+            !string.Equals(secret.Metadata.OwnerReferences[0].Kind, "Job", StringComparison.Ordinal) ||
+            !string.Equals(secret.Metadata.OwnerReferences[0].Name, identity.JobName, StringComparison.Ordinal) ||
+            !string.Equals(secret.Metadata.OwnerReferences[0].Uid, identity.JobUid, StringComparison.Ordinal))
+        {
+            throw new ConflictException("Existing Kubernetes transport Secret identity is invalid.");
+        }
+
+        KubernetesBuildTransport persisted;
+        try
+        {
+            persisted = JsonSerializer.Deserialize<KubernetesBuildTransport>(bytes, TransportJson)
+                        ?? throw new JsonException("Transport document is empty.");
+        }
+        catch (JsonException exception)
+        {
+            throw new ConflictException("Existing Kubernetes transport Secret content is invalid.", exception);
+        }
+        ValidateTransportIdentity(identity.JobName, persisted);
+        if (persisted.BuildJobId != requested.BuildJobId ||
+            !string.Equals(persisted.KubernetesJobUid, requested.KubernetesJobUid, StringComparison.Ordinal) ||
+            !string.Equals(persisted.SnapshotObjectName, requested.SnapshotObjectName, StringComparison.Ordinal) ||
+            !string.Equals(persisted.SnapshotSha256, requested.SnapshotSha256, StringComparison.Ordinal) ||
+            persisted.SnapshotSize != requested.SnapshotSize ||
+            !string.Equals(
+                persisted.ArtifactBundleObjectName,
+                requested.ArtifactBundleObjectName,
+                StringComparison.Ordinal))
+        {
+            throw new ConflictException("Existing Kubernetes transport Secret provenance changed.");
+        }
+        return persisted;
+    }
+
     public static string SecretName(string jobName)
     {
         if (string.IsNullOrWhiteSpace(jobName) || jobName.Length > 52)
@@ -176,7 +230,9 @@ internal static class KubernetesBuildTransportPolicy
             !string.Equals(identity.JobName, KubernetesBuildIdentity.JobName(job.Id), StringComparison.Ordinal) ||
             !string.Equals(identity.Namespace, job.KubernetesNamespace, StringComparison.Ordinal) ||
             !string.Equals(identity.JobUid, job.KubernetesJobUid, StringComparison.Ordinal) ||
-            !string.Equals(delivery.CommitSha, job.CommitSha, StringComparison.Ordinal))
+            !string.Equals(delivery.CommitSha, job.CommitSha, StringComparison.Ordinal) ||
+            delivery.Status is not (ProjectWebhookStatus.PlanReady or ProjectWebhookStatus.Dispatched) ||
+            string.IsNullOrWhiteSpace(delivery.ManifestSha256))
         {
             throw new ValidationException("Kubernetes build transport identity is invalid.");
         }
@@ -205,6 +261,12 @@ internal static class KubernetesBuildTransportPolicy
                 transport.ArtifactBundleObjectName,
                 BundleObjectName(transport.BuildJobId, transport.KubernetesJobUid),
                 StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(transport.SnapshotObjectName) ||
+            transport.SnapshotObjectName.Length > 1024 ||
+            transport.SnapshotObjectName.Any(char.IsControl) ||
+            transport.SnapshotSha256.Length != 64 ||
+            transport.SnapshotSha256.Any(character => !Uri.IsHexDigit(character)) ||
+            transport.SnapshotSize <= 0 ||
             transport.ExpiresAt <= DateTimeOffset.UtcNow)
         {
             throw new ValidationException("Kubernetes build transport document is invalid.");

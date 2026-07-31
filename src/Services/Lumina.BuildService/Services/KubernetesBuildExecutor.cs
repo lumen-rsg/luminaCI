@@ -20,6 +20,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
     private readonly BuildExecutorSelection _selection;
     private readonly IBuildSlotClaimer _slotClaimer;
     private readonly IKubernetesBuildResourceClient _resources;
+    private readonly IKubernetesBuildTransportService _transport;
     private readonly BuildExecutionCoordinator _execution;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<KubernetesBuildExecutor> _logger;
@@ -32,6 +33,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
         BuildExecutorSelection selection,
         IBuildSlotClaimer slotClaimer,
         IKubernetesBuildResourceClient resources,
+        IKubernetesBuildTransportService transport,
         BuildExecutionCoordinator execution,
         IServiceScopeFactory scopeFactory,
         ILogger<KubernetesBuildExecutor> logger,
@@ -42,6 +44,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
         _selection = selection;
         _slotClaimer = slotClaimer;
         _resources = resources;
+        _transport = transport;
         _execution = execution;
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -95,6 +98,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
             createdIdentity = await EnsureIdentityAsync(job, runner, limits, CancellationToken.None);
             KubernetesBuildIdentity.Apply(job, createdIdentity);
             await _db.SaveChangesAsync();
+            await ActivateAsync(job.Id, createdIdentity, limits, CancellationToken.None);
 
             _logger.LogInformation(
                 "Started Kubernetes Job {Namespace}/{JobName} ({JobUid}) for build {BuildJobId}",
@@ -293,6 +297,11 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
             cancellationToken);
         KubernetesBuildIdentity.Apply(job, identity);
         await db.SaveChangesAsync(cancellationToken);
+        await ActivateAsync(
+            job.Id,
+            identity,
+            KubernetesBuildPolicy.ResolveLimits(_configuration),
+            cancellationToken);
         return identity with { PodName = job.KubernetesPodName ?? identity.PodName };
     }
 
@@ -325,6 +334,28 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
             job.KubernetesNamespace,
             KubernetesJobFactory.Create(job, runner, limits),
             KubernetesJobFactory.CreateDefaultDenyNetworkPolicy(job),
+            cancellationToken);
+    }
+
+    private async Task ActivateAsync(
+        Guid buildJobId,
+        KubernetesBuildResourceIdentity identity,
+        KubernetesJobLimits limits,
+        CancellationToken cancellationToken)
+    {
+        var transport = await _transport.PrepareAsync(
+            buildJobId,
+            identity,
+            limits,
+            cancellationToken);
+        var secret = KubernetesBuildTransportPolicy.CreateSecret(
+            identity.Namespace,
+            identity.JobName,
+            transport);
+        await _resources.ActivateAsync(
+            identity,
+            secret,
+            transport,
             cancellationToken);
     }
 

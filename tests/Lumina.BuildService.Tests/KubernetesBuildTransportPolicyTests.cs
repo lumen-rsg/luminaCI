@@ -109,6 +109,8 @@ public sealed class KubernetesBuildTransportPolicyTests
             CommitSha = commit,
             SnapshotSha256 = digest,
             SnapshotFileSize = 4096,
+            Status = ProjectWebhookStatus.PlanReady,
+            ManifestSha256 = new string('b', 64),
             SnapshotStoragePath =
                 $"project-{projectId:N}/{digest}/project-{projectId:N}-sources.tar.gz"
         };

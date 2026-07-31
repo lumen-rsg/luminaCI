@@ -54,6 +54,7 @@ public sealed class KubernetesBuildExecutorTests
         Assert.Equal("job-uid-1", persisted.KubernetesJobUid);
         Assert.Equal("pod-1", persisted.KubernetesPodName);
         Assert.True(resources.EnsureCalled);
+        Assert.True(resources.ActivateCalled);
         Assert.True(resources.DeleteCalled);
         Assert.Equal((job.Id, true, "build output", "Completed"), completion.Call);
         Assert.Equal("build output", await subscription.Reader!.ReadAsync());
@@ -132,6 +133,7 @@ public sealed class KubernetesBuildExecutorTests
         new BuildExecutorSelection(BuildExecutorBackend.Kubernetes, "lumina-builds"),
         new FakeSlotClaimer(),
         resources,
+        services.GetRequiredService<IKubernetesBuildTransportService>(),
         execution,
         services.GetRequiredService<IServiceScopeFactory>(),
         NullLogger<KubernetesBuildExecutor>.Instance,
@@ -157,6 +159,7 @@ public sealed class KubernetesBuildExecutorTests
         services.AddSingleton<IBuildLogStreamHub, BuildLogStreamHub>();
         services.AddSingleton(resources);
         services.AddSingleton(completion);
+        services.AddSingleton<IKubernetesBuildTransportService, FakeTransportService>();
         var options = new DbContextOptionsBuilder<BuildDbContext>()
             .UseInMemoryDatabase($"kubernetes-executor-{Guid.NewGuid():N}")
             .Options;
@@ -261,6 +264,7 @@ public sealed class KubernetesBuildExecutorTests
         public string Logs { get; set; } = string.Empty;
         public bool EnsureCalled { get; private set; }
         public bool DeleteCalled { get; private set; }
+        public bool ActivateCalled { get; private set; }
         public KubernetesBuildResourceIdentity? DeletedIdentity { get; private set; }
 
         public Task<KubernetesBuildResourceIdentity> EnsureCreatedAsync(
@@ -281,6 +285,16 @@ public sealed class KubernetesBuildExecutorTests
             KubernetesBuildResourceIdentity identity,
             CancellationToken cancellationToken) => Task.FromResult(Observation);
 
+        public Task ActivateAsync(
+            KubernetesBuildResourceIdentity identity,
+            V1Secret transportSecret,
+            KubernetesBuildTransport requestedTransport,
+            CancellationToken cancellationToken)
+        {
+            ActivateCalled = true;
+            return Task.CompletedTask;
+        }
+
         public Task<string> ReadLogsAsync(
             KubernetesBuildResourceIdentity identity,
             int maximumCharacters,
@@ -294,5 +308,24 @@ public sealed class KubernetesBuildExecutorTests
             DeletedIdentity = identity;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FakeTransportService : IKubernetesBuildTransportService
+    {
+        public Task<KubernetesBuildTransport> PrepareAsync(
+            Guid buildJobId,
+            KubernetesBuildResourceIdentity identity,
+            KubernetesJobLimits limits,
+            CancellationToken cancellationToken) => Task.FromResult(new KubernetesBuildTransport(
+            KubernetesBuildTransportPolicy.CurrentVersion,
+            buildJobId,
+            identity.JobUid,
+            "project/source/verified.tar.gz",
+            new string('a', 64),
+            4096,
+            "https://minio.example/snapshot?signature=download",
+            KubernetesBuildTransportPolicy.BundleObjectName(buildJobId, identity.JobUid),
+            "https://minio.example/bundle?signature=upload",
+            DateTimeOffset.UtcNow.AddHours(1)));
     }
 }

@@ -65,6 +65,7 @@ try
     builder.Services.AddSingleton<IKubernetesBuildResourceClient, KubernetesBuildResourceClient>();
     builder.Services.AddSingleton<IKubernetesArtifactObjectStore, KubernetesArtifactObjectStore>();
     builder.Services.AddScoped<IKubernetesObjectUrlSigner, KubernetesObjectUrlSigner>();
+    builder.Services.AddScoped<IKubernetesBuildTransportService, KubernetesBuildTransportService>();
     builder.Services.AddScoped<IKubernetesArtifactImporter, KubernetesArtifactImporter>();
     builder.Services.AddScoped<IKubernetesBuildCompletion, KubernetesBuildCompletion>();
     builder.Services.AddScoped<KubernetesBuildExecutor>();

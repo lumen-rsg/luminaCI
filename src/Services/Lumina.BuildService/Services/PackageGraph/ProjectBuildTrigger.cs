@@ -1,4 +1,3 @@
-using Lumina.BuildService.Data;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Errors;
 using Lumina.Shared.Models;
@@ -38,24 +37,15 @@ public sealed class ProjectBuildTrigger(IServiceScopeFactory scopeFactory) : IPr
         var request = CreateRequest(launch);
         await using var scope = scopeFactory.CreateAsyncScope();
         var engine = scope.ServiceProvider.GetRequiredService<PipelineEngine>();
-        var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
-        var job = await engine.TriggerBuildAsync(
+        var binding = new PipelineEngine.ProjectBuildBinding(
+            launch.DeliveryId,
+            launch.PackageId,
+            launch.StageOrder);
+        var job = await engine.TriggerProjectBuildAsync(
             launch.PipelineId,
-            request);
-
-        if (job.ProjectWebhookDeliveryId.HasValue &&
-            (job.ProjectWebhookDeliveryId != launch.DeliveryId ||
-             !string.Equals(job.ProjectPackageId, launch.PackageId, StringComparison.Ordinal) ||
-             job.ProjectStageOrder != launch.StageOrder))
-        {
-            throw new ConflictException(
-                $"Build {job.Id} is already linked to a different project dispatch target.");
-        }
-
-        job.ProjectWebhookDeliveryId = launch.DeliveryId;
-        job.ProjectPackageId = launch.PackageId;
-        job.ProjectStageOrder = launch.StageOrder;
-        await db.SaveChangesAsync(cancellationToken);
+            request,
+            binding);
+        PipelineEngine.ProjectBuildBinding.EnsureMatches(job, binding);
         return job;
     }
 

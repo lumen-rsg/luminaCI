@@ -98,8 +98,24 @@ public class PipelineEngine
         return pipeline;
     }
 
-    public async Task<BuildJob> TriggerBuildAsync(Guid pipelineId, Shared.DTOs.TriggerBuildRequest request)
+    public Task<BuildJob> TriggerBuildAsync(
+        Guid pipelineId,
+        Shared.DTOs.TriggerBuildRequest request) =>
+        TriggerBuildCoreAsync(pipelineId, request, null);
+
+    internal Task<BuildJob> TriggerProjectBuildAsync(
+        Guid pipelineId,
+        Shared.DTOs.TriggerBuildRequest request,
+        ProjectBuildBinding binding) =>
+        TriggerBuildCoreAsync(pipelineId, request, binding);
+
+    private async Task<BuildJob> TriggerBuildCoreAsync(
+        Guid pipelineId,
+        Shared.DTOs.TriggerBuildRequest request,
+        ProjectBuildBinding? projectBinding)
     {
+        if (projectBinding != null)
+            projectBinding.Validate();
         var pipeline = await _db.Pipelines
             .Include(p => p.Steps)
             .FirstOrDefaultAsync(p => p.Id == pipelineId);
@@ -123,6 +139,7 @@ public class PipelineEngine
                     && job.IdempotencyKey == request.IdempotencyKey);
             if (existingJob is not null)
             {
+                ProjectBuildBinding.EnsureMatches(existingJob, projectBinding);
                 _logger.LogInformation(
                     "Returning existing build {JobId} for idempotency key {IdempotencyKey}",
                     existingJob.Id, request.IdempotencyKey);
@@ -195,6 +212,9 @@ public class PipelineEngine
             TargetArchitecture = target.Architecture,
             BuildProfile = target.Profile,
             ExecutionBackend = _buildLauncher.Backend,
+            ProjectWebhookDeliveryId = projectBinding?.DeliveryId,
+            ProjectPackageId = projectBinding?.PackageId,
+            ProjectStageOrder = projectBinding?.StageOrder,
             StepRuns = pipeline.Steps
                 .OrderBy(step => step.Order)
                 .Select(step => new BuildStepRun
@@ -230,7 +250,10 @@ public class PipelineEngine
                     item.PipelineId == pipelineId
                     && item.IdempotencyKey == request.IdempotencyKey);
             if (winner is not null)
+            {
+                ProjectBuildBinding.EnsureMatches(winner, projectBinding);
                 return winner;
+            }
             throw;
         }
 
@@ -258,6 +281,32 @@ public class PipelineEngine
         }
 
         return job;
+    }
+
+    internal sealed record ProjectBuildBinding(
+        Guid DeliveryId,
+        string PackageId,
+        int StageOrder)
+    {
+        public void Validate()
+        {
+            if (DeliveryId == Guid.Empty || StageOrder < 0)
+                throw new ValidationException("Project build binding is invalid.");
+            _ = BuildProjectPolicy.NormalizePackageId(PackageId);
+        }
+
+        public static void EnsureMatches(BuildJob job, ProjectBuildBinding? binding)
+        {
+            if (binding == null)
+                return;
+            if (job.ProjectWebhookDeliveryId != binding.DeliveryId ||
+                !string.Equals(job.ProjectPackageId, binding.PackageId, StringComparison.Ordinal) ||
+                job.ProjectStageOrder != binding.StageOrder)
+            {
+                throw new ConflictException(
+                    $"Build {job.Id} is already linked to a different project dispatch target.");
+            }
+        }
     }
 
     /// <summary>

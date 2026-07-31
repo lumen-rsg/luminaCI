@@ -53,6 +53,61 @@ public sealed class KubernetesBuildResourceClientTests
     }
 
     [Fact]
+    public async Task ActivateAsync_CreatesImmutableTransportThenUnsuspendsIdempotently()
+    {
+        var api = new FakeKubernetesApi();
+        var client = new KubernetesBuildResourceClient(api);
+        var resources = Resources();
+        var identity = await client.EnsureCreatedAsync(
+            "lumina-builds", resources.Job, resources.Policy, CancellationToken.None);
+        var transport = Transport(resources.BuildJob.Id, identity.JobUid);
+        var secret = KubernetesBuildTransportPolicy.CreateSecret(
+            identity.Namespace,
+            identity.JobName,
+            transport);
+        api.Calls.Clear();
+
+        await client.ActivateAsync(identity, secret, transport, CancellationToken.None);
+
+        Assert.False(api.Job!.Spec.Suspend);
+        Assert.Equal(["read-job", "create-secret", "replace-job"], api.Calls);
+        api.Calls.Clear();
+        var replay = transport with
+        {
+            SnapshotDownloadUrl = "https://minio.example/snapshot?signature=replay",
+            ArtifactBundleUploadUrl = "https://minio.example/bundle?signature=replay"
+        };
+        await client.ActivateAsync(
+            identity,
+            KubernetesBuildTransportPolicy.CreateSecret(identity.Namespace, identity.JobName, replay),
+            replay,
+            CancellationToken.None);
+        Assert.Equal(["read-job", "create-secret", "read-secret"], api.Calls);
+    }
+
+    [Fact]
+    public async Task ActivateAsync_RejectsChangedTransportSecret()
+    {
+        var api = new FakeKubernetesApi();
+        var client = new KubernetesBuildResourceClient(api);
+        var resources = Resources();
+        var identity = await client.EnsureCreatedAsync(
+            "lumina-builds", resources.Job, resources.Policy, CancellationToken.None);
+        var transport = Transport(resources.BuildJob.Id, identity.JobUid);
+        api.Secret = KubernetesBuildTransportPolicy.CreateSecret(
+            identity.Namespace,
+            identity.JobName,
+            transport with { SnapshotSha256 = new string('f', 64) });
+
+        await Assert.ThrowsAsync<ConflictException>(() => client.ActivateAsync(
+            identity,
+            KubernetesBuildTransportPolicy.CreateSecret(identity.Namespace, identity.JobName, transport),
+            transport,
+            CancellationToken.None));
+        Assert.True(api.Job!.Spec.Suspend);
+    }
+
+    [Fact]
     public async Task EnsureCreatedAsync_RejectsExistingJobWithDifferentWorkload()
     {
         var api = new FakeKubernetesApi();
@@ -195,6 +250,18 @@ public sealed class KubernetesBuildResourceClientTests
         Status = new V1PodStatus { Phase = phase }
     };
 
+    private static KubernetesBuildTransport Transport(Guid jobId, string jobUid) => new(
+        KubernetesBuildTransportPolicy.CurrentVersion,
+        jobId,
+        jobUid,
+        "project/source/verified.tar.gz",
+        new string('a', 64),
+        4096,
+        "https://minio.example/snapshot?signature=download",
+        KubernetesBuildTransportPolicy.BundleObjectName(jobId, jobUid),
+        "https://minio.example/bundle?signature=upload",
+        DateTimeOffset.UtcNow.AddHours(1));
+
     private sealed record TestResources(BuildJob BuildJob, V1Job Job, V1NetworkPolicy Policy);
 
     private sealed class FakeKubernetesApi : IKubernetesApiOperations
@@ -202,6 +269,7 @@ public sealed class KubernetesBuildResourceClientTests
         public List<string> Calls { get; } = [];
         public V1Job? Job { get; set; }
         public V1NetworkPolicy? Policy { get; set; }
+        public V1Secret? Secret { get; set; }
         public List<V1Pod> Pods { get; } = [];
         public string Logs { get; set; } = string.Empty;
         public int LastLogLimit { get; private set; }
@@ -279,6 +347,41 @@ public sealed class KubernetesBuildResourceClientTests
         {
             Calls.Add("read-job");
             return Task.FromResult(Job ?? throw new KubernetesResourceNotFoundException());
+        }
+
+        public Task<V1Job> ReplaceJobAsync(
+            string buildNamespace,
+            string name,
+            V1Job job,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add("replace-job");
+            Job = job;
+            Job.Metadata.ResourceVersion = "2";
+            return Task.FromResult(Job);
+        }
+
+        public Task<V1Secret> CreateSecretAsync(
+            string buildNamespace,
+            V1Secret secret,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add("create-secret");
+            if (Secret != null)
+                throw new KubernetesResourceAlreadyExistsException();
+            Secret = secret;
+            Secret.Metadata.NamespaceProperty = buildNamespace;
+            Secret.Metadata.ResourceVersion = "1";
+            return Task.FromResult(Secret);
+        }
+
+        public Task<V1Secret> ReadSecretAsync(
+            string buildNamespace,
+            string name,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add("read-secret");
+            return Task.FromResult(Secret ?? throw new KubernetesResourceNotFoundException());
         }
 
         public Task<V1PodList> ListPodsAsync(

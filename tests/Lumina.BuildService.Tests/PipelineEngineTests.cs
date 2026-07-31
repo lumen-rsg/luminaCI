@@ -463,6 +463,36 @@ public class PipelineEngineTests
         Assert.Equal(BuildExecutorBackend.Kubernetes, job.ExecutionBackend);
     }
 
+    [Fact]
+    public async Task TriggerProjectBuildAsync_BindsDispatchBeforeLauncherRuns()
+    {
+        await using var sp = BuildServiceProvider(
+            nameof(TriggerProjectBuildAsync_BindsDispatchBeforeLauncherRuns));
+        var engine = await NewEngineAsync(sp);
+        var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
+        var deliveryId = Guid.NewGuid();
+        var binding = new PipelineEngine.ProjectBuildBinding(deliveryId, "kernel", 2);
+
+        var job = await engine.TriggerProjectBuildAsync(
+            pipeline.Id,
+            new TriggerBuildRequest(
+                "kernel.spec",
+                string.Empty,
+                "git://https://example.com/repo.git#branch=main&specPath=kernel.spec",
+                $"project:{deliveryId:N}",
+                new string('a', 40),
+                "main",
+                IdempotencyKey: $"project:{deliveryId:N}:kernel"),
+            binding);
+
+        var launched = Assert.IsType<BuildJob>(
+            sp.GetRequiredService<FakeBuildLauncher>().LastJob);
+        Assert.Same(job, launched);
+        Assert.Equal(deliveryId, launched.ProjectWebhookDeliveryId);
+        Assert.Equal("kernel", launched.ProjectPackageId);
+        Assert.Equal(2, launched.ProjectStageOrder);
+    }
+
     // ─── TriggerAutoBuildAsync ───────────────────────────────────────────
 
     [Fact]
@@ -559,6 +589,7 @@ public class PipelineEngineTests
         public bool WasLaunched { get; private set; }
         public int LaunchCount { get; private set; }
         public string? LastSourceUrl { get; private set; }
+        public BuildJob? LastJob { get; private set; }
         public Exception? ThrowOnNextLaunch { get; set; }
 
         public Task<BuildJob> StartBuildAsync(BuildJob job, string? specContent, string? sourceUrl,
@@ -568,6 +599,7 @@ public class PipelineEngineTests
             WasLaunched = true;
             LaunchCount++;
             LastSourceUrl = sourceUrl;
+            LastJob = job;
             var toThrow = ThrowOnNextLaunch;
             ThrowOnNextLaunch = null;
             if (toThrow is not null) throw toThrow;
@@ -580,6 +612,7 @@ public class PipelineEngineTests
             WasLaunched = false;
             LaunchCount = 0;
             LastSourceUrl = null;
+            LastJob = null;
             ThrowOnNextLaunch = null;
         }
     }

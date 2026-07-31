@@ -39,6 +39,12 @@ public interface IKubernetesBuildResourceClient
         V1NetworkPolicy networkPolicy,
         CancellationToken cancellationToken);
 
+    Task ActivateAsync(
+        KubernetesBuildResourceIdentity identity,
+        V1Secret transportSecret,
+        KubernetesBuildTransport requestedTransport,
+        CancellationToken cancellationToken);
+
     Task<KubernetesBuildObservation> ObserveAsync(
         KubernetesBuildResourceIdentity identity,
         CancellationToken cancellationToken);
