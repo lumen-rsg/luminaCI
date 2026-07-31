@@ -61,8 +61,8 @@ WORKDIR /home/rpmbuilder/rpmbuild
 # /artifacts is the bind-mounted output dir — it must be writable by uid 1000
 # (host dir /opt/lumina/builds/<jobId> is created and chown'd by build-service);
 # we chown the in-image placeholder here as a fallback for the non-root copy.
-COPY --chown=rpmbuilder:rpmbuilder scripts/build-rpm.sh /usr/local/bin/build-rpm.sh
-COPY --chown=rpmbuilder:rpmbuilder scripts/lumina-kubernetes-build /usr/local/bin/lumina-kubernetes-build
+COPY --chown=rpmbuilder:lumina-build scripts/build-rpm.sh /usr/local/bin/build-rpm.sh
+COPY --chown=rpmbuilder:lumina-build scripts/lumina-kubernetes-build /usr/local/bin/lumina-kubernetes-build
 COPY deploy/docker/lumina-fedora.repo /etc/yum.repos.d/lumina-fedora.repo
 RUN chmod +x /usr/local/bin/build-rpm.sh /usr/local/bin/lumina-kubernetes-build
 
