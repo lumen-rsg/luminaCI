@@ -45,6 +45,8 @@ public class BuildJob
     public string? KubernetesJobName { get; set; }
     public string? KubernetesJobUid { get; set; }
     public string? KubernetesPodName { get; set; }
+    public string? KubernetesArtifactManifestSha256 { get; set; }
+    public DateTime? KubernetesArtifactsImportedAt { get; set; }
 
     // Repository-project provenance. These fields are populated together for
     // builds created by a selective project dispatch and remain null for

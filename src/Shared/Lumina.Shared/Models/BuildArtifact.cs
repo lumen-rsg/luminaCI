@@ -17,6 +17,8 @@ public class BuildArtifact
     public Guid? PublishedRepositoryId { get; set; }
     public DateTime? PublishedAt { get; set; }
     public ScanStatus CveScanStatus { get; set; } = ScanStatus.Pending;
+    public string? SourceStoragePath { get; set; }
+    public string? RpmNevra { get; set; }
     public string StoragePath { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

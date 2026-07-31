@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Lumina.BuildService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Lumina.BuildService.Data.Migrations
 {
     [DbContext(typeof(BuildDbContext))]
-    partial class BuildDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260731172635_RecordKubernetesArtifactProvenance")]
+    partial class RecordKubernetesArtifactProvenance
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

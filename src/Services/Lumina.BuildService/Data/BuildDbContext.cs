@@ -152,9 +152,11 @@ public class BuildDbContext : DbContext
                     "(\"ProjectWebhookDeliveryId\" IS NOT NULL AND \"ProjectPackageId\" IS NOT NULL AND \"ProjectStageOrder\" IS NOT NULL AND \"ProjectStageOrder\" >= 0)");
                 table.HasCheckConstraint(
                     "CK_build_jobs_executor_identity",
-                    "(\"ExecutionBackend\" = 0 AND \"KubernetesNamespace\" IS NULL AND \"KubernetesJobName\" IS NULL AND \"KubernetesJobUid\" IS NULL AND \"KubernetesPodName\" IS NULL) OR " +
-                    "(\"ExecutionBackend\" = 1 AND ((\"KubernetesNamespace\" IS NULL AND \"KubernetesJobName\" IS NULL AND \"KubernetesJobUid\" IS NULL AND \"KubernetesPodName\" IS NULL) OR " +
-                    "(\"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL)))");
+                    "((\"ExecutionBackend\" = 0 AND \"KubernetesNamespace\" IS NULL AND \"KubernetesJobName\" IS NULL AND \"KubernetesJobUid\" IS NULL AND \"KubernetesPodName\" IS NULL AND \"KubernetesArtifactManifestSha256\" IS NULL AND \"KubernetesArtifactsImportedAt\" IS NULL) OR " +
+                    "(\"ExecutionBackend\" = 1 AND ((\"KubernetesNamespace\" IS NULL AND \"KubernetesJobName\" IS NULL AND \"KubernetesJobUid\" IS NULL AND \"KubernetesPodName\" IS NULL AND \"KubernetesArtifactManifestSha256\" IS NULL AND \"KubernetesArtifactsImportedAt\" IS NULL) OR " +
+                    "(\"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL)))) AND " +
+                    "((\"KubernetesArtifactManifestSha256\" IS NULL AND \"KubernetesArtifactsImportedAt\" IS NULL) OR " +
+                    "(\"KubernetesArtifactManifestSha256\" IS NOT NULL AND \"KubernetesArtifactsImportedAt\" IS NOT NULL))");
             });
             entity.HasKey(e => e.Id);
             entity.Property(e => e.SpecName).IsRequired().HasMaxLength(256);
@@ -177,6 +179,7 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.KubernetesJobName).HasMaxLength(63);
             entity.Property(e => e.KubernetesJobUid).HasMaxLength(128);
             entity.Property(e => e.KubernetesPodName).HasMaxLength(253);
+            entity.Property(e => e.KubernetesArtifactManifestSha256).HasMaxLength(64);
             entity.Property(e => e.ProjectPackageId).HasMaxLength(128);
             entity.Property(e => e.LeaseOwner).HasMaxLength(128);
             entity.HasIndex(e => new { e.Status, e.LeaseExpiresAt });
@@ -210,7 +213,12 @@ public class BuildDbContext : DbContext
             entity.ToTable("build_artifacts", "build");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.FileName).IsRequired().HasMaxLength(512);
+            entity.Property(e => e.SourceStoragePath).HasMaxLength(1024);
+            entity.Property(e => e.RpmNevra).HasMaxLength(512);
             entity.Property(e => e.SigningKeyFingerprint).HasMaxLength(64);
+            entity.HasIndex(e => new { e.BuildJobId, e.FileName })
+                .IsUnique()
+                .HasFilter("\"SourceStoragePath\" IS NOT NULL");
         });
     }
 }
