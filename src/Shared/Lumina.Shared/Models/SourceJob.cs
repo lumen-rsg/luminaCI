@@ -6,6 +6,9 @@ public class SourceJob
 {
     public Guid Id { get; set; }
     public Guid? PackageRevisionId { get; set; }
+    public Guid? SnapshotRequestId { get; set; }
+    public Guid? SnapshotProjectId { get; set; }
+    public string? SnapshotManifestPath { get; set; }
     public string PackageName { get; set; } = string.Empty;
     public string SourceUrl { get; set; } = string.Empty;
     public SourceType SourceType { get; set; }

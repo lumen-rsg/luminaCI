@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using Lumina.SourceService.Data;
+using Lumina.Shared.Events;
 using Lumina.Shared.Models.Enums;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.SourceService.Services;
@@ -17,6 +19,7 @@ public class SourceFetchService
     private readonly ILogger<SourceFetchService> _logger;
     private readonly SourceUriValidator _uriValidator;
     private readonly SourceIntegrityService _integrity;
+    private readonly IPublishEndpoint _publishEndpoint;
     private readonly string _tempDir;
     private readonly string _sourcesDir;
     private readonly int _timeoutMinutes;
@@ -29,13 +32,15 @@ public class SourceFetchService
         ILogger<SourceFetchService> logger,
         IConfiguration config,
         SourceUriValidator uriValidator,
-        SourceIntegrityService integrity)
+        SourceIntegrityService integrity,
+        IPublishEndpoint publishEndpoint)
     {
         _db = db;
         _storage = storage;
         _logger = logger;
         _uriValidator = uriValidator;
         _integrity = integrity;
+        _publishEndpoint = publishEndpoint;
         _tempDir = config["Source:TempDir"] ?? "/tmp/source-fetch";
         _sourcesDir = config["Source:SourcesDir"] ?? "/opt/lumina/sources";
         _timeoutMinutes = int.TryParse(config["Source:FetchTimeoutMinutes"] ?? "30", out var t) ? t : 30;
@@ -116,6 +121,7 @@ public class SourceFetchService
                     job.LeaseOwner = null;
                     job.LeaseExpiresAt = null;
                     job.HeartbeatAt = null;
+                    await PublishSnapshotReadyAsync(job, cancellationToken);
                     await _db.SaveChangesAsync(cancellationToken);
 
                     _logger.LogInformation(
@@ -157,6 +163,7 @@ public class SourceFetchService
             job.LeaseOwner = null;
             job.LeaseExpiresAt = null;
             job.HeartbeatAt = null;
+            await PublishSnapshotFailedAsync(job, "fetch-failed", CancellationToken.None);
             await _db.SaveChangesAsync(CancellationToken.None);
 
             _logger.LogError("Source fetch failed for {Package} after {Attempts} attempts",
@@ -174,6 +181,7 @@ public class SourceFetchService
                 job.LeaseExpiresAt = null;
                 job.HeartbeatAt = null;
                 job.ErrorMessage = "Cancelled by request.";
+                await PublishSnapshotFailedAsync(job, "cancelled", CancellationToken.None);
                 await _db.SaveChangesAsync(CancellationToken.None);
             }
             // Host shutdown leaves the lease in place. Another worker safely
@@ -204,7 +212,8 @@ public class SourceFetchService
         // as untrusted here even though callers also validate. The validator
         // canonicalizes the URL (and, for local sources, confines the path to
         // the trusted root) before anything reaches a process or the filesystem.
-        var validated = await _uriValidator.ValidateAsync(sourceUrl, sourceType, branch);
+        var validated = await _uriValidator.ValidateAsync(
+            sourceUrl, sourceType, branch, cancellationToken);
         var safeUrl = validated.LocalPath ?? validated.Url;
         var safeBranch = validated.Branch;
 
@@ -244,6 +253,10 @@ public class SourceFetchService
             "Cloning Git source {Url} (reference: {Reference})",
             SourceIntegrityService.RedactUri(uri), branch);
 
+        if (IsCommitSha(branch))
+            return await FetchExactGitCommitAsync(
+                source, branch.ToLowerInvariant(), stagingDir, cloneDir, cancellationToken);
+
         // SECURITY: build argv via ArgumentList — never interpolate url/branch
         // into a shell string. The trailing "--" prevents url/branch from being
         // parsed as options if they start with "-".
@@ -275,6 +288,70 @@ public class SourceFetchService
         return new FetchResult(
             cloneDir, true, commit.ToLowerInvariant(),
             SourceIntegrityService.RedactUri(uri));
+    }
+
+    private async Task<FetchResult> FetchExactGitCommitAsync(
+        ValidatedSource source,
+        string commitSha,
+        string stagingDir,
+        string cloneDir,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(cloneDir);
+        var initializeArguments = new List<string>
+        {
+            "init",
+            "--initial-branch=lumina-snapshot"
+        };
+        if (commitSha.Length == 64)
+            initializeArguments.Add("--object-format=sha256");
+        initializeArguments.AddRange(["--", cloneDir]);
+        var initialize = await RunCommandAsync(
+            "git", initializeArguments,
+            stagingDir, _timeoutMinutes, cancellationToken);
+        if (initialize.ExitCode != 0)
+            throw new Exception("Git repository initialization failed.");
+
+        var remote = await RunCommandAsync(
+            "git", ["remote", "add", "origin", source.Url],
+            cloneDir, _timeoutMinutes, cancellationToken);
+        if (remote.ExitCode != 0)
+            throw new Exception("Git remote configuration failed.");
+
+        var fetchArguments = BuildPinnedGitArguments(source);
+        fetchArguments.AddRange(
+            ["fetch", "--depth", "1", "--no-tags", "origin", commitSha]);
+        var fetch = await RunCommandAsync(
+            "git", fetchArguments, cloneDir, _timeoutMinutes, cancellationToken);
+        if (fetch.ExitCode != 0)
+            throw new Exception("Exact Git commit fetch failed.");
+
+        var checkout = await RunCommandAsync(
+            "git", ["checkout", "--detach", "--force", "FETCH_HEAD"],
+            cloneDir, _timeoutMinutes, cancellationToken);
+        if (checkout.ExitCode != 0)
+            throw new Exception("Exact Git commit checkout failed.");
+
+        if (File.Exists(Path.Combine(cloneDir, ".gitmodules")))
+            throw new SourceValidationException(
+                "Git submodules are not permitted without an explicit pinned source manifest.");
+
+        var revision = await RunCommandAsync(
+            "git", ["rev-parse", "HEAD"], cloneDir, _timeoutMinutes, cancellationToken);
+        var resolvedCommit = revision.Output.Trim().ToLowerInvariant();
+        if (revision.ExitCode != 0 ||
+            !string.Equals(resolvedCommit, commitSha, StringComparison.Ordinal))
+        {
+            throw new SourceValidationException(
+                "Fetched Git revision does not match the requested commit.");
+        }
+
+        Directory.Delete(Path.Combine(cloneDir, ".git"), recursive: true);
+        return new FetchResult(
+            cloneDir,
+            true,
+            resolvedCommit,
+            SourceIntegrityService.RedactUri(new Uri(source.Url)));
     }
 
     private async Task<FetchResult> FetchHttpAsync(
@@ -331,6 +408,53 @@ public class SourceFetchService
             "-c", "http.followRedirects=false",
             "-c", $"http.curloptResolve={uri.Host}:{port}:{addresses}"
         ];
+    }
+
+    private static bool IsCommitSha(string value) =>
+        value is { Length: 40 or 64 } && value.All(Uri.IsHexDigit);
+
+    private async Task PublishSnapshotReadyAsync(
+        Lumina.Shared.Models.SourceJob job,
+        CancellationToken cancellationToken)
+    {
+        if (!job.SnapshotRequestId.HasValue)
+            return;
+        if (!job.SnapshotProjectId.HasValue ||
+            string.IsNullOrWhiteSpace(job.SnapshotManifestPath) ||
+            string.IsNullOrWhiteSpace(job.StoragePath) ||
+            string.IsNullOrWhiteSpace(job.HashSha256) ||
+            !job.FileSize.HasValue ||
+            string.IsNullOrWhiteSpace(job.ResolvedRevision))
+        {
+            throw new InvalidOperationException(
+                "Completed repository snapshot is missing immutable metadata.");
+        }
+
+        await _publishEndpoint.Publish(new RepositorySnapshotReady(
+            job.SnapshotRequestId.Value,
+            job.SnapshotProjectId.Value,
+            job.Id,
+            job.StoragePath,
+            job.HashSha256,
+            job.FileSize.Value,
+            job.ResolvedRevision,
+            job.SnapshotManifestPath,
+            job.FetchCompletedAt ?? DateTime.UtcNow), cancellationToken);
+    }
+
+    private Task PublishSnapshotFailedAsync(
+        Lumina.Shared.Models.SourceJob job,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        if (!job.SnapshotRequestId.HasValue || !job.SnapshotProjectId.HasValue)
+            return Task.CompletedTask;
+        return _publishEndpoint.Publish(new RepositorySnapshotFailed(
+            job.SnapshotRequestId.Value,
+            job.SnapshotProjectId.Value,
+            job.Id,
+            reason,
+            job.FetchCompletedAt ?? DateTime.UtcNow), cancellationToken);
     }
 
     private async Task<FetchResult> FetchLocalAsync(

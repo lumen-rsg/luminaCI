@@ -1,6 +1,7 @@
 using Lumina.SourceService.Data;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
+using Lumina.Shared.Events;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lumina.SourceService.Services;
@@ -87,6 +88,70 @@ public sealed class SourceFetchQueue
         _db.SourceJobs.AddRange(jobs);
         await _db.SaveChangesAsync(cancellationToken);
         return jobs;
+    }
+
+    public async Task<SourceJob> EnqueueRepositorySnapshotAsync(
+        RepositorySnapshotRequested request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.RequestId == Guid.Empty || request.ProjectId == Guid.Empty)
+            throw new ArgumentException("Snapshot request and project IDs are required.");
+        if (!IsCommitSha(request.CommitSha))
+            throw new ArgumentException("Snapshot commit must be a 40- or 64-character hexadecimal SHA.");
+        var manifestPath = NormalizeManifestPath(request.ManifestPath);
+
+        var existing = await _db.SourceJobs.SingleOrDefaultAsync(
+            job => job.SnapshotRequestId == request.RequestId,
+            cancellationToken);
+        if (existing is not null)
+            return existing;
+
+        var job = CreatePending(
+            $"project-{request.ProjectId:N}",
+            request.RepositoryUrl,
+            SourceType.Git,
+            request.CommitSha.ToLowerInvariant(),
+            expectedSha256: null,
+            maxRetries: null);
+        job.SnapshotRequestId = request.RequestId;
+        job.SnapshotProjectId = request.ProjectId;
+        job.SnapshotManifestPath = manifestPath;
+        _db.SourceJobs.Add(job);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation(
+                "Queued repository snapshot {RequestId} for project {ProjectId}",
+                request.RequestId, request.ProjectId);
+            return job;
+        }
+        catch (DbUpdateException)
+        {
+            _db.ChangeTracker.Clear();
+            var winner = await _db.SourceJobs.SingleOrDefaultAsync(
+                item => item.SnapshotRequestId == request.RequestId,
+                cancellationToken);
+            if (winner is not null)
+                return winner;
+            throw;
+        }
+    }
+
+    private static bool IsCommitSha(string? value) =>
+        value is { Length: 40 or 64 } && value.All(Uri.IsHexDigit);
+
+    private static string NormalizeManifestPath(string? value)
+    {
+        var path = (value ?? string.Empty).Trim().Replace('\\', '/');
+        if (path.Length is < 1 or > 512 || path.StartsWith('/') ||
+            path.Split('/').Any(segment => segment is "" or "." or "..") ||
+            path.Any(char.IsControl) ||
+            !(path.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
+              path.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ArgumentException("Snapshot manifest path is invalid.");
+        }
+        return path;
     }
 
     private SourceJob CreatePending(

@@ -1,5 +1,6 @@
 using Lumina.SourceService.Data;
 using Lumina.SourceService.Services;
+using Lumina.Shared.Events;
 using Lumina.Shared.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -53,6 +54,57 @@ public sealed class SourceFetchQueueTests
 
         Assert.Equal(0, job.MaxRetries);
     }
+
+    [Fact]
+    public async Task EnqueueRepositorySnapshot_IsIdempotentByRequestId()
+    {
+        await using var db = CreateDb();
+        var queue = CreateQueue(db);
+        var request = SnapshotRequest();
+
+        var first = await queue.EnqueueRepositorySnapshotAsync(request);
+        var second = await queue.EnqueueRepositorySnapshotAsync(request);
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Equal(request.RequestId, first.SnapshotRequestId);
+        Assert.Equal(request.ProjectId, first.SnapshotProjectId);
+        Assert.Equal(request.CommitSha, first.SourceBranch);
+        Assert.Equal(request.ManifestPath, first.SnapshotManifestPath);
+        Assert.Equal(SourceType.Git, first.SourceType);
+        Assert.Equal(1, await db.SourceJobs.CountAsync());
+    }
+
+    [Theory]
+    [InlineData("main")]
+    [InlineData("abc123")]
+    [InlineData("gggggggggggggggggggggggggggggggggggggggg")]
+    public async Task EnqueueRepositorySnapshot_RejectsNonCommitReference(string commit)
+    {
+        await using var db = CreateDb();
+        var queue = CreateQueue(db);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            queue.EnqueueRepositorySnapshotAsync(SnapshotRequest() with { CommitSha = commit }));
+    }
+
+    [Fact]
+    public async Task EnqueueRepositorySnapshot_RejectsUnsafeManifestPath()
+    {
+        await using var db = CreateDb();
+        var queue = CreateQueue(db);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            queue.EnqueueRepositorySnapshotAsync(
+                SnapshotRequest() with { ManifestPath = "../packages.yaml" }));
+    }
+
+    private static RepositorySnapshotRequested SnapshotRequest() => new(
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        "https://github.com/lumina/packages.git",
+        new string('a', 40),
+        ".lumina/packages.yaml",
+        DateTime.UtcNow);
 
     private static SourceDbContext CreateDb()
     {

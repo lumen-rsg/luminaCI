@@ -1,5 +1,6 @@
 using Lumina.SourceService.Data;
 using Lumina.SourceService.Services;
+using Lumina.SourceService.Consumers;
 using Lumina.Shared.Extensions;
 using Lumina.Web.Shared;
 using Lumina.Web.Shared.Health;
@@ -47,10 +48,19 @@ try
     });
     builder.Services.AddSingleton<RedisCacheService>();
 
-    // MassTransit — SourceService only publishes, no consumers
+    // MassTransit — durable repository-snapshot requests plus transactional
+    // completion events through the EF inbox/outbox.
     builder.Services.AddMassTransit(x =>
     {
         x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
+
+        x.AddConsumer<RepositorySnapshotRequestedConsumer>();
+        x.AddEntityFrameworkOutbox<SourceDbContext>(outbox =>
+        {
+            outbox.UsePostgres();
+            outbox.UseBusOutbox();
+            outbox.DuplicateDetectionWindow = TimeSpan.FromDays(7);
+        });
 
         x.UsingRabbitMq((ctx, cfg) =>
         {
@@ -58,6 +68,12 @@ try
             {
                 h.Username(builder.Configuration["RabbitMQ:Username"] ?? throw new InvalidOperationException("RabbitMQ:Username not configured"));
                 h.Password(builder.Configuration["RabbitMQ:Password"] ?? throw new InvalidOperationException("RabbitMQ:Password not configured"));
+            });
+
+            cfg.ReceiveEndpoint("lumina-source-service", endpoint =>
+            {
+                endpoint.UseEntityFrameworkOutbox<SourceDbContext>(ctx);
+                endpoint.ConfigureConsumer<RepositorySnapshotRequestedConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
