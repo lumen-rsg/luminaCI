@@ -26,13 +26,37 @@ public sealed class BuildExecutorSelectionPolicyTests
         var configuration = Configuration(
             ("BuildExecutor:Type", "Kubernetes"),
             ("Kubernetes:Enabled", "true"),
-            ("Kubernetes:Namespace", "lumina-builds"));
+            ("Kubernetes:Namespace", "lumina-builds"),
+            ("Kubernetes:RunnerImages:fedora-44-x86_64", Runner("a")),
+            ("Kubernetes:RunnerImages:fedora-44-aarch64", Runner("b")));
 
         Assert.Throws<InvalidOperationException>(() =>
             BuildExecutorSelectionPolicy.Resolve(configuration, false));
         var selection = BuildExecutorSelectionPolicy.Resolve(configuration, true);
         Assert.Equal(BuildExecutorBackend.Kubernetes, selection.Backend);
         Assert.Equal("lumina-builds", selection.KubernetesNamespace);
+    }
+
+    [Fact]
+    public void Resolve_KubernetesRequiresBothKnownDigestPinnedRunners()
+    {
+        var missingRunner = Configuration(
+            ("BuildExecutor:Type", "Kubernetes"),
+            ("Kubernetes:Enabled", "true"),
+            ("Kubernetes:Namespace", "lumina-builds"),
+            ("Kubernetes:RunnerImages:fedora-44-aarch64", Runner("a")));
+        Assert.Throws<InvalidOperationException>(() =>
+            BuildExecutorSelectionPolicy.Resolve(missingRunner, true));
+
+        var unknownRunner = Configuration(
+            ("BuildExecutor:Type", "Kubernetes"),
+            ("Kubernetes:Enabled", "true"),
+            ("Kubernetes:Namespace", "lumina-builds"),
+            ("Kubernetes:RunnerImages:fedora-44-x86_64", Runner("a")),
+            ("Kubernetes:RunnerImages:fedora-44-aarch64", Runner("b")),
+            ("Kubernetes:RunnerImages:fedora-45-aarch64", Runner("c")));
+        Assert.Throws<InvalidOperationException>(() =>
+            BuildExecutorSelectionPolicy.Resolve(unknownRunner, true));
     }
 
     [Theory]
@@ -45,7 +69,9 @@ public sealed class BuildExecutorSelectionPolicyTests
             Configuration(
                 ("BuildExecutor:Type", "Kubernetes"),
                 ("Kubernetes:Enabled", "true"),
-                ("Kubernetes:Namespace", buildNamespace)),
+                ("Kubernetes:Namespace", buildNamespace),
+                ("Kubernetes:RunnerImages:fedora-44-x86_64", Runner("a")),
+                ("Kubernetes:RunnerImages:fedora-44-aarch64", Runner("b"))),
             true));
     }
 
@@ -80,4 +106,7 @@ public sealed class BuildExecutorSelectionPolicyTests
             .AddInMemoryCollection(values.Select(item =>
                 new KeyValuePair<string, string?>(item.Key, item.Value)))
             .Build();
+
+    private static string Runner(string digestCharacter) =>
+        $"registry.example/lumina/fedora-runner@sha256:{new string(digestCharacter[0], 64)}";
 }

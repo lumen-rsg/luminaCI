@@ -25,9 +25,9 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
-    // Kubernetes remains unavailable until its durable transport is complete.
-    // An operator selecting it early receives a startup failure instead of a
-    // silent fallback to Docker or partially monitored cluster Jobs.
+    // Kubernetes remains unavailable until the runner input/upload transport is
+    // complete. Policy and readiness are already fail-closed so enabling this
+    // gate later cannot bypass mutable-runner or cluster-permission checks.
     var executorSelection = BuildExecutorSelectionPolicy.Resolve(
         builder.Configuration, kubernetesTransportAvailable: false);
     builder.Services.AddSingleton(executorSelection);
@@ -60,6 +60,7 @@ try
     builder.Services.AddScoped<DockerBuildService>();
     builder.Services.AddSingleton<k8s.Kubernetes>(_ =>
         new k8s.Kubernetes(k8s.KubernetesClientConfiguration.BuildDefaultConfig()));
+    builder.Services.AddSingleton<IKubernetesReadinessProbe, KubernetesReadinessProbe>();
     builder.Services.AddSingleton<IKubernetesApiOperations, KubernetesApiOperations>();
     builder.Services.AddSingleton<IKubernetesBuildResourceClient, KubernetesBuildResourceClient>();
     builder.Services.AddSingleton<IKubernetesArtifactObjectStore, KubernetesArtifactObjectStore>();
@@ -173,8 +174,16 @@ try
         options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(30);
     });
     builder.Services.AddSwaggerGen();
-    builder.Services.AddLuminaCoreReadiness<BuildDbContext>()
-        .AddCheck<DockerReadinessHealthCheck>("docker-and-runners", tags: ["ready"], timeout: TimeSpan.FromSeconds(10))
+    var readinessChecks = builder.Services.AddLuminaCoreReadiness<BuildDbContext>()
+        .AddCheck<DockerReadinessHealthCheck>("docker-and-runners", tags: ["ready"], timeout: TimeSpan.FromSeconds(10));
+    if (executorSelection.Backend == BuildExecutorBackend.Kubernetes)
+    {
+        readinessChecks.AddCheck<KubernetesReadinessHealthCheck>(
+            "kubernetes-executor",
+            tags: ["ready"],
+            timeout: TimeSpan.FromSeconds(15));
+    }
+    readinessChecks
         .AddConfiguredHttpReadiness("minio", "MinIO:Endpoint", "minio:9000", "/minio/health/ready")
         .AddWritableDirectoriesReadiness(
             "/app/builds",

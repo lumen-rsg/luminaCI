@@ -34,6 +34,7 @@ public static partial class BuildExecutorSelectionPolicy
         var buildNamespace = configuration["Kubernetes:Namespace"]?.Trim() ?? string.Empty;
         if (!NamespacePattern().IsMatch(buildNamespace))
             throw new InvalidOperationException("Kubernetes:Namespace must be a valid DNS label.");
+        KubernetesBuildPolicy.ValidateConfiguration(configuration);
         return new BuildExecutorSelection(BuildExecutorBackend.Kubernetes, buildNamespace);
     }
 

@@ -13,6 +13,7 @@ namespace Lumina.BuildService.Services;
 public static class KubernetesJobFactory
 {
     public const string ContainerName = "fedora-builder";
+    public const string RunnerServiceAccountName = "lumina-build-runner";
     public const string WorkerLabel = "lumina.1t.ru/build-worker";
     public const string WorkerTaint = "lumina.1t.ru/build-worker";
 
@@ -79,6 +80,7 @@ public static class KubernetesJobFactory
                     Spec = new V1PodSpec
                     {
                         AutomountServiceAccountToken = false,
+                        ServiceAccountName = RunnerServiceAccountName,
                         EnableServiceLinks = false,
                         HostNetwork = false,
                         HostPID = false,

@@ -4,12 +4,17 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Lumina.BuildService.Health;
 
-public sealed class DockerReadinessHealthCheck(IConfiguration configuration) : IHealthCheck
+public sealed class DockerReadinessHealthCheck(
+    IConfiguration configuration,
+    BuildExecutorSelection executorSelection) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context,
         CancellationToken cancellationToken = default)
     {
+        if (executorSelection.Backend != Lumina.Shared.Models.Enums.BuildExecutorBackend.Docker)
+            return HealthCheckResult.Healthy("Docker executor is not selected.");
+
         var endpoint = configuration["Docker:SocketPath"] ?? "/var/run/docker.sock";
         var dockerUri = endpoint.Contains("://", StringComparison.Ordinal)
             ? new Uri(endpoint)

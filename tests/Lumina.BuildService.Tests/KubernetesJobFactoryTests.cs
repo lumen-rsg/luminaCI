@@ -76,6 +76,7 @@ public sealed class KubernetesJobFactoryTests
         Assert.Equal(0, manifest.Spec.BackoffLimit);
         Assert.Equal("Never", pod.RestartPolicy);
         Assert.False(pod.AutomountServiceAccountToken);
+        Assert.Equal(KubernetesJobFactory.RunnerServiceAccountName, pod.ServiceAccountName);
         Assert.False(pod.EnableServiceLinks);
         Assert.False(pod.HostNetwork);
         Assert.False(pod.HostPID);

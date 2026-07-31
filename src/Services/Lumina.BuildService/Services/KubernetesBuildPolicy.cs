@@ -22,6 +22,37 @@ public static partial class KubernetesBuildPolicy
             ["fedora-44-aarch64"] = "arm64"
         };
 
+    public static IReadOnlyList<KubernetesRunner> ValidateConfiguration(
+        IConfiguration configuration)
+    {
+        ResolveLimits(configuration);
+        var configuredProfiles = configuration.GetSection("Kubernetes:RunnerImages")
+            .GetChildren()
+            .Select(item => item.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        var unknownProfiles = configuredProfiles.Except(Architectures.Keys, StringComparer.Ordinal).ToList();
+        if (unknownProfiles.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Unknown Kubernetes runner profiles: {string.Join(", ", unknownProfiles.Order(StringComparer.Ordinal))}.");
+        }
+
+        return Architectures.Select(profile =>
+        {
+            var rpmArchitecture = profile.Value == "arm64" ? "aarch64" : "x86_64";
+            return ResolveRunner(
+                configuration,
+                new BuildJob
+                {
+                    BuildProfile = profile.Key,
+                    TargetDistribution = "fedora",
+                    TargetRelease = "44",
+                    TargetArchitecture = rpmArchitecture
+                },
+                requestedImage: null);
+        }).ToList();
+    }
+
     public static KubernetesRunner ResolveRunner(
         IConfiguration configuration,
         BuildJob job,

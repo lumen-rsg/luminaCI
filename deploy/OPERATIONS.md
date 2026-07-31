@@ -50,6 +50,50 @@ MinIO objects in `tests/ci/backup-restore.sh`. Production operators must run
 the same exercise against a disposable restore environment on the retention
 schedule and record the recovery point and recovery time.
 
+## Kubernetes build namespace
+
+The Kubernetes executor is still gated off while immutable runner input and
+short-lived artifact-upload transport are being completed. Do not override that
+code gate or switch `BuildExecutor:Type` yet. The namespace policy can be applied
+in advance:
+
+```bash
+kubectl apply --server-side --field-manager=lumina-bootstrap \
+  -f deploy/kubernetes/build-namespace.yaml
+```
+
+The manifest creates a Pod Security `restricted` namespace, a namespace-wide
+default-deny NetworkPolicy, bounded quota/default limits, and two identities:
+
+- `lumina-build-controller` has only the Job, Pod-log, and per-Job
+  NetworkPolicy operations used by BuildService.
+- `lumina-build-runner` has no RBAC grants and never receives an automatically
+  mounted service-account token.
+
+If BuildService remains outside the cluster, provision a short-lived,
+rotatable kubeconfig for the controller service account through the cluster's
+credential workflow. Never copy its token into a build Job or runner image.
+Before enablement, confirm each required permission with `kubectl auth can-i
+--as=system:serviceaccount:lumina-builds:lumina-build-controller -n
+lumina-builds`, and confirm the BuildService `/health/ready` response reports
+the `kubernetes-executor` check healthy.
+
+Every native worker must be dedicated before it accepts builds. Replace the
+placeholder with the exact node name and verify the architecture label already
+reported by kubelet:
+
+```bash
+kubectl label node NODE_NAME lumina.1t.ru/build-worker=true
+kubectl taint node NODE_NAME lumina.1t.ru/build-worker=true:NoSchedule
+kubectl get node NODE_NAME -L kubernetes.io/arch,lumina.1t.ru/build-worker
+```
+
+Do not add a toleration for this taint to ordinary services. Fedora runner
+images must be configured for both `fedora-44-x86_64` and
+`fedora-44-aarch64`, each by full `sha256` digest; startup rejects missing,
+unknown, mutable, or truncated runner references once Kubernetes selection is
+unlocked.
+
 ## Audit ledger
 
 The gateway records every public API mutation attempt and outcome in
