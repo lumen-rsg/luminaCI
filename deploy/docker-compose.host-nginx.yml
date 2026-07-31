@@ -25,8 +25,8 @@ services:
     restart: unless-stopped
   repository-service:
     restart: unless-stopped
-    volumes:
-      - /home/mir1tlinux/lumina-ci-repositories:/app/repos/var/lib/lumina/repositories
+    volumes: !override
+      - /home/mir1tlinux/lumina-ci-repository-data:/app/repos
   source-service:
     restart: unless-stopped
   webapp:
