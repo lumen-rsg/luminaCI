@@ -11,6 +11,10 @@ namespace Lumina.BuildService.Services.PackageGraph;
 public static partial class PackageGraphPlanner
 {
     public const string ManifestPath = ".lumina/packages.yaml";
+    private const int MaxPackages = 512;
+    private const int MaxPathsPerPackage = 256;
+    private const int MaxDependenciesPerPackage = 256;
+    private const int MaxTargetsPerPackage = 8;
 
     public static PackageBuildPlan Plan(
         RepositoryPackageGraph graph,
@@ -78,6 +82,8 @@ public static partial class PackageGraphPlanner
             throw new ValidationException("Package graph version must be 1.");
         if (graph.Packages is null || graph.Packages.Count == 0)
             throw new ValidationException("Package graph must declare at least one package.");
+        if (graph.Packages.Count > MaxPackages)
+            throw new ValidationException($"Package graph may declare at most {MaxPackages} packages.");
         if (supportedTargets.Count == 0)
             throw new ValidationException("At least one administrator-supported target is required.");
 
@@ -105,6 +111,9 @@ public static partial class PackageGraphPlanner
 
             if (definition.Paths is null || definition.Paths.Count == 0)
                 throw new ValidationException($"Package '{id}' must declare at least one input path.");
+            if (definition.Paths.Count > MaxPathsPerPackage)
+                throw new ValidationException(
+                    $"Package '{id}' may declare at most {MaxPathsPerPackage} input paths.");
             var paths = definition.Paths.Select(path => NormalizePattern(path, id))
                 .Distinct(StringComparer.Ordinal)
                 .Order(StringComparer.Ordinal)
@@ -112,6 +121,9 @@ public static partial class PackageGraphPlanner
 
             if (definition.Targets is null || definition.Targets.Count == 0)
                 throw new ValidationException($"Package '{id}' must declare at least one target.");
+            if (definition.Targets.Count > MaxTargetsPerPackage)
+                throw new ValidationException(
+                    $"Package '{id}' may declare at most {MaxTargetsPerPackage} targets.");
             var targets = definition.Targets
                 .Select(target => target?.Trim().ToLowerInvariant() ?? string.Empty)
                 .Distinct(StringComparer.Ordinal)
@@ -126,6 +138,9 @@ public static partial class PackageGraphPlanner
                 .Distinct(StringComparer.Ordinal)
                 .Order(StringComparer.Ordinal)
                 .ToList();
+            if (dependencies.Count > MaxDependenciesPerPackage)
+                throw new ValidationException(
+                    $"Package '{id}' may declare at most {MaxDependenciesPerPackage} dependencies.");
             if (dependencies.Any(dependency => !PackageIdPattern().IsMatch(dependency)))
                 throw new ValidationException($"Package '{id}' contains an invalid dependency ID.");
             if (dependencies.Contains(id, StringComparer.Ordinal))
