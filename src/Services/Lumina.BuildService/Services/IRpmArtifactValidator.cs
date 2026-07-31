@@ -9,8 +9,18 @@ public interface IRpmArtifactValidator
     Task<RpmValidationResult> ValidateAsync(string path, CancellationToken cancellationToken = default);
 }
 
-public sealed record RpmValidationResult(bool IsValid, string? Nevra, string? Error)
+public sealed record RpmValidationResult(
+    bool IsValid,
+    string? Nevra,
+    string? Architecture,
+    string? ExpectedFileName,
+    string? Error)
 {
-    public static RpmValidationResult Valid(string nevra) => new(true, nevra, null);
-    public static RpmValidationResult Invalid(string error) => new(false, null, error);
+    public static RpmValidationResult Valid(
+        string nevra,
+        string architecture,
+        string expectedFileName) =>
+        new(true, nevra, architecture, expectedFileName, null);
+
+    public static RpmValidationResult Invalid(string error) => new(false, null, null, null, error);
 }

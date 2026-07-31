@@ -62,6 +62,8 @@ try
         new k8s.Kubernetes(k8s.KubernetesClientConfiguration.BuildDefaultConfig()));
     builder.Services.AddSingleton<IKubernetesApiOperations, KubernetesApiOperations>();
     builder.Services.AddSingleton<IKubernetesBuildResourceClient, KubernetesBuildResourceClient>();
+    builder.Services.AddSingleton<IKubernetesArtifactObjectStore, KubernetesArtifactObjectStore>();
+    builder.Services.AddScoped<IKubernetesArtifactImporter, KubernetesArtifactImporter>();
     builder.Services.AddScoped<IKubernetesBuildCompletion, KubernetesBuildCompletion>();
     builder.Services.AddScoped<KubernetesBuildExecutor>();
     builder.Services.AddSingleton(new BuildExecutorRegistration(
@@ -88,6 +90,8 @@ try
     builder.Services.AddScoped<ArtifactStorageService>();
     builder.Services.AddHttpClient("ArtifactStorage", client =>
         client.Timeout = TimeSpan.FromMinutes(2));
+    builder.Services.AddHttpClient("KubernetesArtifacts", client =>
+        client.Timeout = TimeSpan.FromMinutes(30));
     builder.Services.AddHttpClient("RepositorySnapshots", client =>
         client.Timeout = TimeSpan.FromMinutes(30));
     builder.Services.AddMinio(client => client

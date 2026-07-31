@@ -57,7 +57,8 @@ public sealed class RpmArtifactValidator : IRpmArtifactValidator
         startInfo.ArgumentList.Add("--query");
         startInfo.ArgumentList.Add("--package");
         startInfo.ArgumentList.Add("--queryformat");
-        startInfo.ArgumentList.Add("%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}");
+        startInfo.ArgumentList.Add(
+            "%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\t%{ARCH}\t%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}.rpm");
         startInfo.ArgumentList.Add(path);
 
         try
@@ -91,10 +92,17 @@ public sealed class RpmArtifactValidator : IRpmArtifactValidator
                 return RpmValidationResult.Invalid(
                     string.IsNullOrWhiteSpace(stderr) ? $"rpm exited with code {process.ExitCode}" : stderr);
 
-            if (string.IsNullOrWhiteSpace(stdout) || stdout.Contains("(none)", StringComparison.OrdinalIgnoreCase))
+            var fields = stdout.Split('\t', StringSplitOptions.TrimEntries);
+            if (fields.Length != 3 ||
+                fields.Any(string.IsNullOrWhiteSpace) ||
+                fields[0].Contains("(none)", StringComparison.OrdinalIgnoreCase) ||
+                fields[1].Contains("(none)", StringComparison.OrdinalIgnoreCase) ||
+                fields[2].Contains("(none)", StringComparison.OrdinalIgnoreCase))
+            {
                 return RpmValidationResult.Invalid("RPM is missing required NEVRA metadata");
+            }
 
-            return RpmValidationResult.Valid(stdout);
+            return RpmValidationResult.Valid(fields[0], fields[1], fields[2]);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {

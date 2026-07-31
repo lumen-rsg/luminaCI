@@ -376,7 +376,7 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var completion = scope.ServiceProvider.GetRequiredService<IKubernetesBuildCompletion>();
-            await completion.CompleteAsync(
+            succeeded = await completion.CompleteAsync(
                 buildJobId,
                 logs,
                 succeeded,

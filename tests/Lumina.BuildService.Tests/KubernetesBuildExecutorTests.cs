@@ -88,6 +88,41 @@ public sealed class KubernetesBuildExecutorTests
         Assert.False(resources.EnsureCalled);
     }
 
+    [Fact]
+    public async Task MonitorBuildAsync_PublishesTrustedCompletionOutcome()
+    {
+        var resources = new FakeResources
+        {
+            Observation = new KubernetesBuildObservation(
+                KubernetesBuildPhase.Succeeded,
+                "pod-1",
+                "Completed",
+                DateTimeOffset.UtcNow),
+            Logs = "build output"
+        };
+        var completion = new FakeCompletion { FinalResult = false };
+        using var services = Services(resources, completion);
+        var job = Job(withUid: true);
+        var execution = services.GetRequiredService<BuildExecutionCoordinator>();
+        job.LeaseOwner = execution.WorkerId;
+        await SeedAsync(services, job);
+        await execution.AcquireAsync(job.Id, recovered: true);
+        var streams = services.GetRequiredService<IBuildLogStreamHub>();
+        streams.Start(job.Id);
+        var subscription = await streams.SubscribeAsync(job.Id);
+
+        await using (var scope = services.CreateAsyncScope())
+        {
+            await Executor(scope.ServiceProvider, resources, execution).MonitorBuildAsync(job);
+        }
+
+        Assert.Equal((job.Id, true, "build output", "Completed"), completion.Call);
+        Assert.Equal("build output", await subscription.Reader!.ReadAsync());
+        Assert.Equal("[BUILD FAILED]", await subscription.Reader.ReadAsync());
+        Assert.True(resources.DeleteCalled);
+        streams.Unsubscribe(job.Id, subscription.Reader);
+    }
+
     private static KubernetesBuildExecutor Executor(
         IServiceProvider services,
         IKubernetesBuildResourceClient resources,
@@ -202,8 +237,9 @@ public sealed class KubernetesBuildExecutorTests
     private sealed class FakeCompletion : IKubernetesBuildCompletion
     {
         public (Guid Id, bool Succeeded, string? Logs, string? Error)? Call { get; private set; }
+        public bool? FinalResult { get; init; }
 
-        public Task CompleteAsync(
+        public Task<bool> CompleteAsync(
             Guid buildJobId,
             string? logs,
             bool succeeded,
@@ -211,7 +247,7 @@ public sealed class KubernetesBuildExecutorTests
             CancellationToken cancellationToken)
         {
             Call = (buildJobId, succeeded, logs, error);
-            return Task.CompletedTask;
+            return Task.FromResult(FinalResult ?? succeeded);
         }
     }
 

@@ -12,6 +12,14 @@ public sealed class RpmArtifactValidatorTests
             new ConfigurationBuilder().Build(),
             NullLogger<RpmArtifactValidator>.Instance);
 
+    private static RpmArtifactValidator CreateValidator(string executable)
+        => new(
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Rpm:Executable"] = executable
+            }).Build(),
+            NullLogger<RpmArtifactValidator>.Instance);
+
     [Fact]
     public async Task ValidateAsync_RejectsMissingFile()
     {
@@ -57,6 +65,39 @@ public sealed class RpmArtifactValidatorTests
         finally
         {
             File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ValidateAsync_ReturnsNevraAndHeaderArchitecture()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var directory = Path.Combine(Path.GetTempPath(), $"lumina-rpm-validator-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var rpmPath = Path.Combine(directory, "package.rpm");
+        var executable = Path.Combine(directory, "fake-rpm");
+        await File.WriteAllBytesAsync(rpmPath, [0xed, 0xab, 0xee, 0xdb, 1]);
+        await File.WriteAllTextAsync(
+            executable,
+            "#!/bin/sh\nprintf 'kernel-0:1.0-1.aarch64\\taarch64\\tkernel-1.0-1.aarch64.rpm'");
+        File.SetUnixFileMode(
+            executable,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        try
+        {
+            var result = await CreateValidator(executable).ValidateAsync(rpmPath);
+
+            Assert.True(result.IsValid);
+            Assert.Equal("kernel-0:1.0-1.aarch64", result.Nevra);
+            Assert.Equal("aarch64", result.Architecture);
+            Assert.Equal("kernel-1.0-1.aarch64.rpm", result.ExpectedFileName);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
         }
     }
 }
