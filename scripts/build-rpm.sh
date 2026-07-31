@@ -681,12 +681,27 @@ install -o root -g root -m 0444 "${SOURCE_RPM}" "${ROOT_SRPM}"
 SOURCE_RPM="${ROOT_SRPM}"
 
 # Root consumes only dependency tags from the already-created SRPM. It never
-# invokes RPM's macro engine on the raw attacker-controlled spec.
-echo "Installing build dependencies from SRPM metadata (as root)..."
-if ! dnf --disablerepo='*' --enablerepo=fedora builddep -y \
-    "${SOURCE_RPM}"; then
-    echo "ERROR: dnf builddep failed — see stderr above for the unresolvable/missing dependencies."
+# invokes RPM's macro engine on the raw attacker-controlled spec. Avoid loading
+# repository metadata when the SRPM has no external BuildRequires; rpmlib(...)
+# entries describe RPM format capabilities and are already satisfied by rpm.
+echo "Inspecting build dependencies from SRPM metadata..."
+if ! srpm_requirements="$(rpm -qp --requires "${SOURCE_RPM}")"; then
+    echo "ERROR: could not read build dependencies from the prepared SRPM."
     exit 1
+fi
+external_build_requirements="$({
+    printf '%s\n' "${srpm_requirements}" | grep -v '^rpmlib(' || true
+} | sed '/^[[:space:]]*$/d')"
+
+if [ -n "${external_build_requirements}" ]; then
+    echo "Installing build dependencies from SRPM metadata (as root)..."
+    if ! dnf --disablerepo='*' --enablerepo=fedora builddep -y \
+        "${SOURCE_RPM}"; then
+        echo "ERROR: dnf builddep failed — see stderr above for the unresolvable/missing dependencies."
+        exit 1
+    fi
+else
+    echo "No external build dependencies declared; skipping repository metadata load."
 fi
 
 # Run the untrusted build phase as uid 1000.
