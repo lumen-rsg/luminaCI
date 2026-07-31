@@ -25,11 +25,11 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
-    // Kubernetes remains unavailable until the runner input/upload transport is
-    // complete. Policy and readiness are already fail-closed so enabling this
-    // gate later cannot bypass mutable-runner or cluster-permission checks.
+    // The durable Kubernetes transport is complete. Selection remains an
+    // explicit, fail-closed operator choice and validates the namespace,
+    // digest-pinned runners, network boundary, and live cluster permissions.
     var executorSelection = BuildExecutorSelectionPolicy.Resolve(
-        builder.Configuration, kubernetesTransportAvailable: false);
+        builder.Configuration, kubernetesTransportAvailable: true);
     builder.Services.AddSingleton(executorSelection);
 
     builder.Services.AddLuminaOpenTelemetry(

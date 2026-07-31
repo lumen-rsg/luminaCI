@@ -52,10 +52,10 @@ schedule and record the recovery point and recovery time.
 
 ## Kubernetes build namespace
 
-The Kubernetes executor is still gated off while immutable runner input and
-short-lived artifact-upload transport are being completed. Do not override that
-code gate or switch `BuildExecutor:Type` yet. The namespace policy can be applied
-in advance:
+The Kubernetes executor has a complete immutable input and short-lived artifact
+transport, but remains disabled by default. Keep `BUILD_EXECUTOR_TYPE=Docker`
+and `KUBERNETES_ENABLED=false` until both native workers pass the checks below.
+The namespace policy can be applied in advance:
 
 ```bash
 kubectl apply --server-side --field-manager=lumina-bootstrap \
@@ -92,7 +92,9 @@ Do not add a toleration for this taint to ordinary services. Fedora runner
 images must be configured for both `fedora-44-x86_64` and
 `fedora-44-aarch64`, each by full `sha256` digest; startup rejects missing,
 unknown, mutable, or truncated runner references once Kubernetes selection is
-unlocked.
+enabled. Cut over only by changing both `BUILD_EXECUTOR_TYPE=Kubernetes` and
+`KUBERNETES_ENABLED=true`; the service fails startup instead of falling back to
+Docker if the runner or cluster policy is incomplete.
 
 ## Audit ledger
 
