@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lumina-userns-smoke
+  namespace: lumina-builds
+  labels:
+    app.kubernetes.io/name: lumina-userns-smoke
+spec:
+  hostUsers: false
+  automountServiceAccountToken: false
+  serviceAccountName: lumina-build-runner
+  restartPolicy: Never
+  activeDeadlineSeconds: 300
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    lumina.1t.ru/build-worker: "true"
+  containers:
+    - name: smoke
+      image: fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/bash
+        - -euc
+        - |
+          id
+          touch /workspace/userns-write
+          stat --format='workspace_uid=%u workspace_gid=%g' /workspace/userns-write
+          sleep 240
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: false
+        runAsUser: 0
+        runAsGroup: 0
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+  volumes:
+    - name: workspace
+      emptyDir:
+        sizeLimit: 64Mi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lumina-userns-smoke
+  namespace: lumina-builds
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lumina-userns-smoke
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 146.120.224.52/32
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

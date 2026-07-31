@@ -1,0 +1,18 @@
+[Unit]
+Description=Restrict the Lumina Kubernetes API to trusted networks
+Documentation=man:nft(8)
+DefaultDependencies=no
+Before=k3s.service
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/sbin/nft delete table inet lumina_k3s_api
+ExecStart=/usr/sbin/nft -f /etc/rancher/k3s/api-firewall.nft
+ExecReload=/bin/sh -c '/usr/sbin/nft delete table inet lumina_k3s_api || true; /usr/sbin/nft -f /etc/rancher/k3s/api-firewall.nft'
+ExecStop=-/usr/sbin/nft delete table inet lumina_k3s_api
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+table inet lumina_k3s_api {
+    chain input {
+        type filter hook input priority -10; policy accept;
+
+        # Local administration, pod traffic, the private worker mesh, and the
+        # Lumina Compose network may authenticate to the Kubernetes API.
+        tcp dport 6443 ip saddr {
+            127.0.0.0/8,
+            10.42.0.0/16,
+            10.77.0.0/24,
+            172.21.0.0/16
+        } accept
+        tcp dport 6443 ip6 saddr ::1 accept
+
+        # K3s binds the node address so its ClusterIP endpoint works, but the
+        # API is never reachable directly from the public internet.
+        tcp dport 6443 drop
+    }
+}

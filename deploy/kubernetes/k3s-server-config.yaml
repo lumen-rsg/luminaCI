@@ -1,7 +1,6 @@
-# Single-server bootstrap. The API remains loopback-only until the native ARM64
-# worker has a private WireGuard address; do not expose 6443 on the public NIC.
-bind-address: 127.0.0.1
-advertise-address: 127.0.0.1
+# The API must be node-reachable for in-cluster clients. The companion nftables
+# service drops public 6443 traffic before this listener is started.
+bind-address: 0.0.0.0
 write-kubeconfig-mode: "0640"
 write-kubeconfig-group: lumina-kube
 secrets-encryption: true

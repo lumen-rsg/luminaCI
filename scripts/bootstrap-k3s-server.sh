@@ -49,6 +49,8 @@ fi
 declare -A managed_files=(
     ["${repository_root}/deploy/kubernetes/k3s-server-config.yaml"]="/etc/rancher/k3s/config.yaml"
     ["${repository_root}/deploy/kubernetes/k3s.service"]="/etc/systemd/system/k3s.service"
+    ["${repository_root}/deploy/kubernetes/k3s-api-firewall.nft"]="/etc/rancher/k3s/api-firewall.nft"
+    ["${repository_root}/deploy/kubernetes/lumina-k3s-api-firewall.service"]="/etc/systemd/system/lumina-k3s-api-firewall.service"
 )
 for source_path in "${!managed_files[@]}"; do
     destination_path="${managed_files[${source_path}]}"
@@ -86,8 +88,15 @@ install -o root -g root -m 0644 \
 install -o root -g root -m 0644 \
     "${repository_root}/deploy/kubernetes/k3s.service" \
     /etc/systemd/system/k3s.service
+install -o root -g root -m 0600 \
+    "${repository_root}/deploy/kubernetes/k3s-api-firewall.nft" \
+    /etc/rancher/k3s/api-firewall.nft
+install -o root -g root -m 0644 \
+    "${repository_root}/deploy/kubernetes/lumina-k3s-api-firewall.service" \
+    /etc/systemd/system/lumina-k3s-api-firewall.service
 
 systemctl daemon-reload
+systemctl enable --now lumina-k3s-api-firewall.service
 systemctl enable --now k3s.service
 
 for _ in {1..60}; do

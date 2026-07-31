@@ -1,8 +1,8 @@
 [Unit]
 Description=Lumina Kubernetes control plane
 Documentation=https://docs.k3s.io
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target lumina-k3s-api-firewall.service
+After=network-online.target lumina-k3s-api-firewall.service
 
 [Service]
 Type=notify
