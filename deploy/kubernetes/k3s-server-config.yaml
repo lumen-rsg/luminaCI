@@ -3,6 +3,7 @@
 bind-address: 0.0.0.0
 tls-san:
   - host.docker.internal
+  - 10.77.0.1
 write-kubeconfig-mode: "0640"
 write-kubeconfig-group: lumina-kube
 secrets-encryption: true
