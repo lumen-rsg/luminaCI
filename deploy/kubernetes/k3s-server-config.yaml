@@ -1,0 +1,15 @@
+# Single-server bootstrap. The API remains loopback-only until the native ARM64
+# worker has a private WireGuard address; do not expose 6443 on the public NIC.
+bind-address: 127.0.0.1
+advertise-address: 127.0.0.1
+write-kubeconfig-mode: "0640"
+write-kubeconfig-group: lumina-kube
+secrets-encryption: true
+flannel-backend: wireguard-native
+disable:
+  - traefik
+  - servicelb
+  - local-storage
+node-label:
+  - lumina.1t.ru/build-worker=true
+protect-kernel-defaults: false
