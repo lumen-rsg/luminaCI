@@ -82,14 +82,19 @@ public sealed class KubernetesJobFactoryTests
         Assert.False(pod.HostNetwork);
         Assert.False(pod.HostPID);
         Assert.False(pod.HostIPC);
+        Assert.False(pod.HostUsers);
         Assert.Equal("arm64", pod.NodeSelector["kubernetes.io/arch"]);
         Assert.Equal("true", pod.NodeSelector[KubernetesJobFactory.WorkerLabel]);
         Assert.Equal("NoSchedule", Assert.Single(pod.Tolerations).Effect);
         Assert.Equal(Digest, container.Image);
-        Assert.True(container.SecurityContext.RunAsNonRoot);
+        Assert.False(container.SecurityContext.RunAsNonRoot);
+        Assert.Equal(0, container.SecurityContext.RunAsUser);
         Assert.False(container.SecurityContext.AllowPrivilegeEscalation);
-        Assert.True(container.SecurityContext.ReadOnlyRootFilesystem);
+        Assert.False(container.SecurityContext.ReadOnlyRootFilesystem);
         Assert.Equal(["ALL"], container.SecurityContext.Capabilities.Drop);
+        Assert.Equal(
+            ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETFCAP", "SETGID", "SETUID"],
+            container.SecurityContext.Capabilities.Add);
         Assert.Equal("RuntimeDefault", container.SecurityContext.SeccompProfile.Type);
         Assert.Equal("RuntimeDefault", pod.SecurityContext.SeccompProfile.Type);
         Assert.NotNull(container.Resources.Requests["ephemeral-storage"]);
@@ -109,6 +114,12 @@ public sealed class KubernetesJobFactoryTests
             variable.Name.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) ||
             variable.Name.Contains("SECRET", StringComparison.OrdinalIgnoreCase) ||
             variable.Name.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(
+            "jetson/kernel-tegra.spec",
+            Assert.Single(container.Env, variable => variable.Name == "SPEC_PATH_IN_REPO").Value);
+        Assert.Equal(
+            "sha256:" + new string('a', 64),
+            Assert.Single(container.Env, variable => variable.Name == "RUNNER_IMAGE_DIGEST").Value);
         var serialized = KubernetesJson.Serialize(manifest);
         Assert.Contains("\"automountServiceAccountToken\":false", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("hostPath", serialized, StringComparison.Ordinal);
@@ -144,16 +155,31 @@ public sealed class KubernetesJobFactoryTests
             job, new KubernetesRunner(job.BuildProfile, "arm64", Digest), limits));
     }
 
+    [Fact]
+    public void Create_RejectsMissingOrAmbiguousSourceSpecPath()
+    {
+        var job = Job();
+        var limits = KubernetesBuildPolicy.ResolveLimits(Configuration());
+        var runner = new KubernetesRunner(job.BuildProfile, "arm64", Digest);
+        job.SourceUrl = "git://https://example.com/lumina.git#branch=main";
+        Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(job, runner, limits));
+
+        job.SourceUrl = "git://https://example.com/lumina.git#specPath=one.spec&specPath=two.spec";
+        Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(job, runner, limits));
+    }
+
     private static BuildJob Job() => new()
     {
         Id = Guid.NewGuid(),
         PipelineId = Guid.NewGuid(),
         SpecName = "kernel-tegra.spec",
+        SourceUrl = "git://https://example.com/lumina.git#branch=main&specPath=jetson/kernel-tegra.spec&commit=" + new string('b', 40),
         CommitSha = new string('b', 40),
         TargetDistribution = "fedora",
         TargetRelease = "44",
         TargetArchitecture = "aarch64",
-        BuildProfile = "fedora-44-aarch64"
+        BuildProfile = "fedora-44-aarch64",
+        RunnerImageDigest = "sha256:" + new string('a', 64)
     };
 
     private static IConfiguration Configuration(params (string Key, string Value)[] values) =>

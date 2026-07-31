@@ -1,0 +1,147 @@
+#!/bin/bash
+# Kubernetes transport wrapper for the administrator-owned Fedora RPM runner.
+# Presigned URLs are read from a Job-owned Secret and are never printed.
+
+set -euo pipefail
+umask 077
+
+readonly TRANSPORT_PATH="/run/lumina-transport/transport.json"
+readonly WORKSPACE="/workspace"
+readonly MAX_ARTIFACT_BYTES=$((8 * 1024 * 1024 * 1024))
+readonly MAX_TOTAL_BYTES=$((32 * 1024 * 1024 * 1024))
+readonly MAX_ARTIFACTS=256
+
+fail() {
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
+
+[[ "${1:-}" == "--job-id" && -n "${2:-}" && $# -eq 2 ]] \
+    || fail "usage: lumina-kubernetes-build --job-id <uuid>"
+readonly requested_job_id="$2"
+[[ -r "${TRANSPORT_PATH}" ]] || fail "Kubernetes transport document is unavailable"
+
+transport_is_valid='type == "object" and
+  (keys | sort) == (["artifactBundleObjectName","artifactBundleUploadUrl","buildJobId","expiresAt","kubernetesJobUid","snapshotDownloadUrl","snapshotObjectName","snapshotSha256","snapshotSize","version"] | sort) and
+  .version == 1 and
+  (.buildJobId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+  (.kubernetesJobUid | type == "string" and test("^[a-z0-9-]{1,128}$")) and
+  (.snapshotObjectName | type == "string" and length >= 1 and length <= 1024) and
+  (.snapshotSha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+  (.snapshotSize | type == "number" and . > 0 and floor == .) and
+  (.snapshotDownloadUrl | type == "string" and test("^https?://[^[:space:]]+\\?[^[:space:]]+$")) and
+  (.artifactBundleObjectName | type == "string") and
+  (.artifactBundleUploadUrl | type == "string" and test("^https?://[^[:space:]]+\\?[^[:space:]]+$")) and
+  (.expiresAt | type == "string")'
+jq -e "${transport_is_valid}" "${TRANSPORT_PATH}" >/dev/null \
+    || fail "Kubernetes transport document is invalid"
+
+readonly build_job_id="$(jq -r '.buildJobId' "${TRANSPORT_PATH}")"
+readonly kubernetes_job_uid="$(jq -r '.kubernetesJobUid' "${TRANSPORT_PATH}")"
+readonly snapshot_size="$(jq -r '.snapshotSize' "${TRANSPORT_PATH}")"
+readonly snapshot_sha256="$(jq -r '.snapshotSha256' "${TRANSPORT_PATH}")"
+readonly snapshot_url="$(jq -r '.snapshotDownloadUrl' "${TRANSPORT_PATH}")"
+readonly bundle_object="$(jq -r '.artifactBundleObjectName' "${TRANSPORT_PATH}")"
+readonly bundle_url="$(jq -r '.artifactBundleUploadUrl' "${TRANSPORT_PATH}")"
+readonly compact_job_id="${build_job_id//-/}"
+readonly expected_bundle_object="jobs/${compact_job_id}/${kubernetes_job_uid}/bundle.tar"
+
+[[ "${requested_job_id}" == "${build_job_id}" && "${LUMINA_BUILD_JOB_ID:-}" == "${build_job_id}" ]] \
+    || fail "Kubernetes transport Job identity does not match the pod"
+[[ "${bundle_object}" == "${expected_bundle_object}" ]] \
+    || fail "Kubernetes artifact bundle identity is invalid"
+[[ "${RUNNER_IMAGE_DIGEST:-}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || fail "runner image digest is unavailable"
+[[ "${SPEC_PATH_IN_REPO:-}" == */* || "${SPEC_PATH_IN_REPO:-}" == *.spec ]] \
+    || fail "repository spec path is unavailable"
+
+readonly input_dir="${WORKSPACE}/input"
+readonly extract_dir="${WORKSPACE}/source"
+readonly artifact_dir="${WORKSPACE}/build-output"
+readonly bundle_dir="${WORKSPACE}/bundle"
+mkdir -p "${input_dir}" "${extract_dir}" "${artifact_dir}" "${bundle_dir}/artifacts"
+readonly snapshot_path="${input_dir}/snapshot.tar.gz"
+
+echo "Downloading immutable repository snapshot..."
+curl --fail --silent --show-error --location \
+    --connect-timeout 30 --max-time 1800 --max-filesize "${snapshot_size}" \
+    --output "${snapshot_path}" "${snapshot_url}"
+[[ "$(stat -c '%s' "${snapshot_path}")" == "${snapshot_size}" ]] \
+    || fail "repository snapshot size does not match transport metadata"
+[[ "$(sha256sum "${snapshot_path}" | awk '{print $1}')" == "${snapshot_sha256}" ]] \
+    || fail "repository snapshot digest does not match transport metadata"
+
+# BuildService already rejected unsafe paths, links, special entries, excessive
+# expansion, and a mismatched digest before it issued this exact-object URL.
+# The runner verifies the same immutable bytes again before extraction.
+tar --extract --gzip --file "${snapshot_path}" --directory "${extract_dir}" \
+    --no-same-owner --no-same-permissions --delay-directory-restore
+chown -R 1000:1654 "${extract_dir}" "${artifact_dir}"
+chmod -R u=rwX,g=rX,o= "${extract_dir}"
+chmod 0770 "${artifact_dir}"
+
+source_root="${extract_dir}"
+if [[ ! -f "${source_root}/${SPEC_PATH_IN_REPO}" ]]; then
+    shopt -s nullglob dotglob
+    roots=("${extract_dir}"/*)
+    shopt -u nullglob dotglob
+    [[ ${#roots[@]} -eq 1 && -d "${roots[0]}" && -f "${roots[0]}/${SPEC_PATH_IN_REPO}" ]] \
+        || fail "immutable snapshot does not contain the selected spec path"
+    source_root="${roots[0]}"
+fi
+
+echo "Building selected RPM package..."
+SOURCE_DIR="${source_root}" \
+ARTIFACTS_DIR="${artifact_dir}" \
+BUILD_JOB_ID="${build_job_id}" \
+RUNNER_IMAGE_IDENTITY="${RUNNER_IMAGE_DIGEST}" \
+AUTO_DOWNLOAD=false \
+/usr/local/bin/build-rpm.sh
+
+manifest_entries="${bundle_dir}/artifact-entries.jsonl"
+: > "${manifest_entries}"
+artifact_count=0
+total_bytes=0
+while IFS= read -r -d '' rpm_path; do
+    file_name="$(basename "${rpm_path}")"
+    size="$(stat -c '%s' "${rpm_path}")"
+    digest="$(sha256sum "${rpm_path}" | awk '{print $1}')"
+    ((artifact_count += 1))
+    ((total_bytes += size))
+    ((artifact_count <= MAX_ARTIFACTS)) || fail "artifact count exceeds policy"
+    ((size > 0 && size <= MAX_ARTIFACT_BYTES)) || fail "artifact size exceeds policy"
+    ((total_bytes <= MAX_TOTAL_BYTES)) || fail "total artifact size exceeds policy"
+    object_name="jobs/${compact_job_id}/${kubernetes_job_uid}/sha256/${digest}/${file_name}"
+    jq -cn \
+        --arg fileName "${file_name}" \
+        --arg objectName "${object_name}" \
+        --argjson size "${size}" \
+        --arg sha256 "${digest}" \
+        '{fileName:$fileName,objectName:$objectName,size:$size,sha256:$sha256}' \
+        >> "${manifest_entries}"
+    cp -- "${rpm_path}" "${bundle_dir}/artifacts/${file_name}"
+done < <(find "${artifact_dir}" -maxdepth 1 -type f -name '*.rpm' ! -name '*.src.rpm' -print0 | sort -z)
+((artifact_count > 0)) || fail "build produced no binary RPM artifacts"
+
+jq -s \
+    --argjson version 1 \
+    --arg buildJobId "${build_job_id}" \
+    --arg kubernetesJobUid "${kubernetes_job_uid}" \
+    --arg runnerImageDigest "${RUNNER_IMAGE_DIGEST}" \
+    --arg targetDistribution "${TARGET_DISTRIBUTION}" \
+    --arg targetRelease "${TARGET_RELEASE}" \
+    --arg targetArchitecture "${TARGET_ARCHITECTURE}" \
+    '{version:$version,buildJobId:$buildJobId,kubernetesJobUid:$kubernetesJobUid,runnerImageDigest:$runnerImageDigest,targetDistribution:$targetDistribution,targetRelease:$targetRelease,targetArchitecture:$targetArchitecture,artifacts:.}' \
+    "${manifest_entries}" > "${bundle_dir}/manifest.json"
+rm -f "${manifest_entries}"
+
+readonly bundle_path="${WORKSPACE}/bundle.tar"
+tar --create --file "${bundle_path}" --directory "${bundle_dir}" \
+    --format=pax --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+    --pax-option=delete=atime,delete=ctime manifest.json artifacts
+
+echo "Uploading verified artifact bundle..."
+curl --fail --silent --show-error --request PUT \
+    --header 'Content-Type: application/x-tar' \
+    --upload-file "${bundle_path}" "${bundle_url}"
+echo "Kubernetes RPM build and artifact upload completed."

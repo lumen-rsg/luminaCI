@@ -31,6 +31,7 @@ RUN dnf --disablerepo='*' --enablerepo=fedora \
     automake \
     libtool \
     curl \
+    jq \
     wget \
     git-core \
     rsync \
@@ -61,7 +62,8 @@ WORKDIR /home/rpmbuilder/rpmbuild
 # (host dir /opt/lumina/builds/<jobId> is created and chown'd by build-service);
 # we chown the in-image placeholder here as a fallback for the non-root copy.
 COPY --chown=rpmbuilder:rpmbuilder scripts/build-rpm.sh /usr/local/bin/build-rpm.sh
-RUN chmod +x /usr/local/bin/build-rpm.sh
+COPY --chown=rpmbuilder:rpmbuilder scripts/lumina-kubernetes-build /usr/local/bin/lumina-kubernetes-build
+RUN chmod +x /usr/local/bin/build-rpm.sh /usr/local/bin/lumina-kubernetes-build
 
 USER root
 RUN mkdir -p /artifacts && chown -R rpmbuilder:lumina-build /artifacts

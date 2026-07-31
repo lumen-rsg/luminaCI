@@ -213,11 +213,13 @@ public sealed class KubernetesBuildResourceClientTests
             Id = Guid.NewGuid(),
             PipelineId = Guid.NewGuid(),
             SpecName = "kernel-tegra.spec",
+            SourceUrl = "git://https://example.com/lumina.git#branch=main&specPath=jetson/kernel-tegra.spec&commit=" + new string('b', 40),
             CommitSha = new string('b', 40),
             TargetDistribution = "fedora",
             TargetRelease = "44",
             TargetArchitecture = "aarch64",
-            BuildProfile = "fedora-44-aarch64"
+            BuildProfile = "fedora-44-aarch64",
+            RunnerImageDigest = "sha256:" + new string('a', 64)
         };
         var runner = new KubernetesRunner(buildJob.BuildProfile, "arm64", Digest);
         return new TestResources(

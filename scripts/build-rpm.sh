@@ -267,7 +267,8 @@ SOURCE_DIR_REPO=""
 if [ -n "${SOURCE_DIR:-}" ] && [ -d "${SOURCE_DIR}" ]; then
     echo "=== Using pre-fetched sources from ${SOURCE_DIR} ==="
 
-    if [ -d "${SOURCE_DIR}/repo/.git" ] || [ -d "${SOURCE_DIR}/.git" ]; then
+    if [ -d "${SOURCE_DIR}/repo/.git" ] || [ -d "${SOURCE_DIR}/.git" ] \
+        || { [ -n "${SPEC_PATH_IN_REPO:-}" ] && [ -f "${SOURCE_DIR}/${SPEC_PATH_IN_REPO}" ]; }; then
         # Pre-fetched git repo — copy patches/sources, defer tarball
         REPO_DIR="${SOURCE_DIR}"
         [ -d "${SOURCE_DIR}/repo" ] && REPO_DIR="${SOURCE_DIR}/repo"

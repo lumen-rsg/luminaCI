@@ -185,6 +185,7 @@ public sealed class KubernetesBuildExecutorTests
             ExecutionBackend = BuildExecutorBackend.Kubernetes,
             Status = BuildStatus.Building,
             SpecName = "kernel-tegra.spec",
+            SourceUrl = "git://https://example.com/lumina.git#branch=main&specPath=jetson/kernel-tegra.spec&commit=" + new string('b', 40),
             BuildProfile = "fedora-44-aarch64",
             TargetDistribution = "fedora",
             TargetRelease = "44",

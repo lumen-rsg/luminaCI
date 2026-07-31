@@ -43,11 +43,15 @@ public static class KubernetesJobFactory
         var securityContext = new V1SecurityContext
         {
             AllowPrivilegeEscalation = false,
-            ReadOnlyRootFilesystem = true,
-            RunAsNonRoot = true,
-            RunAsUser = 1000,
-            RunAsGroup = 1654,
-            Capabilities = new V1Capabilities { Drop = ["ALL"] },
+            ReadOnlyRootFilesystem = false,
+            RunAsNonRoot = false,
+            RunAsUser = 0,
+            RunAsGroup = 0,
+            Capabilities = new V1Capabilities
+            {
+                Drop = ["ALL"],
+                Add = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETFCAP", "SETGID", "SETUID"]
+            },
             SeccompProfile = new V1SeccompProfile { Type = "RuntimeDefault" }
         };
         var resources = new V1ResourceRequirements
@@ -88,6 +92,7 @@ public static class KubernetesJobFactory
                         HostNetwork = false,
                         HostPID = false,
                         HostIPC = false,
+                        HostUsers = false,
                         RestartPolicy = "Never",
                         ShareProcessNamespace = false,
                         TerminationGracePeriodSeconds = 30,
@@ -108,9 +113,9 @@ public static class KubernetesJobFactory
                         ],
                         SecurityContext = new V1PodSecurityContext
                         {
-                            RunAsNonRoot = true,
-                            RunAsUser = 1000,
-                            RunAsGroup = 1654,
+                            RunAsNonRoot = false,
+                            RunAsUser = 0,
+                            RunAsGroup = 0,
                             FsGroup = 1654,
                             SeccompProfile = new V1SeccompProfile { Type = "RuntimeDefault" }
                         },
@@ -212,8 +217,37 @@ public static class KubernetesJobFactory
         new() { Name = "TARGET_ARCHITECTURE", Value = job.TargetArchitecture },
         new() { Name = "BUILD_PROFILE", Value = job.BuildProfile },
         new() { Name = "SPEC_NAME", Value = job.SpecName },
+        new() { Name = "SPEC_PATH_IN_REPO", Value = ResolveSpecPath(job) },
+        new() { Name = "RUNNER_IMAGE_DIGEST", Value = job.RunnerImageDigest },
         new() { Name = "COMMIT_SHA", Value = job.CommitSha ?? string.Empty }
     ];
+
+    private static string ResolveSpecPath(BuildJob job)
+    {
+        const string marker = "specPath=";
+        var source = job.SourceUrl ?? string.Empty;
+        var fragmentOffset = source.IndexOf('#', StringComparison.Ordinal);
+        if (!source.StartsWith("git://https://", StringComparison.Ordinal) || fragmentOffset < 0)
+            throw new ValidationException("Kubernetes build source does not contain an immutable spec path.");
+        var values = source[(fragmentOffset + 1)..]
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Where(value => value.StartsWith(marker, StringComparison.Ordinal))
+            .Select(value => value[marker.Length..].Replace('\\', '/'))
+            .ToArray();
+        if (values.Length != 1)
+            throw new ValidationException("Kubernetes build source spec path is missing or duplicated.");
+        var path = values[0];
+        if (path.Length is < 6 or > 4096 ||
+            !path.EndsWith(".spec", StringComparison.Ordinal) ||
+            path.StartsWith('/') ||
+            path.Split('/').Any(segment => segment is "" or "." or "..") ||
+            path.Any(character => char.IsControl(character) || character is '&' or '=' or '#') ||
+            !string.Equals(Path.GetFileName(path), job.SpecName, StringComparison.Ordinal))
+        {
+            throw new ValidationException("Kubernetes build source spec path is invalid.");
+        }
+        return path;
+    }
 
     private static void Validate(
         BuildJob job,
@@ -223,6 +257,9 @@ public static class KubernetesJobFactory
         if (job.Id == Guid.Empty || job.PipelineId == Guid.Empty)
             throw new ValidationException("Kubernetes build identity is invalid.");
         KubernetesBuildPolicy.ValidateRunner(runner, job);
+        var runnerDigest = runner.Image[(runner.Image.IndexOf('@') + 1)..];
+        if (!string.Equals(job.RunnerImageDigest, runnerDigest, StringComparison.Ordinal))
+            throw new ValidationException("Kubernetes runner digest was not recorded on the build job.");
         if (limits.ActiveDeadlineSeconds <= 0 || limits.TtlSecondsAfterFinished <= 0)
             throw new ValidationException("Kubernetes Job time limits must be positive.");
         var specName = job.SpecName ?? string.Empty;

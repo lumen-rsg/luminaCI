@@ -16,6 +16,7 @@ docs/
 # Scripts (not needed in build context)
 scripts/
 !scripts/build-rpm.sh
+!scripts/lumina-kubernetes-build
 
 # Deploy config (referenced via docker-compose, not copied)
 deploy/nginx/nginx.conf

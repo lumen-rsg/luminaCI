@@ -4,12 +4,15 @@ metadata:
   name: lumina-builds
   labels:
     app.kubernetes.io/managed-by: lumina-ci
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/audit: restricted
-    pod-security.kubernetes.io/audit-version: latest
-    pod-security.kubernetes.io/warn: restricted
-    pod-security.kubernetes.io/warn-version: latest
+    # Fedora dependency installation runs as container-root inside a Kubernetes
+    # user namespace (hostUsers: false). Baseline permits the small, explicit
+    # namespaced capability set while still rejecting host-level privileges.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.36
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.36
 ---
 apiVersion: v1
 kind: ServiceAccount
