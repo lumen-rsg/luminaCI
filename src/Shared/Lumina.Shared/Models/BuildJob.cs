@@ -38,5 +38,13 @@ public class BuildJob
     public string? RunnerImageReference { get; set; }
     public string? RunnerImageDigest { get; set; }
 
+    // Repository-project provenance. These fields are populated together for
+    // builds created by a selective project dispatch and remain null for
+    // manual and legacy per-pipeline builds.
+    public Guid? ProjectWebhookDeliveryId { get; set; }
+    public string? ProjectPackageId { get; set; }
+    public int? ProjectStageOrder { get; set; }
+    public ProjectWebhookDelivery? ProjectWebhookDelivery { get; set; }
+
     public Pipeline? Pipeline { get; set; }
 }

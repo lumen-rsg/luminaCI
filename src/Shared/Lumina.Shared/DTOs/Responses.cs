@@ -70,10 +70,18 @@ public record ProjectWebhookDeliveryListResponse(
     int Page,
     int PageSize);
 
+public record ProjectWebhookBuildResponse(
+    Guid BuildJobId,
+    Guid PipelineId,
+    string PackageId,
+    int StageOrder,
+    BuildStatus Status);
+
 public record ProjectWebhookDeliveryDetailResponse(
     Guid RequestId,
     Guid ProjectId,
     string ProviderDeliveryId,
+    string RepositoryUrl,
     ProjectWebhookStatus Status,
     string CommitSha,
     string Branch,
@@ -85,6 +93,7 @@ public record ProjectWebhookDeliveryDetailResponse(
     long? SnapshotFileSize,
     string? ManifestSha256,
     JsonElement? DispatchPlan,
+    List<ProjectWebhookBuildResponse> Builds,
     string? FailureCode,
     DateTime CreatedAt,
     DateTime UpdatedAt);

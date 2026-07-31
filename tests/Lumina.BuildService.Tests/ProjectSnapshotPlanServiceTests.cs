@@ -93,6 +93,7 @@ public sealed class ProjectSnapshotPlanServiceTests
             BuildProjectId = projectId,
             BuildProject = project,
             ProviderDeliveryId = Guid.NewGuid().ToString("N"),
+            RepositoryUrl = project.GitRepoUrl,
             CommitSha = new string('a', 40),
             Branch = "main",
             ChangedPaths = changedPaths,

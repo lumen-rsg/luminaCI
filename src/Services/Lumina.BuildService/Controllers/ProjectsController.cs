@@ -282,6 +282,7 @@ public sealed class ProjectsController : ControllerBase
         delivery.Id,
         delivery.BuildProjectId,
         delivery.ProviderDeliveryId,
+        delivery.RepositoryUrl,
         delivery.Status,
         delivery.CommitSha,
         delivery.Branch,
@@ -293,6 +294,16 @@ public sealed class ProjectsController : ControllerBase
         delivery.SnapshotFileSize,
         delivery.ManifestSha256,
         ParsePlan(delivery.DispatchPlanJson),
+        delivery.BuildJobs
+            .OrderBy(job => job.ProjectStageOrder)
+            .ThenBy(job => job.ProjectPackageId, StringComparer.Ordinal)
+            .Select(job => new ProjectWebhookBuildResponse(
+                job.Id,
+                job.PipelineId,
+                job.ProjectPackageId!,
+                job.ProjectStageOrder!.Value,
+                job.Status))
+            .ToList(),
         delivery.FailureCode,
         delivery.CreatedAt,
         delivery.UpdatedAt);

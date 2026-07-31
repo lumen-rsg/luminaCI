@@ -32,7 +32,7 @@ public sealed class RepositorySnapshotCompletedConsumer :
             return;
         if (delivery.Status is ProjectWebhookStatus.PlanReady or
             ProjectWebhookStatus.Dispatched or ProjectWebhookStatus.Ignored or
-            ProjectWebhookStatus.Failed)
+            ProjectWebhookStatus.Failed or ProjectWebhookStatus.Completed)
             return;
 
         if (delivery.BuildProjectId != message.ProjectId ||
@@ -68,7 +68,7 @@ public sealed class RepositorySnapshotCompletedConsumer :
             return;
         if (delivery.Status is ProjectWebhookStatus.PlanReady or
             ProjectWebhookStatus.Dispatched or ProjectWebhookStatus.Ignored or
-            ProjectWebhookStatus.Failed)
+            ProjectWebhookStatus.Failed or ProjectWebhookStatus.Completed)
             return;
 
         delivery.Status = ProjectWebhookStatus.Failed;

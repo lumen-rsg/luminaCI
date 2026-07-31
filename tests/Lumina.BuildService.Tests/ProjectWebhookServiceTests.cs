@@ -46,6 +46,7 @@ public sealed class ProjectWebhookServiceTests
         var second = await service.QueueSnapshotAsync(project, "delivery-1", push, default);
 
         Assert.Equal(first.Id, second.Id);
+        Assert.Equal(project.GitRepoUrl, first.RepositoryUrl);
         Assert.Equal(["a/file", "z/file"], first.ChangedPaths);
         Assert.Equal(first.Id, Assert.Single(publisher.Requests).RequestId);
         Assert.Equal(1, await db.ProjectWebhookDeliveries.CountAsync());

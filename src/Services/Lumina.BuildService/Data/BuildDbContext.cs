@@ -115,6 +115,7 @@ public class BuildDbContext : DbContext
             entity.ToTable("project_webhook_deliveries", "build");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ProviderDeliveryId).IsRequired().HasMaxLength(128);
+            entity.Property(e => e.RepositoryUrl).IsRequired().HasMaxLength(2048);
             entity.Property(e => e.CommitSha).IsRequired().HasMaxLength(64);
             entity.Property(e => e.Branch).IsRequired().HasMaxLength(256);
             entity.Property(e => e.ChangedPaths).HasColumnType("text[]");
@@ -126,6 +127,7 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.ManifestSha256).HasMaxLength(64);
             entity.Property(e => e.FailureCode).HasMaxLength(64);
             entity.HasIndex(e => new { e.BuildProjectId, e.ProviderDeliveryId }).IsUnique();
+            entity.HasIndex(e => new { e.Status, e.UpdatedAt });
             entity.HasOne(e => e.BuildProject)
                 .WithMany(e => e.WebhookDeliveries)
                 .HasForeignKey(e => e.BuildProjectId)
@@ -142,7 +144,10 @@ public class BuildDbContext : DbContext
 
         modelBuilder.Entity<BuildJob>(entity =>
         {
-            entity.ToTable("build_jobs", "build");
+            entity.ToTable("build_jobs", "build", table => table.HasCheckConstraint(
+                "CK_build_jobs_project_dispatch_binding",
+                "(\"ProjectWebhookDeliveryId\" IS NULL AND \"ProjectPackageId\" IS NULL AND \"ProjectStageOrder\" IS NULL) OR " +
+                "(\"ProjectWebhookDeliveryId\" IS NOT NULL AND \"ProjectPackageId\" IS NOT NULL AND \"ProjectStageOrder\" IS NOT NULL AND \"ProjectStageOrder\" >= 0)"));
             entity.HasKey(e => e.Id);
             entity.Property(e => e.SpecName).IsRequired().HasMaxLength(256);
             entity.Property(e => e.TriggeredBy).IsRequired().HasMaxLength(256);
@@ -160,8 +165,16 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.BuildProfile).IsRequired().HasMaxLength(128);
             entity.Property(e => e.RunnerImageReference).HasMaxLength(512);
             entity.Property(e => e.RunnerImageDigest).HasMaxLength(512);
+            entity.Property(e => e.ProjectPackageId).HasMaxLength(128);
             entity.Property(e => e.LeaseOwner).HasMaxLength(128);
             entity.HasIndex(e => new { e.Status, e.LeaseExpiresAt });
+            entity.HasIndex(e => new { e.ProjectWebhookDeliveryId, e.ProjectPackageId })
+                .IsUnique()
+                .HasFilter("\"ProjectWebhookDeliveryId\" IS NOT NULL AND \"ProjectPackageId\" IS NOT NULL");
+            entity.HasOne(e => e.ProjectWebhookDelivery)
+                .WithMany(e => e.BuildJobs)
+                .HasForeignKey(e => e.ProjectWebhookDeliveryId)
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasMany(e => e.Artifacts).WithOne(e => e.BuildJob).HasForeignKey(e => e.BuildJobId).OnDelete(DeleteBehavior.Cascade);
             entity.HasMany(e => e.StepRuns).WithOne(e => e.BuildJob).HasForeignKey(e => e.BuildJobId).OnDelete(DeleteBehavior.Cascade);
         });

@@ -186,6 +186,18 @@ public class BuildProjectServiceTests
     }
 
     [Fact]
+    public async Task DeleteAsync_PreservesWebhookDeliveryHistory()
+    {
+        await using var db = NewContext(nameof(DeleteAsync_PreservesWebhookDeliveryHistory));
+        var service = NewService(db);
+        var project = await service.CreateAsync(Request(), "cv2");
+        db.ProjectWebhookDeliveries.Add(Delivery(project.Id, DateTime.UtcNow));
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() => service.DeleteAsync(project.Id));
+    }
+
+    [Fact]
     public async Task DeliveryQueries_ArePagedAndConfinedToProject()
     {
         await using var db = NewContext(nameof(DeliveryQueries_ArePagedAndConfinedToProject));
@@ -263,6 +275,7 @@ public class BuildProjectServiceTests
         Id = Guid.NewGuid(),
         BuildProjectId = projectId,
         ProviderDeliveryId = Guid.NewGuid().ToString("N"),
+        RepositoryUrl = "https://github.com/lumina/packages.git",
         CommitSha = new string('a', 40),
         Branch = "main",
         ChangedPaths = ["package/file"],

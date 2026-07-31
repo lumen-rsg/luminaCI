@@ -66,7 +66,20 @@ public sealed class ProjectDispatchPlanResolverTests
         Assert.Throws<ValidationException>(() =>
             ProjectDispatchPlanResolver.Resolve(
                 Manifest(), ["firmware/blob"],
-                [Pipeline("firmware", "wrong.spec"), Pipeline("driver", "specs/driver.spec")]));
+            [Pipeline("firmware", "wrong.spec"), Pipeline("driver", "specs/driver.spec")]));
+    }
+
+    [Fact]
+    public void Resolve_RejectsCredentialedRunnerBinding()
+    {
+        var firmware = Pipeline("firmware", "specs/firmware.spec");
+        firmware.GitUsername = "git";
+        firmware.GitToken = "secret";
+
+        Assert.Throws<ValidationException>(() =>
+            ProjectDispatchPlanResolver.Resolve(
+                Manifest(), ["firmware/blob"],
+                [firmware, Pipeline("driver", "specs/driver.spec")]));
     }
 
     private static Pipeline Pipeline(string packageId, string specPath) => new()

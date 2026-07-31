@@ -68,9 +68,11 @@ public sealed class BuildProjectService
         Guid projectId,
         Guid deliveryId,
         CancellationToken cancellationToken = default) =>
-        _db.ProjectWebhookDeliveries.AsNoTracking().SingleOrDefaultAsync(
-            delivery => delivery.BuildProjectId == projectId && delivery.Id == deliveryId,
-            cancellationToken);
+        _db.ProjectWebhookDeliveries.AsNoTracking()
+            .Include(delivery => delivery.BuildJobs)
+            .SingleOrDefaultAsync(
+                delivery => delivery.BuildProjectId == projectId && delivery.Id == deliveryId,
+                cancellationToken);
 
     public async Task<List<Pipeline>> ListPipelineBindingsAsync(
         Guid projectId,
@@ -270,6 +272,13 @@ public sealed class BuildProjectService
         {
             throw new ConflictException(
                 "A build project with bound pipelines cannot be deleted. Unbind them first.");
+        }
+        if (await _db.ProjectWebhookDeliveries.AnyAsync(
+                delivery => delivery.BuildProjectId == id,
+                cancellationToken))
+        {
+            throw new ConflictException(
+                "A build project with webhook delivery history cannot be deleted.");
         }
 
         _db.BuildProjects.Remove(project);

@@ -79,6 +79,7 @@ public sealed class ProjectWebhookService
             Id = Guid.NewGuid(),
             BuildProjectId = project.Id,
             ProviderDeliveryId = providerDeliveryId,
+            RepositoryUrl = project.GitRepoUrl,
             CommitSha = push.CommitSha,
             Branch = push.Branch,
             ChangedPaths = push.ChangedPaths.Order(StringComparer.Ordinal).ToList(),

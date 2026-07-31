@@ -7,6 +7,7 @@ public class ProjectWebhookDelivery
     public Guid Id { get; set; }
     public Guid BuildProjectId { get; set; }
     public string ProviderDeliveryId { get; set; } = string.Empty;
+    public string RepositoryUrl { get; set; } = string.Empty;
     public string CommitSha { get; set; } = string.Empty;
     public string Branch { get; set; } = string.Empty;
     public List<string> ChangedPaths { get; set; } = [];
@@ -24,4 +25,5 @@ public class ProjectWebhookDelivery
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     public BuildProject BuildProject { get; set; } = null!;
+    public List<BuildJob> BuildJobs { get; set; } = [];
 }

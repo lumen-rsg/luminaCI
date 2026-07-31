@@ -59,6 +59,9 @@ try
     builder.Services.AddScoped<IRepositorySnapshotPublisher, RepositorySnapshotPublisher>();
     builder.Services.AddScoped<ProjectSnapshotPlanService>();
     builder.Services.AddScoped<IRepositorySnapshotStreamProvider, RepositorySnapshotStreamProvider>();
+    builder.Services.AddScoped<ProjectDispatchService>();
+    builder.Services.AddScoped<IProjectBuildTrigger, ProjectBuildTrigger>();
+    builder.Services.AddHostedService<ProjectDispatchHostedService>();
     builder.Services.AddScoped<PipelineRunCoordinator>();
     builder.Services.AddScoped<ArtifactStorageService>();
     builder.Services.AddHttpClient("ArtifactStorage", client =>

@@ -86,6 +86,12 @@ public static class ProjectDispatchPlanResolver
                 throw new ValidationException($"Package '{packageId}' has no pipeline binding.");
             if (pipeline.Status != PipelineStatus.Active)
                 throw new ValidationException($"Pipeline for package '{packageId}' is not active.");
+            if (!string.IsNullOrWhiteSpace(pipeline.GitUsername) ||
+                !string.IsNullOrWhiteSpace(pipeline.GitToken))
+            {
+                throw new ValidationException(
+                    $"Pipeline for package '{packageId}' has credentials that cannot enter a build runner.");
+            }
             if (definition.Targets.Count != 1 ||
                 !string.Equals(definition.Targets[0].Trim(), pipeline.BuildProfile, StringComparison.Ordinal))
             {

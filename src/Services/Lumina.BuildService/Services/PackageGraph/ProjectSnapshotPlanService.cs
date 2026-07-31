@@ -33,7 +33,8 @@ public sealed class ProjectSnapshotPlanService
         if (delivery is null)
             return;
         if (delivery.Status is ProjectWebhookStatus.PlanReady or
-            ProjectWebhookStatus.Dispatched or ProjectWebhookStatus.Ignored)
+            ProjectWebhookStatus.Dispatched or ProjectWebhookStatus.Ignored or
+            ProjectWebhookStatus.Completed)
             return;
         try
         {
