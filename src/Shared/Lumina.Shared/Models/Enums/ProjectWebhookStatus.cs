@@ -6,5 +6,6 @@ public enum ProjectWebhookStatus
     SnapshotReady = 1,
     Dispatched = 2,
     Ignored = 3,
-    Failed = 4
+    Failed = 4,
+    PlanReady = 5
 }

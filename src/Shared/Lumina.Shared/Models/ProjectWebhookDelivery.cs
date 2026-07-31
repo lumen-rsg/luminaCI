@@ -16,6 +16,9 @@ public class ProjectWebhookDelivery
     public Guid? SourceJobId { get; set; }
     public string? SnapshotStoragePath { get; set; }
     public string? SnapshotSha256 { get; set; }
+    public long? SnapshotFileSize { get; set; }
+    public string? DispatchPlanJson { get; set; }
+    public string? ManifestSha256 { get; set; }
     public string? FailureCode { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

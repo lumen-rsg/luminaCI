@@ -2,6 +2,7 @@ using Lumina.BuildService.Consumers;
 using Lumina.BuildService.Data;
 using Lumina.BuildService.Health;
 using Lumina.BuildService.Services;
+using Lumina.BuildService.Services.PackageGraph;
 using Lumina.Shared.Events;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Security;
@@ -56,10 +57,14 @@ try
     builder.Services.AddScoped<BuildProjectService>();
     builder.Services.AddScoped<ProjectWebhookService>();
     builder.Services.AddScoped<IRepositorySnapshotPublisher, RepositorySnapshotPublisher>();
+    builder.Services.AddScoped<ProjectSnapshotPlanService>();
+    builder.Services.AddScoped<IRepositorySnapshotStreamProvider, RepositorySnapshotStreamProvider>();
     builder.Services.AddScoped<PipelineRunCoordinator>();
     builder.Services.AddScoped<ArtifactStorageService>();
     builder.Services.AddHttpClient("ArtifactStorage", client =>
         client.Timeout = TimeSpan.FromMinutes(2));
+    builder.Services.AddHttpClient("RepositorySnapshots", client =>
+        client.Timeout = TimeSpan.FromMinutes(30));
     builder.Services.AddMinio(client => client
         .WithEndpoint(builder.Configuration["MinIO:Endpoint"] ?? "minio:9000")
         .WithCredentials(

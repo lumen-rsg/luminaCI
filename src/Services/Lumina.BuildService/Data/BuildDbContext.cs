@@ -122,6 +122,8 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.CommitMessage).HasMaxLength(2048);
             entity.Property(e => e.SnapshotStoragePath).HasMaxLength(1024);
             entity.Property(e => e.SnapshotSha256).HasMaxLength(64);
+            entity.Property(e => e.DispatchPlanJson).HasColumnType("jsonb");
+            entity.Property(e => e.ManifestSha256).HasMaxLength(64);
             entity.Property(e => e.FailureCode).HasMaxLength(64);
             entity.HasIndex(e => new { e.BuildProjectId, e.ProviderDeliveryId }).IsUnique();
             entity.HasOne(e => e.BuildProject)

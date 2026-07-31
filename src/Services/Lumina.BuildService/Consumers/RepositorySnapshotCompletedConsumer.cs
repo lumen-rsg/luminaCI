@@ -1,4 +1,5 @@
 using Lumina.BuildService.Data;
+using Lumina.BuildService.Services.PackageGraph;
 using Lumina.Shared.Events;
 using Lumina.Shared.Models.Enums;
 using MassTransit;
@@ -11,10 +12,14 @@ public sealed class RepositorySnapshotCompletedConsumer :
     IConsumer<RepositorySnapshotFailed>
 {
     private readonly BuildDbContext _db;
+    private readonly ProjectSnapshotPlanService _plans;
 
-    public RepositorySnapshotCompletedConsumer(BuildDbContext db)
+    public RepositorySnapshotCompletedConsumer(
+        BuildDbContext db,
+        ProjectSnapshotPlanService plans)
     {
         _db = db;
+        _plans = plans;
     }
 
     public async Task Consume(ConsumeContext<RepositorySnapshotReady> context)
@@ -24,6 +29,10 @@ public sealed class RepositorySnapshotCompletedConsumer :
             item => item.Id == message.RequestId,
             context.CancellationToken);
         if (delivery is null)
+            return;
+        if (delivery.Status is ProjectWebhookStatus.PlanReady or
+            ProjectWebhookStatus.Dispatched or ProjectWebhookStatus.Ignored or
+            ProjectWebhookStatus.Failed)
             return;
 
         if (delivery.BuildProjectId != message.ProjectId ||
@@ -40,10 +49,13 @@ public sealed class RepositorySnapshotCompletedConsumer :
             delivery.SourceJobId = message.SourceJobId;
             delivery.SnapshotStoragePath = message.StoragePath;
             delivery.SnapshotSha256 = message.HashSha256.ToLowerInvariant();
+            delivery.SnapshotFileSize = message.FileSize;
             delivery.FailureCode = null;
         }
         delivery.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(context.CancellationToken);
+        if (delivery.Status == ProjectWebhookStatus.SnapshotReady)
+            await _plans.ProcessAsync(delivery.Id, context.CancellationToken);
     }
 
     public async Task Consume(ConsumeContext<RepositorySnapshotFailed> context)
@@ -53,6 +65,10 @@ public sealed class RepositorySnapshotCompletedConsumer :
             item => item.Id == message.RequestId,
             context.CancellationToken);
         if (delivery is null)
+            return;
+        if (delivery.Status is ProjectWebhookStatus.PlanReady or
+            ProjectWebhookStatus.Dispatched or ProjectWebhookStatus.Ignored or
+            ProjectWebhookStatus.Failed)
             return;
 
         delivery.Status = ProjectWebhookStatus.Failed;
