@@ -449,7 +449,9 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
     {
         try
         {
-            await MonitorBuildAsync(
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var executor = scope.ServiceProvider.GetRequiredService<KubernetesBuildExecutor>();
+            await executor.MonitorBuildAsync(
                 new BuildJob { Id = buildJobId, ExecutionBackend = BuildExecutorBackend.Kubernetes });
         }
         catch (Exception ex)
