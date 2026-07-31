@@ -8,6 +8,7 @@ namespace Lumina.BuildService.Services;
 
 internal sealed class KubernetesResourceAlreadyExistsException : Exception;
 internal sealed class KubernetesResourceNotFoundException : Exception;
+internal sealed class KubernetesContainerNotReadyException : Exception;
 
 internal interface IKubernetesApiOperations
 {
@@ -190,18 +191,29 @@ internal sealed class KubernetesApiOperations(Kubernetes client) : IKubernetesAp
         int maximumBytes,
         CancellationToken cancellationToken)
     {
-        await using var stream = await TranslateAsync(() => client.ReadNamespacedPodLogAsync(
-            podName,
-            buildNamespace,
-            container: KubernetesJobFactory.ContainerName,
-            follow: false,
-            limitBytes: maximumBytes,
-            timestamps: false,
-            cancellationToken: cancellationToken));
-        using var reader = new StreamReader(stream);
-        var buffer = new char[maximumBytes];
-        var count = await reader.ReadBlockAsync(buffer.AsMemory(), cancellationToken);
-        return new string(buffer, 0, count);
+        Stream stream;
+        try
+        {
+            stream = await TranslateAsync(() => client.ReadNamespacedPodLogAsync(
+                podName,
+                buildNamespace,
+                container: KubernetesJobFactory.ContainerName,
+                follow: false,
+                limitBytes: maximumBytes,
+                timestamps: false,
+                cancellationToken: cancellationToken));
+        }
+        catch (HttpOperationException exception) when (exception.Response?.StatusCode == HttpStatusCode.BadRequest)
+        {
+            throw new KubernetesContainerNotReadyException();
+        }
+        await using (stream)
+        {
+            using var reader = new StreamReader(stream);
+            var buffer = new char[maximumBytes];
+            var count = await reader.ReadBlockAsync(buffer.AsMemory(), cancellationToken);
+            return new string(buffer, 0, count);
+        }
     }
 
     public async Task DeleteJobAsync(
@@ -400,6 +412,10 @@ internal sealed class KubernetesBuildResourceClient(IKubernetesApiOperations api
         catch (KubernetesResourceNotFoundException exception)
         {
             throw new NotFoundException("Kubernetes Pod logs are no longer available.", exception);
+        }
+        catch (KubernetesContainerNotReadyException)
+        {
+            return string.Empty;
         }
         return logs.Length <= maximumCharacters ? logs : logs[..maximumCharacters];
     }

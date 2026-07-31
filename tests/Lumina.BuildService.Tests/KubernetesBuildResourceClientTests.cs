@@ -185,6 +185,22 @@ public sealed class KubernetesBuildResourceClientTests
     }
 
     [Fact]
+    public async Task ReadLogsAsync_TreatsContainerCreatingAsEmptyLogs()
+    {
+        var api = new FakeKubernetesApi { ContainerReady = false };
+        var client = new KubernetesBuildResourceClient(api);
+        var resources = Resources();
+        var identity = await client.EnsureCreatedAsync(
+            "lumina-builds", resources.Job, resources.Policy, CancellationToken.None);
+        api.Pods.Add(Pod("pod-1", identity.JobUid, "Pending"));
+        identity = identity with { PodName = "pod-1" };
+
+        var logs = await client.ReadLogsAsync(identity, 5, CancellationToken.None);
+
+        Assert.Empty(logs);
+    }
+
+    [Fact]
     public async Task DeleteAsync_UsesUidPreconditionAndCleansOrphanedPolicy()
     {
         var api = new FakeKubernetesApi();
@@ -279,6 +295,7 @@ public sealed class KubernetesBuildResourceClientTests
         public V1Secret? Secret { get; set; }
         public List<V1Pod> Pods { get; } = [];
         public string Logs { get; set; } = string.Empty;
+        public bool ContainerReady { get; set; } = true;
         public int LastLogLimit { get; private set; }
         public string? DeletedJobUid { get; private set; }
         public string? DeletedPolicyName { get; private set; }
@@ -412,6 +429,8 @@ public sealed class KubernetesBuildResourceClientTests
         {
             Calls.Add("read-log");
             LastLogLimit = maximumBytes;
+            if (!ContainerReady)
+                throw new KubernetesContainerNotReadyException();
             return Task.FromResult(Logs);
         }
 
