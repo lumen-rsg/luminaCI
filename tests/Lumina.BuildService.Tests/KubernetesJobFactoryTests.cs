@@ -83,6 +83,7 @@ public sealed class KubernetesJobFactoryTests
         Assert.False(pod.HostPID);
         Assert.False(pod.HostIPC);
         Assert.False(pod.HostUsers);
+        Assert.Null(pod.SecurityContext.FsGroup);
         Assert.Equal("arm64", pod.NodeSelector["kubernetes.io/arch"]);
         Assert.Equal("true", pod.NodeSelector[KubernetesJobFactory.WorkerLabel]);
         Assert.Equal("NoSchedule", Assert.Single(pod.Tolerations).Effect);
@@ -106,6 +107,7 @@ public sealed class KubernetesJobFactoryTests
             KubernetesBuildTransportPolicy.SecretName(manifest.Metadata.Name),
             transportVolume.Secret.SecretName);
         Assert.False(transportVolume.Secret.Optional);
+        Assert.Equal(0x100, transportVolume.Secret.DefaultMode);
         var transportMount = Assert.Single(container.VolumeMounts, mount =>
             mount.Name == KubernetesJobFactory.TransportVolumeName);
         Assert.True(transportMount.ReadOnlyProperty);

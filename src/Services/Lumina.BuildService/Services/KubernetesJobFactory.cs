@@ -116,7 +116,6 @@ public static class KubernetesJobFactory
                             RunAsNonRoot = false,
                             RunAsUser = 0,
                             RunAsGroup = 0,
-                            FsGroup = 1654,
                             SeccompProfile = new V1SeccompProfile { Type = "RuntimeDefault" }
                         },
                         Containers =
@@ -156,7 +155,11 @@ public static class KubernetesJobFactory
                                 {
                                     SecretName = KubernetesBuildTransportPolicy.SecretName(name),
                                     Optional = false,
-                                    DefaultMode = 0x120
+                                    // Root inside the pod user namespace reads
+                                    // the URL capabilities before dropping to
+                                    // uid 1000. Untrusted RPM macros and build
+                                    // scripts must never read this volume.
+                                    DefaultMode = 0x100
                                 }
                             },
                             new V1Volume
