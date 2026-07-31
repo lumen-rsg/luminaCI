@@ -141,6 +141,25 @@ public class WebhooksController : ControllerBase
                 $"Push to '{branch}' ignored — pipeline targets '{targetBranch}'"));
         }
 
+        var changedPaths = Services.WebhookPathFilter.ExtractChangedPaths(payload);
+        if (!Services.WebhookPathFilter.MatchesAny(pipeline.TriggerPaths, changedPaths))
+        {
+            _logger.LogInformation(
+                "Webhook paths do not match pipeline {PipelineId}. Filters={Filters}; Changed={Changed}",
+                pipelineId,
+                string.Join(',', pipeline.TriggerPaths),
+                string.Join(',', changedPaths));
+            return Ok(new ApiResponse<BuildJobResponse?>(true, null, null,
+                "Push ignored — no changed path matches this pipeline"));
+        }
+
+        if (pipeline.TriggerPaths.Count > 0 && changedPaths.Count == 0)
+        {
+            _logger.LogWarning(
+                "Webhook for pipeline {PipelineId} contained no changed-path metadata; triggering conservatively",
+                pipelineId);
+        }
+
         // Determine spec name from pipeline or path
         var specName = !string.IsNullOrEmpty(pipeline.SpecPath)
             ? Path.GetFileName(pipeline.SpecPath)

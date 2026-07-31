@@ -7,7 +7,7 @@ namespace Lumina.Shared.DTOs;
 public record ApiResponse<T>(bool Success, T? Data, string? Error, string? Message);
 
 // Pipeline Responses
-public record PipelineResponse(Guid Id, string Name, string Description, PipelineStatus Status, List<PipelineStepResponse> Steps, string CreatedBy, DateTime CreatedAt, DateTime UpdatedAt, List<string> Tags, string? GitRepoUrl, string? GitBranch, string? SpecPath, string? WebhookUrl, string? BuildImage, string? GitUsername, bool HasGitToken, string? SpecContent = null, string TargetDistribution = "fedora", string TargetRelease = "44", string TargetArchitecture = "aarch64", string BuildProfile = "fedora-44-aarch64");
+public record PipelineResponse(Guid Id, string Name, string Description, PipelineStatus Status, List<PipelineStepResponse> Steps, string CreatedBy, DateTime CreatedAt, DateTime UpdatedAt, List<string> Tags, string? GitRepoUrl, string? GitBranch, string? SpecPath, string? WebhookUrl, string? BuildImage, string? GitUsername, bool HasGitToken, string? SpecContent = null, string TargetDistribution = "fedora", string TargetRelease = "44", string TargetArchitecture = "aarch64", string BuildProfile = "fedora-44-aarch64", List<string>? TriggerPaths = null);
 
 public record PipelineStepResponse(Guid Id, StepType Type, string Name, int Order, Dictionary<string, string> Configuration);
 

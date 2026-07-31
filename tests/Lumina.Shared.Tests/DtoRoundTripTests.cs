@@ -51,6 +51,7 @@ public class DtoRoundTripTests
             SpecPath: "pkg.spec",
             WebhookSecret: "s3cret",
             BuildImage: "lumina-rpm-build:f44-v1",
+            TriggerPaths: ["common/package", "shared/rpm"],
             GitUsername: "user",
             GitToken: "tok",
             SpecContent: "Name: pkg",
@@ -67,6 +68,7 @@ public class DtoRoundTripTests
         Assert.Equal(2, rt.Tags.Count);
         Assert.Equal("s3cret", rt.WebhookSecret);
         Assert.Equal("fedora-44-aarch64", rt.BuildProfile);
+        Assert.Equal(["common/package", "shared/rpm"], rt.TriggerPaths);
     }
 
     [Fact]

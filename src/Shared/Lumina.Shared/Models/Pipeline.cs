@@ -19,6 +19,9 @@ public class Pipeline
     public string? GitRepoUrl { get; set; }
     public string? GitBranch { get; set; }
     public string? SpecPath { get; set; }  // Path to .spec file in repo, e.g. "pkg/my-package.spec"
+    // Repository-relative path prefixes that may trigger this pipeline from a
+    // push webhook. Empty preserves the legacy "every push" behavior.
+    public List<string> TriggerPaths { get; set; } = [];
 
     // WebhookSecret is stored encrypted at rest (see AesSecretProtector) and is
     // never serialized over the wire — the PipelineResponse DTO exposes only a

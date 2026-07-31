@@ -52,7 +52,8 @@ public class PipelinesController : ControllerBase
             p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Configuration)).ToList(),
             p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
             p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent,
-            p.TargetDistribution, p.TargetRelease, p.TargetArchitecture, p.BuildProfile);
+            p.TargetDistribution, p.TargetRelease, p.TargetArchitecture, p.BuildProfile,
+            p.TriggerPaths);
         return Ok(new ApiResponse<PipelineResponse>(true, response, null, null));
     }
 
@@ -68,7 +69,8 @@ public class PipelinesController : ControllerBase
                 p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Configuration)).ToList(),
                 p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
                 p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent,
-                p.TargetDistribution, p.TargetRelease, p.TargetArchitecture, p.BuildProfile);
+                p.TargetDistribution, p.TargetRelease, p.TargetArchitecture, p.BuildProfile,
+                p.TriggerPaths);
             return CreatedAtAction(nameof(Get), new { id = p.Id }, new ApiResponse<PipelineResponse>(true, response, null, "Pipeline created"));
         }
         catch (Exception ex)
@@ -116,7 +118,8 @@ public class PipelinesController : ControllerBase
                 p.Steps.Select(s => new PipelineStepResponse(s.Id, s.Type, s.Name, s.Order, s.Configuration)).ToList(),
                 p.CreatedBy, p.CreatedAt, p.UpdatedAt, p.Tags, p.GitRepoUrl, p.GitBranch, p.SpecPath, webhookUrl, p.BuildImage,
                 p.GitUsername, !string.IsNullOrEmpty(p.GitToken), p.SpecContent,
-                p.TargetDistribution, p.TargetRelease, p.TargetArchitecture, p.BuildProfile);
+                p.TargetDistribution, p.TargetRelease, p.TargetArchitecture, p.BuildProfile,
+                p.TriggerPaths);
             return Ok(new ApiResponse<PipelineResponse>(true, response, null, "Pipeline updated"));
         }
         catch (Exception ex)

@@ -41,6 +41,7 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.CreatedBy).IsRequired().HasMaxLength(256);
             entity.Property(e => e.GitUsername).HasMaxLength(256);
             entity.Property(e => e.Tags).HasColumnType("text[]");
+            entity.Property(e => e.TriggerPaths).HasColumnType("text[]");
             entity.Property(e => e.TargetDistribution).IsRequired().HasMaxLength(64);
             entity.Property(e => e.TargetRelease).IsRequired().HasMaxLength(64);
             entity.Property(e => e.TargetArchitecture).IsRequired().HasMaxLength(64);

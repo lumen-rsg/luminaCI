@@ -19,7 +19,8 @@ public record CreatePipelineRequest(
     string? TargetDistribution = null,
     string? TargetRelease = null,
     string? TargetArchitecture = null,
-    string? BuildProfile = null);
+    string? BuildProfile = null,
+    List<string>? TriggerPaths = null);
 
 public record UpdatePipelineRequest(
     string Name,
@@ -37,7 +38,8 @@ public record UpdatePipelineRequest(
     string? TargetDistribution = null,
     string? TargetRelease = null,
     string? TargetArchitecture = null,
-    string? BuildProfile = null);
+    string? BuildProfile = null,
+    List<string>? TriggerPaths = null);
 
 public record CreatePipelineStepRequest(StepType Type, string Name, int Order, Dictionary<string, string> Configuration);
 

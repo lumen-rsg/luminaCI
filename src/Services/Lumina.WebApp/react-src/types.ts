@@ -21,6 +21,7 @@ export interface Pipeline {
   gitRepoUrl?: string;
   gitBranch?: string;
   specPath?: string;
+  triggerPaths?: string[];
   specContent?: string;
   buildImage?: string;
   targetDistribution?: string;

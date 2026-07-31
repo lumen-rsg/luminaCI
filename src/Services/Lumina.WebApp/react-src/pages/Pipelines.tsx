@@ -11,6 +11,7 @@ import { useAutoRefresh } from "../lib/useAutoRefresh";
 
 const defaultDraft = {
   name: "", description: "", gitRepoUrl: "", gitBranch: "main", specPath: "",
+  triggerPaths: [] as string[],
   buildImage: "", targetDistribution: "fedora", targetRelease: "44", targetArchitecture: "aarch64",
   webhookSecret: `${crypto.randomUUID()}${crypto.randomUUID()}`
 };
@@ -89,6 +90,7 @@ function PipelineModal({ pipeline, onClose, onSaved }: { pipeline?: Pipeline; on
     {!pipeline && <label className="span-2">{t("pipelines.webhookSecret")}<input required minLength={16} value={draft.webhookSecret} onChange={event => update("webhookSecret", event.target.value)} autoComplete="new-password" /><small>{t("pipelines.webhookHint")}</small></label>}
     <label>{t("pipelines.branch")}<input value={draft.gitBranch || ""} onChange={event => update("gitBranch", event.target.value)} /></label>
     <label>{t("pipelines.specPath")}<input value={draft.specPath || ""} onChange={event => update("specPath", event.target.value)} placeholder="packaging/app.spec" /></label>
+    <label className="span-2">{t("pipelines.triggerPaths")}<input value={(draft.triggerPaths ?? []).join(", ")} onChange={event => setDraft(valueBefore => ({ ...valueBefore, triggerPaths: event.target.value.split(",").map(value => value.trim()).filter(Boolean) }))} placeholder="packaging/app, shared/rpm" /><small>{t("pipelines.triggerPathsHint")}</small></label>
     <label>{t("pipelines.distribution")}<input value={draft.targetDistribution || ""} onChange={event => update("targetDistribution", event.target.value)} /></label>
     <label>{t("pipelines.release")}<input value={draft.targetRelease || ""} onChange={event => update("targetRelease", event.target.value)} /></label>
     <label>{t("pipelines.architecture")}<select value={draft.targetArchitecture || ""} onChange={event => update("targetArchitecture", event.target.value)}><option>aarch64</option><option>x86_64</option></select></label>

@@ -67,6 +67,7 @@ public class PipelineEngine
             GitRepoUrl = request.GitRepoUrl,
             GitBranch = request.GitBranch ?? "main",
             SpecPath = request.SpecPath,
+            TriggerPaths = WebhookPathFilter.Normalize(request.TriggerPaths, request.SpecPath),
             WebhookSecret = request.WebhookSecret,
             BuildImage = request.BuildImage,
             TargetDistribution = target.Distribution,
@@ -408,6 +409,9 @@ public class PipelineEngine
         if (request.GitRepoUrl != null) pipeline.GitRepoUrl = request.GitRepoUrl;
         if (request.GitBranch != null) pipeline.GitBranch = request.GitBranch;
         if (request.SpecPath != null) pipeline.SpecPath = request.SpecPath;
+        pipeline.TriggerPaths = WebhookPathFilter.Normalize(
+            request.TriggerPaths ?? pipeline.TriggerPaths,
+            request.SpecPath ?? pipeline.SpecPath);
         if (request.BuildImage != null) pipeline.BuildImage = request.BuildImage;
         pipeline.TargetDistribution = target.Distribution;
         pipeline.TargetRelease = target.Release;
@@ -537,4 +541,4 @@ public class PipelineEngine
             _logger.LogWarning(ex, "Failed to invalidate cache for build job {JobId}", job.Id);
         }
     }
- }
+}

@@ -136,6 +136,22 @@ public class PipelineEngineTests
     }
 
     [Fact]
+    public async Task CreatePipelineAsync_DefaultsTriggerPathToSpecDirectory()
+    {
+        await using var sp = BuildServiceProvider(
+            nameof(CreatePipelineAsync_DefaultsTriggerPathToSpecDirectory));
+        var engine = await NewEngineAsync(sp);
+        var request = BuildRequest("s3cret") with
+        {
+            SpecPath = "common/neofetch/neofetch.spec"
+        };
+
+        var pipeline = await engine.CreatePipelineAsync(request, "ops");
+
+        Assert.Equal(["common/neofetch"], pipeline.TriggerPaths);
+    }
+
+    [Fact]
     public async Task CreatePipelineAsync_RequiresExplicitBuildTarget()
     {
         await using var sp = BuildServiceProvider(

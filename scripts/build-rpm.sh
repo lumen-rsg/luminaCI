@@ -143,6 +143,37 @@ resolve_spec_file() {
     return 1
 }
 
+# Copy regular files shipped beside a nested spec into SOURCES. Monorepos
+# commonly keep Source/Patch inputs in the package directory or in a child
+# files/, sources/, SOURCES/, or dist/ directory. Flattening matches rpmbuild's
+# SOURCES lookup while duplicate basenames fail closed.
+copy_companion_sources() {
+    local spec_file="$1"
+    local spec_dir
+    spec_dir=$(dirname "$spec_file")
+
+    while IFS= read -r -d '' file; do
+        [ "$file" = "$spec_file" ] && continue
+        local base destination
+        base=$(basename "$file")
+        destination="${BUILD_DIR}/SOURCES/${base}"
+        if [ -e "$destination" ]; then
+            if ! cmp -s "$file" "$destination"; then
+                echo "ERROR: duplicate companion source basename with different content: ${base}" >&2
+                return 1
+            fi
+            continue
+        fi
+        cp "$file" "$destination"
+        echo "  Copied companion source: ${file}"
+    done < <(
+        find "$spec_dir" -maxdepth 1 -type f -print0
+        for child in files sources SOURCES dist; do
+            [ -d "${spec_dir}/${child}" ] && find "${spec_dir}/${child}" -type f -print0
+        done
+    )
+}
+
 # ─── Helper: create tarball from a directory ───
 # Args: $1 = source directory to archive, $2 = expected tarball filename
 create_tarball() {
@@ -245,6 +276,7 @@ if [ -n "${SOURCE_DIR:-}" ] && [ -d "${SOURCE_DIR}" ]; then
         if $SPEC_DEFERRED; then
             if FOUND_SPEC=$(resolve_spec_file "${REPO_DIR}" "pre-fetched sources"); then
                 cp "${FOUND_SPEC}" "${BUILD_DIR}/SPECS/${SPEC_NAME}"
+                copy_companion_sources "${FOUND_SPEC}"
                 echo "  Found spec: ${FOUND_SPEC}"
                 SPEC_DEFERRED=false
             else
@@ -399,6 +431,7 @@ if [ -n "${SOURCE_URL:-}" ]; then
         # (FUNC-004) rather than picking one nondeterministically.
         if FOUND_SPEC=$(resolve_spec_file "${CLONE_DIR}/repo" "cloned repository"); then
             cp "${FOUND_SPEC}" "${BUILD_DIR}/SPECS/${SPEC_NAME}"
+            copy_companion_sources "${FOUND_SPEC}"
             echo "Spec file: ${FOUND_SPEC}"
             SPEC_DEFERRED=false
         else
@@ -612,7 +645,7 @@ rm -f /tmp/lumina-source-rpm-path /tmp/build.log
 chown -R rpmbuilder:lumina-build "${BUILD_DIR}"
 
 # Drop privileges before the first parse or macro expansion of the raw spec.
-export -f get_source0_filename get_setup_dirname resolve_spec_file create_tarball
+export -f get_source0_filename get_setup_dirname resolve_spec_file copy_companion_sources create_tarball
 export -f preparation_phase
 export BUILD_DIR SPEC_NAME ARTIFACTS_DIR RPMBUILDER_HOME AUTO_DOWNLOAD
 export SOURCE_DIR SOURCE_URL SPEC_CONTENT SPEC_PATH_IN_REPO
