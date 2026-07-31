@@ -21,7 +21,7 @@ location ^~ /lumina-sources/ {
 }
 
 location ^~ /lumina-artifacts/ {
-    limit_except PUT { deny all; }
+    limit_except GET PUT { deny all; }
     proxy_pass http://127.0.0.1:18080;
     proxy_set_header Host packages.lumina.1t.ru;
     proxy_request_buffering off;
