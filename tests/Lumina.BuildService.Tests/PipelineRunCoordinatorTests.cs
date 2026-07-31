@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Lumina.BuildService.Consumers;
 using Lumina.BuildService.Data;
 using Lumina.BuildService.Services;
 using Lumina.Shared.Events;
@@ -272,6 +273,80 @@ public class PipelineRunCoordinatorTests
         Assert.Equal(job.RunnerImageDigest, staged.Context.Message.GateRunnerImageDigest);
     }
 
+    [Fact]
+    public async Task Promoted_set_completes_publish_and_delivery_idempotently()
+    {
+        await using var provider = BuildProvider(
+            nameof(Promoted_set_completes_publish_and_delivery_idempotently),
+            Guid.NewGuid(),
+            candidatePromotionEnabled: true);
+        var harness = provider.GetRequiredService<ITestHarness>();
+        await harness.Start();
+        var db = provider.GetRequiredService<BuildDbContext>();
+        var repositoryId = Guid.NewGuid();
+        var delivery = new ProjectWebhookDelivery
+        {
+            Id = Guid.NewGuid(),
+            BuildProjectId = Guid.NewGuid(),
+            ProviderDeliveryId = "delivery-1",
+            RepositoryUrl = "https://example.invalid/project.git",
+            CommitSha = new string('a', 40),
+            Branch = "main",
+            Status = ProjectWebhookStatus.PromotionPending
+        };
+        var job = CreateJob(
+            Step(StepType.Build, 1, StepStatus.Success),
+            Step(StepType.Publish, 2, StepStatus.Running,
+                new() { ["repositoryId"] = repositoryId.ToString() }));
+        job.ProjectWebhookDeliveryId = delivery.Id;
+        job.ProjectPackageId = "kernel-tegra";
+        job.TargetArchitecture = "aarch64";
+        job.RunnerImageDigest = $"sha256:{new string('c', 64)}";
+        var artifact = job.Artifacts.Single();
+        var promotionSetId = PromotionSetIdentity.Create(delivery.Id, "jetson-r39.2");
+        artifact.CandidatePackageId = Guid.NewGuid();
+        artifact.CandidateRepositoryId = repositoryId;
+        artifact.PromotionSetId = promotionSetId;
+        artifact.CandidateStagedAt = DateTime.UtcNow;
+        artifact.StoragePath = $"sha256/{artifact.HashSha256}/{artifact.FileName}";
+        var gate = NativePromotionGateManifestPolicy.Create(
+            delivery.Id,
+            promotionSetId,
+            repositoryId,
+            "jetson-r39.2",
+            job.TargetArchitecture,
+            job.RunnerImageDigest,
+            [(job, artifact)],
+            DateTime.UtcNow);
+        gate.Status = NativePromotionGateStatus.Passed;
+        gate.ProjectWebhookDelivery = delivery;
+        db.ProjectWebhookDeliveries.Add(delivery);
+        db.BuildJobs.Add(job);
+        db.NativePromotionGates.Add(gate);
+        await db.SaveChangesAsync();
+        var publishedAt = DateTime.UtcNow;
+        var publication = new PromotionSetPublished(
+            promotionSetId, repositoryId, [artifact.Id], publishedAt);
+
+        await harness.Bus.Publish(publication);
+        Assert.True(await harness.Consumed.Any<PromotionSetPublished>());
+        Assert.True(await harness.GetConsumerHarness<PromotionSetPublishedConsumer>()
+            .Consumed.Any<PromotionSetPublished>());
+
+        Assert.Equal(StepStatus.Success, job.StepRuns.Single(step => step.Type == StepType.Publish).Status);
+        Assert.Equal(BuildStatus.Success, job.Status);
+        Assert.Equal(repositoryId, artifact.PublishedRepositoryId);
+        Assert.Equal(publishedAt, artifact.PublishedAt);
+        Assert.Equal(ProjectWebhookStatus.Completed, delivery.Status);
+
+        var duplicate = publication with { PublishedAt = publishedAt.AddSeconds(1) };
+        await harness.Bus.Publish(duplicate);
+        Assert.True(await harness.GetConsumerHarness<PromotionSetPublishedConsumer>()
+            .Consumed.Any<PromotionSetPublished>(item => item.Context.Message.PublishedAt == duplicate.PublishedAt));
+        Assert.Equal(ProjectWebhookStatus.Completed, delivery.Status);
+        Assert.Equal(publishedAt, artifact.PublishedAt);
+    }
+
     private static ServiceProvider BuildProvider(
         string databaseName,
         Guid keyId,
@@ -289,6 +364,7 @@ public class PipelineRunCoordinatorTests
 
         services.AddMassTransitTestHarness(configurator =>
         {
+            configurator.AddConsumer<PromotionSetPublishedConsumer>();
             configurator.AddHandler<GetActiveSigningKey, ActiveSigningKey>(
                 (ConsumeContext<GetActiveSigningKey> _) =>
                     Task.FromResult(new ActiveSigningKey(keyId)));

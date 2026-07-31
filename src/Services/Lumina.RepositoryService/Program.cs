@@ -45,6 +45,8 @@ try
     builder.Services.AddScoped<MinioStorageService>();
     builder.Services.AddScoped<SignatureVerificationService>();
     builder.Services.AddScoped<PromotionGateBundleService>();
+    builder.Services.AddScoped<RepositoryPromotionService>();
+    builder.Services.AddHostedService<RepositoryPromotionHostedService>();
     builder.Services.AddHttpClient("ArtifactStorage", client =>
         client.Timeout = TimeSpan.FromMinutes(2));
 
@@ -134,6 +136,8 @@ try
         Log.Information("Repository database schema applied (EF Core migrations)");
         var storage = scope.ServiceProvider.GetRequiredService<MinioStorageService>();
         await storage.RecoverInterruptedPublicationsAsync();
+        var promotions = scope.ServiceProvider.GetRequiredService<RepositoryPromotionService>();
+        await promotions.RecoverInterruptedPromotionsAsync();
     }
 
     if (app.Environment.IsDevelopment())

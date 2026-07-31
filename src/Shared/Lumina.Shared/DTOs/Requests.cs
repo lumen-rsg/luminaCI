@@ -74,6 +74,8 @@ public record TriggerAutoBuildRequest(string TriggeredBy = "auto");
 
 public record CancelBuildRequest(string Reason);
 
+public record RollbackPromotionRequest(string Reason);
+
 // Security DTOs
 public record CreateKeyRequest(string KeyName, string PublicKey, string? PrivateKeyReference, DateTime? ExpiresAt, string CreatedBy);
 

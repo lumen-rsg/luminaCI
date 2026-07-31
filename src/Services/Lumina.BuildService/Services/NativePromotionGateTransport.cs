@@ -263,6 +263,7 @@ jq -e --arg set "${promotion_set_id}" --arg repo "$(jq -r '.repositoryId' "${tra
   --arg manifestHash "$(jq -r '.candidateManifestSha256' "${transport}")" --arg arch "${target_arch}" \
   '.version == 1 and .promotionSetId == $set and .repositoryId == $repo and
    .candidateManifestSha256 == $manifestHash and .targetArchitecture == $arch and
+   (.baselineManifestSha256 | type == "string" and test("^[0-9a-f]{64}$")) and
    (.baselinePackageNames | type == "array") and (.candidates | type == "array")' \
   "${manifest}" >/dev/null || fail "gate bundle manifest identity mismatch"
 outer_candidates=$(jq -cS '[.candidates[] | {artifactId,candidatePackageId,projectPackageId,fileName,size,sha256}] | sort_by(.artifactId)' "${transport}")

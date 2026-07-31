@@ -98,6 +98,70 @@ public sealed class RepositoryManagerServiceTests : IDisposable
     }
 
     [Fact]
+    public void GroupPromotion_ExchangesWholeRepositoryAndRollsBackBothArchitectures()
+    {
+        var arm = _manager.EnsureRepoDir("grouped", "aarch64");
+        var noarch = _manager.EnsureRepoDir("grouped", "noarch");
+        Directory.CreateDirectory(Path.Combine(arm, "repodata"));
+        Directory.CreateDirectory(Path.Combine(noarch, "repodata"));
+        File.WriteAllText(Path.Combine(arm, "repodata", "repomd.xml"), "old-arm");
+        File.WriteAllText(Path.Combine(noarch, "repodata", "repomd.xml"), "old-noarch");
+
+        var setId = Guid.NewGuid();
+        var repositoryId = Guid.NewGuid();
+        var staging = _manager.CreatePublicationStagingDirectory(repositoryId);
+        var snapshot = _manager.CreateRepositorySnapshot("grouped", staging);
+        var armCandidate = _manager.GetRepositorySnapshotRpmPath(
+            snapshot, "aarch64", "kernel-2-1.aarch64.rpm");
+        var noarchCandidate = _manager.GetRepositorySnapshotRpmPath(
+            snapshot, "noarch", "firmware-2-1.noarch.rpm");
+        File.WriteAllText(armCandidate, "new-arm");
+        File.WriteAllText(noarchCandidate, "new-noarch");
+        File.WriteAllText(Path.Combine(snapshot, "aarch64", "repodata", "repomd.xml"), "new-arm-metadata");
+        File.WriteAllText(Path.Combine(snapshot, "noarch", "repodata", "repomd.xml"), "new-noarch-metadata");
+        PromotionCandidateFile[] candidates =
+        [
+            new("aarch64", Path.GetFileName(armCandidate)),
+            new("noarch", Path.GetFileName(noarchCandidate))
+        ];
+        _manager.WritePromotionJournal(staging, setId, repositoryId, "grouped", candidates);
+
+        var publication = _manager.CommitStagedRepository("grouped", snapshot, candidates);
+        var journal = Assert.Single(_manager.ReadPromotionJournals()).Journal;
+
+        Assert.True(_manager.LiveContainsPromotionCandidates(journal));
+        Assert.Equal("new-arm-metadata", File.ReadAllText(Path.Combine(arm, "repodata", "repomd.xml")));
+        Assert.Equal("new-noarch-metadata", File.ReadAllText(Path.Combine(noarch, "repodata", "repomd.xml")));
+
+        _manager.RollbackStagedRepository(publication);
+
+        Assert.False(_manager.LiveContainsPromotionCandidates(journal));
+        Assert.Equal("old-arm", File.ReadAllText(Path.Combine(arm, "repodata", "repomd.xml")));
+        Assert.Equal("old-noarch", File.ReadAllText(Path.Combine(noarch, "repodata", "repomd.xml")));
+    }
+
+    [Fact]
+    public void PromotionJournal_RejectsChangedStagingIdentity()
+    {
+        var repositoryId = Guid.NewGuid();
+        var staging = _manager.CreatePublicationStagingDirectory(repositoryId);
+        _manager.WritePromotionJournal(
+            staging,
+            Guid.NewGuid(),
+            repositoryId,
+            "stable",
+            [new PromotionCandidateFile("noarch", "pkg-1-1.noarch.rpm")]);
+        var journalPath = Path.Combine(staging, "promotion.json");
+        var json = File.ReadAllText(journalPath).Replace(
+            staging,
+            Path.Combine(_root, ".staging", repositoryId.ToString("N"), "different"),
+            StringComparison.Ordinal);
+        File.WriteAllText(journalPath, json);
+
+        Assert.Throws<InvalidOperationException>(() => _manager.ReadPromotionJournals());
+    }
+
+    [Fact]
     public void Recovery_RollsBackFilesystemWhenDatabaseDidNotCommit()
     {
         var live = _manager.EnsureRepoDir("stable", "noarch");

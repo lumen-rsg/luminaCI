@@ -74,6 +74,12 @@ public record PromotionGateCompleted(
     string? FailureReason,
     DateTime CompletedAt);
 
+public record PromotionSetPublished(
+    Guid PromotionSetId,
+    Guid RepositoryId,
+    IReadOnlyList<Guid> ArtifactIds,
+    DateTime PublishedAt);
+
 public record PackagePublished(Guid ArtifactId, Guid RepositoryId, Guid PackageId, DateTime PublishedAt);
 
 public record RepositoryUpdated(Guid RepositoryId, string RepositoryName, DateTime UpdatedAt);

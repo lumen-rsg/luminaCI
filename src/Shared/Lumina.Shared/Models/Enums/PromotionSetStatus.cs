@@ -6,5 +6,6 @@ public enum PromotionSetStatus
     Testing = 1,
     Passed = 2,
     Failed = 3,
-    Promoted = 4
+    Promoted = 4,
+    RolledBack = 5
 }

@@ -371,6 +371,96 @@ public class RepositoryManagerService
             safeDirectory, await stdout);
     }
 
+    public string CreateRepositorySnapshot(string basePath, string stagingDirectory)
+    {
+        EnsureSafeRepoSegments(basePath, arch: null);
+        var liveRoot = ProcessArgumentSanitizer.ResolveConfinedPath(
+            basePath.Trim('/'), _reposBasePath);
+        Directory.CreateDirectory(liveRoot);
+        var safeStaging = ProcessArgumentSanitizer.ResolveConfinedPath(stagingDirectory, _reposBasePath);
+        var snapshotRoot = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(safeStaging, "snapshot"), _reposBasePath);
+        Directory.CreateDirectory(snapshotRoot);
+        CopyTree(liveRoot, snapshotRoot);
+        return snapshotRoot;
+    }
+
+    public string GetRepositorySnapshotRpmPath(
+        string snapshotRoot,
+        string arch,
+        string fileName)
+    {
+        ProcessArgumentSanitizer.ValidateRepositoryArch(arch);
+        var safeRoot = ProcessArgumentSanitizer.ResolveConfinedPath(snapshotRoot, _reposBasePath);
+        var safeName = Path.GetFileName(fileName);
+        if (safeName != fileName || !safeName.EndsWith(".rpm", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("Promotion candidate filename is invalid.");
+        var archDirectory = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(safeRoot, arch), _reposBasePath);
+        Directory.CreateDirectory(archDirectory);
+        var destination = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(archDirectory, safeName), _reposBasePath);
+        if (File.Exists(destination))
+            throw new ConflictException($"Promotion candidate '{safeName}' already exists in the live snapshot.");
+        return destination;
+    }
+
+    public async Task GenerateRepositorySnapshotMetadataAsync(
+        string snapshotRoot,
+        IEnumerable<string> architectures)
+    {
+        var safeRoot = ProcessArgumentSanitizer.ResolveConfinedPath(snapshotRoot, _reposBasePath);
+        foreach (var arch in architectures.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            ProcessArgumentSanitizer.ValidateRepositoryArch(arch);
+            var directory = ProcessArgumentSanitizer.ResolveConfinedPath(
+                Path.Combine(safeRoot, arch), _reposBasePath);
+            var repodata = Path.Combine(directory, "repodata");
+            if (Directory.Exists(repodata))
+                Directory.Delete(repodata, recursive: true);
+            var result = await RunCreaterepoForDirectoryAsync(directory);
+            if (!result.Success || !File.Exists(Path.Combine(repodata, "repomd.xml")))
+                throw new InvalidOperationException(
+                    $"Promotion metadata generation failed for '{arch}': {result.Output}");
+        }
+    }
+
+    public PromotionPublicationCommit CommitStagedRepository(
+        string basePath,
+        string stagedSnapshotPath,
+        IReadOnlyList<PromotionCandidateFile> candidates)
+    {
+        EnsureSafeRepoSegments(basePath, arch: null);
+        if (candidates is not { Count: > 0 })
+            throw new ValidationException("Promotion snapshot has no candidate packages.");
+        var snapshot = ProcessArgumentSanitizer.ResolveConfinedPath(stagedSnapshotPath, _reposBasePath);
+        foreach (var candidate in candidates)
+        {
+            ProcessArgumentSanitizer.ValidateRepositoryArch(candidate.Architecture);
+            if (Path.GetFileName(candidate.FileName) != candidate.FileName ||
+                !File.Exists(Path.Combine(snapshot, candidate.Architecture, candidate.FileName)) ||
+                !File.Exists(Path.Combine(snapshot, candidate.Architecture, "repodata", "repomd.xml")))
+                throw new InvalidOperationException("Promotion repository snapshot is incomplete.");
+        }
+        var live = ProcessArgumentSanitizer.ResolveConfinedPath(basePath.Trim('/'), _reposBasePath);
+        Directory.CreateDirectory(live);
+        AtomicExchange(live, snapshot);
+        return new PromotionPublicationCommit(live, snapshot);
+    }
+
+    public void RollbackStagedRepository(PromotionPublicationCommit publication)
+    {
+        if (Directory.Exists(publication.LiveDirectoryPath) &&
+            Directory.Exists(publication.PreviousSnapshotPath))
+            AtomicExchange(publication.LiveDirectoryPath, publication.PreviousSnapshotPath);
+    }
+
+    public void CompleteStagedRepository(PromotionPublicationCommit publication)
+    {
+        if (Directory.Exists(publication.PreviousSnapshotPath))
+            Directory.Delete(publication.PreviousSnapshotPath, recursive: true);
+    }
+
     public RpmMetadata ValidateStagedRpm(string stagedPath, string expectedFileName)
     {
         var metadata = ExtractRpmMetadata(stagedPath)
@@ -513,6 +603,77 @@ public class RepositoryManagerService
             File.Delete(journalPath);
     }
 
+    public void WritePromotionJournal(
+        string stagingDirectory,
+        Guid promotionSetId,
+        Guid repositoryId,
+        string basePath,
+        IReadOnlyList<PromotionCandidateFile> candidates)
+    {
+        EnsureSafeRepoSegments(basePath, arch: null);
+        if (promotionSetId == Guid.Empty || repositoryId == Guid.Empty || candidates is not { Count: > 0 })
+            throw new ValidationException("Promotion journal identity is invalid.");
+        foreach (var candidate in candidates)
+        {
+            ProcessArgumentSanitizer.ValidateRepositoryArch(candidate.Architecture);
+            if (Path.GetFileName(candidate.FileName) != candidate.FileName)
+                throw new ValidationException("Promotion journal candidate is invalid.");
+        }
+        var safeStaging = ProcessArgumentSanitizer.ResolveConfinedPath(stagingDirectory, _reposBasePath);
+        var path = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(safeStaging, "promotion.json"), _reposBasePath);
+        var journal = new PromotionPublicationJournal(
+            promotionSetId, repositoryId, basePath, safeStaging,
+            candidates.OrderBy(item => item.Architecture, StringComparer.Ordinal)
+                .ThenBy(item => item.FileName, StringComparer.Ordinal).ToList());
+        using var stream = new FileStream(
+            path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+        JsonSerializer.Serialize(stream, journal);
+        stream.Flush(flushToDisk: true);
+    }
+
+    public IReadOnlyList<(string JournalPath, PromotionPublicationJournal Journal)> ReadPromotionJournals()
+    {
+        var stagingRoot = Path.Combine(_reposBasePath, ".staging");
+        if (!Directory.Exists(stagingRoot))
+            return [];
+        var journals = new List<(string, PromotionPublicationJournal)>();
+        foreach (var path in Directory.EnumerateFiles(
+                     stagingRoot, "promotion.json", SearchOption.AllDirectories))
+        {
+            if (new FileInfo(path).LinkTarget is not null)
+                throw new InvalidOperationException($"Promotion journal cannot be a symbolic link: {path}");
+            var journal = JsonSerializer.Deserialize<PromotionPublicationJournal>(File.ReadAllText(path))
+                ?? throw new InvalidOperationException($"Invalid promotion journal: {path}");
+            ValidatePromotionJournal(journal, Path.GetDirectoryName(path));
+            journals.Add((path, journal));
+        }
+        return journals;
+    }
+
+    public PromotionPublicationCommit PublicationFromJournal(PromotionPublicationJournal journal)
+    {
+        ValidatePromotionJournal(journal);
+        var staging = ProcessArgumentSanitizer.ResolveConfinedPath(
+            journal.StagingDirectory, _reposBasePath);
+        var previous = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(staging, "snapshot"), _reposBasePath);
+        var live = ProcessArgumentSanitizer.ResolveConfinedPath(
+            journal.BasePath.Trim('/'), _reposBasePath);
+        return new PromotionPublicationCommit(live, previous);
+    }
+
+    public bool LiveContainsPromotionCandidates(PromotionPublicationJournal journal)
+    {
+        ValidatePromotionJournal(journal);
+        var publication = PublicationFromJournal(journal);
+        var presence = journal.Candidates.Select(candidate => File.Exists(Path.Combine(
+            publication.LiveDirectoryPath, candidate.Architecture, candidate.FileName))).ToList();
+        if (presence.Any(value => value) && presence.Any(value => !value))
+            throw new InvalidOperationException("Live repository contains a partial promotion set.");
+        return presence.All(value => value);
+    }
+
     public IReadOnlyList<(string JournalPath, PublicationJournal Journal)> ReadPublicationJournals()
     {
         var stagingRoot = Path.Combine(_reposBasePath, ".staging");
@@ -564,9 +725,69 @@ public class RepositoryManagerService
             foreach (var operationDirectory in Directory.EnumerateDirectories(repositoryDirectory))
             {
                 if (!File.Exists(Path.Combine(operationDirectory, "publication.json")))
-                    CleanupPublicationStaging(operationDirectory);
+                {
+                    if (!File.Exists(Path.Combine(operationDirectory, "promotion.json")))
+                        CleanupPublicationStaging(operationDirectory);
+                }
             }
         }
+    }
+
+    private void CopyTree(string sourceRoot, string destinationRoot)
+    {
+        foreach (var directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
+        {
+            var info = new DirectoryInfo(directory);
+            if (info.LinkTarget is not null)
+                throw new ValidationException("Repository snapshots cannot contain symbolic links.");
+            var relative = Path.GetRelativePath(sourceRoot, directory);
+            Directory.CreateDirectory(ProcessArgumentSanitizer.ResolveConfinedPath(
+                Path.Combine(destinationRoot, relative), _reposBasePath));
+        }
+        foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
+        {
+            var info = new FileInfo(file);
+            if (info.LinkTarget is not null)
+                throw new ValidationException("Repository snapshots cannot contain symbolic links.");
+            var relative = Path.GetRelativePath(sourceRoot, file);
+            var destination = ProcessArgumentSanitizer.ResolveConfinedPath(
+                Path.Combine(destinationRoot, relative), _reposBasePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(file, destination);
+        }
+    }
+
+    private void ValidatePromotionJournal(
+        PromotionPublicationJournal journal,
+        string? expectedStagingDirectory = null)
+    {
+        if (journal.PromotionSetId == Guid.Empty || journal.RepositoryId == Guid.Empty ||
+            journal.Candidates is not { Count: > 0 and <= 4096 })
+            throw new InvalidOperationException("Promotion journal identity is invalid.");
+        EnsureSafeRepoSegments(journal.BasePath, arch: null);
+        var staging = ProcessArgumentSanitizer.ResolveConfinedPath(
+            journal.StagingDirectory, _reposBasePath);
+        var stagingRoot = Path.GetFullPath(Path.Combine(_reposBasePath, ".staging")) +
+                          Path.DirectorySeparatorChar;
+        if (!staging.StartsWith(stagingRoot, StringComparison.Ordinal))
+            throw new InvalidOperationException("Promotion journal staging path is invalid.");
+        if (expectedStagingDirectory is not null)
+        {
+            var expected = ProcessArgumentSanitizer.ResolveConfinedPath(
+                expectedStagingDirectory, _reposBasePath);
+            if (!string.Equals(staging, expected, StringComparison.Ordinal))
+                throw new InvalidOperationException("Promotion journal location does not match its identity.");
+        }
+        foreach (var candidate in journal.Candidates)
+        {
+            ProcessArgumentSanitizer.ValidateRepositoryArch(candidate.Architecture);
+            if (Path.GetFileName(candidate.FileName) != candidate.FileName ||
+                !candidate.FileName.EndsWith(".rpm", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Promotion journal candidate is invalid.");
+        }
+        if (journal.Candidates.Select(item => (item.Architecture, item.FileName))
+            .Distinct().Count() != journal.Candidates.Count)
+            throw new InvalidOperationException("Promotion journal candidates are ambiguous.");
     }
 
     private async Task<CreaterepoResult> RunCreaterepoForDirectoryAsync(string directory)
@@ -627,3 +848,16 @@ public record PublicationJournal(
     string Arch,
     string FileName,
     string StagingDirectory);
+
+public sealed record PromotionCandidateFile(string Architecture, string FileName);
+
+public sealed record PromotionPublicationCommit(
+    string LiveDirectoryPath,
+    string PreviousSnapshotPath);
+
+public sealed record PromotionPublicationJournal(
+    Guid PromotionSetId,
+    Guid RepositoryId,
+    string BasePath,
+    string StagingDirectory,
+    IReadOnlyList<PromotionCandidateFile> Candidates);

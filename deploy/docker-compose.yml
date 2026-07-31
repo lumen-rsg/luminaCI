@@ -465,6 +465,7 @@ services:
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
       - Repository__BasePath=/app/repos
+      - RepositoryPromotion__Enabled=${REPOSITORY_PROMOTION_ENABLED:-false}
       # Shared JWT config so repository-service can re-validate bearer tokens
       # (defense-in-depth) — see SEC-04. Internal port 5004 is NOT published.
       - Jwt__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env (min 32 chars; see deploy/.env.example)}

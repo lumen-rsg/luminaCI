@@ -17,6 +17,7 @@ internal sealed record PromotionGateBundleManifest(
     [property: JsonPropertyName("promotionSetId")] Guid PromotionSetId,
     [property: JsonPropertyName("repositoryId")] Guid RepositoryId,
     [property: JsonPropertyName("candidateManifestSha256")] string CandidateManifestSha256,
+    [property: JsonPropertyName("baselineManifestSha256")] string BaselineManifestSha256,
     [property: JsonPropertyName("targetArchitecture")] string TargetArchitecture,
     [property: JsonPropertyName("baselinePackageNames")] IReadOnlyList<string> BaselinePackageNames,
     [property: JsonPropertyName("candidates")] IReadOnlyList<PromotionGateCandidateInput> Candidates);
@@ -99,8 +100,10 @@ public sealed class PromotionGateBundleService(
             var baselineNames = livePackages.Where(item => candidateNames.Contains(item.Name))
                 .Select(item => item.Name).Distinct(StringComparer.Ordinal)
                 .Order(StringComparer.Ordinal).ToList();
+            var baselineManifestSha256 = RepositoryManifestPolicy.Compute(livePackages);
             var manifest = new PromotionGateBundleManifest(
                 1, set.Id, set.RepositoryId, request.CandidateManifestSha256,
+                baselineManifestSha256,
                 set.TargetArchitecture, baselineNames,
                 request.Candidates.OrderBy(item => item.ProjectPackageId, StringComparer.Ordinal)
                     .ThenBy(item => item.FileName, StringComparer.Ordinal).ToList());
@@ -130,7 +133,8 @@ public sealed class PromotionGateBundleService(
 
             var now = DateTime.UtcNow;
             RepositoryPromotionPolicy.RecordGateBundle(
-                set, request.CandidateManifestSha256, objectName, hash, bundle.Length, now);
+                set, request.CandidateManifestSha256, baselineManifestSha256,
+                objectName, hash, bundle.Length, now);
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             logger.LogInformation(

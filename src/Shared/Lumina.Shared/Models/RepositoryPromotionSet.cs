@@ -24,6 +24,12 @@ public sealed class RepositoryPromotionSet
     public string? GateBundleSha256 { get; set; }
     public long? GateBundleSize { get; set; }
     public DateTime? GateBundlePreparedAt { get; set; }
+    public string? GateBaselineManifestSha256 { get; set; }
+    public string? PromotedRepositoryManifestSha256 { get; set; }
+    public string? RollbackSnapshotPath { get; set; }
+    public DateTime? RolledBackAt { get; set; }
+    public string? RolledBackBy { get; set; }
+    public string? RollbackReason { get; set; }
 
     public PackageRepository? Repository { get; set; }
     public List<Package> Packages { get; set; } = [];

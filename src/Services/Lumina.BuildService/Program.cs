@@ -133,6 +133,7 @@ try
         x.AddConsumer<PackageCandidateFaultConsumer>();
         x.AddConsumer<PromotionGatePreparedConsumer>();
         x.AddConsumer<PromotionGatePreparationFaultConsumer>();
+        x.AddConsumer<PromotionSetPublishedConsumer>();
         x.AddConsumer<GetArtifactSignatureConsumer>();
         x.AddConsumer<GetArtifactLocationConsumer>();
         x.AddConsumer<RepositorySnapshotCompletedConsumer>();
@@ -163,6 +164,7 @@ try
                 e.ConfigureConsumer<PackageCandidateFaultConsumer>(ctx);
                 e.ConfigureConsumer<PromotionGatePreparedConsumer>(ctx);
                 e.ConfigureConsumer<PromotionGatePreparationFaultConsumer>(ctx);
+                e.ConfigureConsumer<PromotionSetPublishedConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactSignatureConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactLocationConsumer>(ctx);
                 e.ConfigureConsumer<RepositorySnapshotCompletedConsumer>(ctx);

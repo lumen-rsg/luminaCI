@@ -19,13 +19,15 @@ public class RepositoryController : ControllerBase
     private readonly Services.MinioStorageService _storage;
     private readonly Services.RepositoryManagerService _repoManager;
     private readonly Services.SignatureVerificationService _verification;
+    private readonly Services.RepositoryPromotionService _promotions;
     private readonly ILogger<RepositoryController> _logger;
 
-    public RepositoryController(Services.MinioStorageService storage, Services.RepositoryManagerService repoManager, Services.SignatureVerificationService verification, ILogger<RepositoryController> logger)
+    public RepositoryController(Services.MinioStorageService storage, Services.RepositoryManagerService repoManager, Services.SignatureVerificationService verification, Services.RepositoryPromotionService promotions, ILogger<RepositoryController> logger)
     {
         _storage = storage;
         _repoManager = repoManager;
         _verification = verification;
+        _promotions = promotions;
         _logger = logger;
     }
 
@@ -171,5 +173,27 @@ public class RepositoryController : ControllerBase
     {
         var packages = await _storage.ListPackagesAsync(repositoryId);
         return Ok(new ApiResponse<List<PackageResponse>>(true, packages.Select(PackageResponse.From).ToList(), null, null));
+    }
+
+    [HttpPost("{repositoryId:guid}/promotions/{promotionSetId:guid}/rollback")]
+    [Authorize(Policy = AuthPolicies.Admin)]
+    public async Task<ActionResult<ApiResponse<object>>> RollbackPromotion(
+        Guid repositoryId,
+        Guid promotionSetId,
+        [FromBody] RollbackPromotionRequest request)
+    {
+        try
+        {
+            var actor = User.FindFirst("sub")?.Value ?? User.Identity?.Name
+                ?? throw new ValidationException("Authenticated rollback actor is unavailable.");
+            await _promotions.RollbackAsync(
+                repositoryId, promotionSetId, actor, request.Reason, HttpContext.RequestAborted);
+            return Ok(new ApiResponse<object>(true, null, null, "Promotion rolled back"));
+        }
+        catch (Exception exception)
+        {
+            return ApiResults.FromException<object>(
+                exception, _logger, "Repository.RollbackPromotion", repositoryId);
+        }
     }
 }

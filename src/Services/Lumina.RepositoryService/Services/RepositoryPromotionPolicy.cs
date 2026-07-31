@@ -105,7 +105,7 @@ public static partial class RepositoryPromotionPolicy
         if (set.Status != PromotionSetStatus.Candidate)
         {
             if (set.Status is PromotionSetStatus.Testing or PromotionSetStatus.Passed or
-                    PromotionSetStatus.Failed or PromotionSetStatus.Promoted &&
+                    PromotionSetStatus.Failed or PromotionSetStatus.Promoted or PromotionSetStatus.RolledBack &&
                 string.Equals(set.GateJobName, jobName, StringComparison.Ordinal) &&
                 string.Equals(set.GateJobUid, jobUid, StringComparison.Ordinal))
             {
@@ -130,6 +130,7 @@ public static partial class RepositoryPromotionPolicy
     public static void RecordGateBundle(
         RepositoryPromotionSet set,
         string candidateManifestSha256,
+        string baselineManifestSha256,
         string bundleObjectName,
         string bundleSha256,
         long bundleSize,
@@ -137,6 +138,7 @@ public static partial class RepositoryPromotionPolicy
     {
         ArgumentNullException.ThrowIfNull(set);
         var manifestHash = NormalizeSha256(candidateManifestSha256, "Candidate manifest SHA-256");
+        var baselineHash = NormalizeSha256(baselineManifestSha256, "Baseline manifest SHA-256");
         var bundleHash = NormalizeSha256(bundleSha256, "Gate bundle SHA-256");
         var expectedObject = $"promotion-gates/{set.Id:N}/sha256/{bundleHash}/input.tar";
         if (!string.Equals(bundleObjectName, expectedObject, StringComparison.Ordinal) ||
@@ -145,6 +147,7 @@ public static partial class RepositoryPromotionPolicy
         if (set.GateBundleObjectName is not null)
         {
             if (set.GateCandidateManifestSha256 == manifestHash &&
+                set.GateBaselineManifestSha256 == baselineHash &&
                 set.GateBundleObjectName == expectedObject && set.GateBundleSha256 == bundleHash &&
                 set.GateBundleSize == bundleSize)
                 return;
@@ -154,6 +157,7 @@ public static partial class RepositoryPromotionPolicy
         if (set.Packages.Count == 0)
             throw new ValidationException("A promotion gate bundle requires candidate packages.");
         set.GateCandidateManifestSha256 = manifestHash;
+        set.GateBaselineManifestSha256 = baselineHash;
         set.GateBundleObjectName = expectedObject;
         set.GateBundleSha256 = bundleHash;
         set.GateBundleSize = bundleSize;
@@ -167,7 +171,7 @@ public static partial class RepositoryPromotionPolicy
         DateTime now)
     {
         var normalized = NormalizeSha256(resultSha256, "Gate result SHA-256");
-        if (set.Status is PromotionSetStatus.Passed or PromotionSetStatus.Promoted &&
+        if (set.Status is PromotionSetStatus.Passed or PromotionSetStatus.Promoted or PromotionSetStatus.RolledBack &&
             string.Equals(set.GateResultSha256, normalized, StringComparison.Ordinal))
         {
             return;
@@ -217,14 +221,59 @@ public static partial class RepositoryPromotionPolicy
         set.UpdatedAt = now;
     }
 
-    public static void MarkPromoted(RepositoryPromotionSet set, DateTime now)
+    public static void MarkPromoted(
+        RepositoryPromotionSet set,
+        string repositoryManifestSha256,
+        string rollbackSnapshotPath,
+        DateTime now)
     {
+        var manifestHash = NormalizeSha256(
+            repositoryManifestSha256, "Promoted repository manifest SHA-256");
+        if (string.IsNullOrWhiteSpace(rollbackSnapshotPath) || rollbackSnapshotPath.Length > 1024 ||
+            rollbackSnapshotPath.IndexOf('\0') >= 0)
+            throw new ValidationException("Rollback snapshot path is invalid.");
+        if (set.Status == PromotionSetStatus.Promoted)
+        {
+            if (set.PromotedRepositoryManifestSha256 == manifestHash &&
+                set.RollbackSnapshotPath == rollbackSnapshotPath)
+                return;
+            throw new ConflictException("Promotion repository identity changed after commit.");
+        }
         RequireStatus(set, PromotionSetStatus.Passed);
         if (set.Packages.Count == 0 || set.Packages.Any(package => package.Status != "Ready"))
             throw new ValidationException(
                 "Every candidate package must be atomically committed before the promotion set is marked promoted.");
         set.Status = PromotionSetStatus.Promoted;
+        set.PromotedRepositoryManifestSha256 = manifestHash;
+        set.RollbackSnapshotPath = rollbackSnapshotPath;
         set.PromotedAt = now;
+        set.UpdatedAt = now;
+    }
+
+    public static void MarkRolledBack(
+        RepositoryPromotionSet set,
+        string rolledBackBy,
+        string reason,
+        DateTime now)
+    {
+        var actor = (rolledBackBy ?? string.Empty).Trim();
+        if (actor.Length is < 1 or > 256)
+            throw new ValidationException("Rollback actor is invalid.");
+        var failure = NormalizeFailureReason(reason);
+        if (set.Status == PromotionSetStatus.RolledBack)
+        {
+            if (set.RolledBackBy == actor && set.RollbackReason == failure)
+                return;
+            throw new ConflictException("Rollback attribution changed after commit.");
+        }
+        RequireStatus(set, PromotionSetStatus.Promoted);
+        if (set.Packages.Count == 0 || set.Packages.Any(package => package.Status != "RolledBack"))
+            throw new ValidationException("Every promoted package must be restored before rollback is recorded.");
+        set.Status = PromotionSetStatus.RolledBack;
+        set.RollbackSnapshotPath = null;
+        set.RolledBackAt = now;
+        set.RolledBackBy = actor;
+        set.RollbackReason = failure;
         set.UpdatedAt = now;
     }
 
