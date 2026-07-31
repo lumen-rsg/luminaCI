@@ -22,7 +22,7 @@ public sealed class ProjectSnapshotPlanServiceTests
         var delivery = AddDelivery(db, archive, ["firmware/blob.bin"]);
         await db.SaveChangesAsync();
 
-        await new ProjectSnapshotPlanService(db, new MemorySnapshotProvider(archive))
+        await NewService(db, archive)
             .ProcessAsync(delivery.Id, default);
 
         Assert.Equal(ProjectWebhookStatus.PlanReady, delivery.Status);
@@ -42,7 +42,7 @@ public sealed class ProjectSnapshotPlanServiceTests
         var delivery = AddDelivery(db, archive, ["README.md"]);
         await db.SaveChangesAsync();
 
-        await new ProjectSnapshotPlanService(db, new MemorySnapshotProvider(archive))
+        await NewService(db, archive)
             .ProcessAsync(delivery.Id, default);
 
         Assert.Equal(ProjectWebhookStatus.Ignored, delivery.Status);
@@ -58,7 +58,26 @@ public sealed class ProjectSnapshotPlanServiceTests
         var delivery = AddDelivery(db, archive, ["firmware/blob.bin"]);
         await db.SaveChangesAsync();
 
-        await new ProjectSnapshotPlanService(db, new MemorySnapshotProvider(archive))
+        await NewService(db, archive)
+            .ProcessAsync(delivery.Id, default);
+
+        Assert.Equal(ProjectWebhookStatus.Failed, delivery.Status);
+        Assert.Equal("snapshot-plan-invalid", delivery.FailureCode);
+        Assert.Null(delivery.DispatchPlanJson);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_FailsClosedWhenLookasideSourceCannotBeSealed()
+    {
+        var archive = CreateArchive(Manifest());
+        await using var db = CreateDb(nameof(ProcessAsync_FailsClosedWhenLookasideSourceCannotBeSealed));
+        var delivery = AddDelivery(db, archive, ["firmware/blob.bin"]);
+        await db.SaveChangesAsync();
+
+        await new ProjectSnapshotPlanService(
+                db,
+                new MemorySnapshotProvider(archive),
+                new FakeLookasideSealer(shouldFail: true))
             .ProcessAsync(delivery.Id, default);
 
         Assert.Equal(ProjectWebhookStatus.Failed, delivery.Status);
@@ -153,6 +172,9 @@ public sealed class ProjectSnapshotPlanServiceTests
 
     private static string Hash(string value) => Hash(Encoding.UTF8.GetBytes(value));
 
+    private static ProjectSnapshotPlanService NewService(BuildDbContext db, byte[] archive) =>
+        new(db, new MemorySnapshotProvider(archive), new FakeLookasideSealer());
+
     private static BuildDbContext CreateDb(string name)
     {
         var options = new DbContextOptionsBuilder<BuildDbContext>()
@@ -170,6 +192,16 @@ public sealed class ProjectSnapshotPlanServiceTests
             long expectedSize,
             CancellationToken cancellationToken) =>
             Task.FromResult(new RepositorySnapshotStream(new MemoryStream(archive)));
+    }
+
+    private sealed class FakeLookasideSealer(bool shouldFail = false) : IProjectLookasideSourceSealer
+    {
+        public Task SealAsync(ProjectDispatchPlan plan, CancellationToken cancellationToken)
+        {
+            if (shouldFail)
+                throw new Lumina.Shared.Errors.ValidationException("Lookaside source mismatch.");
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class TestBuildDbContext(DbContextOptions<BuildDbContext> options)

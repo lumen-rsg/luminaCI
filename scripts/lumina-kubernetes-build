@@ -10,6 +10,9 @@ readonly WORKSPACE="/workspace"
 readonly MAX_ARTIFACT_BYTES=$((8 * 1024 * 1024 * 1024))
 readonly MAX_TOTAL_BYTES=$((32 * 1024 * 1024 * 1024))
 readonly MAX_ARTIFACTS=256
+readonly MAX_LOOKASIDE_SOURCES=32
+readonly MAX_LOOKASIDE_SOURCE_BYTES=$((1024 * 1024 * 1024))
+readonly MAX_LOOKASIDE_TOTAL_BYTES=$((4 * 1024 * 1024 * 1024))
 
 fail() {
     printf 'ERROR: %s\n' "$*" >&2
@@ -22,14 +25,25 @@ readonly requested_job_id="$2"
 [[ -r "${TRANSPORT_PATH}" ]] || fail "Kubernetes transport document is unavailable"
 
 transport_is_valid='type == "object" and
-  (keys | sort) == (["artifactBundleObjectName","artifactBundleUploadUrl","buildJobId","expiresAt","kubernetesJobUid","snapshotDownloadUrl","snapshotObjectName","snapshotSha256","snapshotSize","version"] | sort) and
-  .version == 1 and
+  (keys | sort) == (["artifactBundleObjectName","artifactBundleUploadUrl","buildJobId","expiresAt","kubernetesJobUid","lookasideSources","snapshotDownloadUrl","snapshotObjectName","snapshotSha256","snapshotSize","version"] | sort) and
+  .version == 2 and
   (.buildJobId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
   (.kubernetesJobUid | type == "string" and test("^[a-z0-9-]{1,128}$")) and
   (.snapshotObjectName | type == "string" and length >= 1 and length <= 1024) and
   (.snapshotSha256 | type == "string" and test("^[0-9a-f]{64}$")) and
   (.snapshotSize | type == "number" and . > 0 and floor == .) and
   (.snapshotDownloadUrl | type == "string" and test("^https?://[^[:space:]]+\\?[^[:space:]]+$")) and
+  (.lookasideSources | type == "array" and length <= 32 and
+    (map(.fileName) | length == (unique | length)) and
+    (map(.size) | add // 0) <= 4294967296 and
+    all(.[];
+      type == "object" and
+      (keys | sort) == (["downloadUrl","fileName","objectName","sha256","size"] | sort) and
+      (.fileName | type == "string" and test("^[A-Za-z0-9._+-]{1,256}$") and . != "." and . != "..") and
+      (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+      (.size | type == "number" and . > 0 and . <= 1073741824 and floor == .) and
+      (.objectName == ("lookaside/sha256/" + .sha256 + "/" + .fileName)) and
+      (.downloadUrl | type == "string" and test("^https?://[^[:space:]]+\\?[^[:space:]]+$")))) and
   (.artifactBundleObjectName | type == "string") and
   (.artifactBundleUploadUrl | type == "string" and test("^https?://[^[:space:]]+\\?[^[:space:]]+$")) and
   (.expiresAt | type == "string")'
@@ -89,6 +103,45 @@ if [[ ! -f "${source_root}/${SPEC_PATH_IN_REPO}" ]]; then
         || fail "immutable snapshot does not contain the selected spec path"
     source_root="${roots[0]}"
 fi
+
+readonly sources_dir="${source_root}/SOURCES"
+mkdir -p "${sources_dir}"
+lookaside_count="$(jq '.lookasideSources | length' "${TRANSPORT_PATH}")"
+((lookaside_count <= MAX_LOOKASIDE_SOURCES)) || fail "lookaside source count exceeds policy"
+lookaside_total=0
+if ((lookaside_count > 0)); then
+    echo "Downloading immutable lookaside sources..."
+fi
+while IFS= read -r source_json; do
+    file_name="$(jq -r '.fileName' <<<"${source_json}")"
+    object_name="$(jq -r '.objectName' <<<"${source_json}")"
+    source_size="$(jq -r '.size' <<<"${source_json}")"
+    source_sha256="$(jq -r '.sha256' <<<"${source_json}")"
+    source_url="$(jq -r '.downloadUrl' <<<"${source_json}")"
+    expected_object="lookaside/sha256/${source_sha256}/${file_name}"
+    [[ "${object_name}" == "${expected_object}" ]] \
+        || fail "lookaside source object identity is invalid"
+    ((source_size > 0 && source_size <= MAX_LOOKASIDE_SOURCE_BYTES)) \
+        || fail "lookaside source size exceeds policy"
+    ((lookaside_total += source_size))
+    ((lookaside_total <= MAX_LOOKASIDE_TOTAL_BYTES)) \
+        || fail "lookaside source total size exceeds policy"
+    destination="${sources_dir}/${file_name}"
+    [[ ! -e "${destination}" && ! -L "${destination}" ]] \
+        || fail "lookaside source collides with repository content"
+    temporary="${sources_dir}/.lumina-download-${file_name}"
+    [[ ! -e "${temporary}" && ! -L "${temporary}" ]] \
+        || fail "lookaside source temporary path already exists"
+    curl --fail --silent --show-error --location \
+        --connect-timeout 30 --max-time 1800 --max-filesize "${source_size}" \
+        --output "${temporary}" "${source_url}"
+    [[ "$(stat -c '%s' "${temporary}")" == "${source_size}" ]] \
+        || fail "lookaside source size does not match transport metadata"
+    [[ "$(sha256sum "${temporary}" | awk '{print $1}')" == "${source_sha256}" ]] \
+        || fail "lookaside source digest does not match transport metadata"
+    chmod 0640 "${temporary}"
+    mv -- "${temporary}" "${destination}"
+done < <(jq -c '.lookasideSources[]' "${TRANSPORT_PATH}")
 
 echo "Building selected RPM package..."
 SOURCE_DIR="${source_root}" \

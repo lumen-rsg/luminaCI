@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Lumina.BuildService.Services;
+using Lumina.BuildService.Services.PackageGraph;
 using Lumina.Shared.Errors;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
@@ -48,6 +49,7 @@ public sealed class KubernetesBuildTransportPolicyTests
             resources.Delivery,
             resources.Identity,
             Limits(),
+            LookasideSources(),
             signer,
             now,
             CancellationToken.None);
@@ -65,6 +67,9 @@ public sealed class KubernetesBuildTransportPolicyTests
             signer.UploadObject);
         Assert.Equal(8100, signer.ExpirySeconds);
         Assert.Equal(now.AddSeconds(8100), transport.ExpiresAt);
+        var lookaside = Assert.Single(transport.LookasideSources);
+        Assert.Equal("payload.tar.gz", lookaside.FileName);
+        Assert.Equal(LookasideSources()[0].ObjectName, signer.ArtifactDownloadObject);
         Assert.True(secret.Immutable);
         Assert.Equal(
             KubernetesBuildTransportPolicy.SecretName(resources.Identity.JobName),
@@ -72,7 +77,9 @@ public sealed class KubernetesBuildTransportPolicyTests
         Assert.Equal(resources.Identity.JobUid, Assert.Single(secret.Metadata.OwnerReferences).Uid);
         var decoded = JsonSerializer.Deserialize<KubernetesBuildTransport>(
             secret.Data[KubernetesBuildTransportPolicy.SecretDataKey]);
-        Assert.Equal(transport, decoded);
+        Assert.NotNull(decoded);
+        Assert.Equal(transport with { LookasideSources = [] }, decoded with { LookasideSources = [] });
+        Assert.Equal(transport.LookasideSources.ToArray(), decoded.LookasideSources.ToArray());
     }
 
     [Fact]
@@ -87,6 +94,7 @@ public sealed class KubernetesBuildTransportPolicyTests
                 resources.Delivery,
                 resources.Identity,
                 Limits(),
+                [],
                 new FakeSigner(),
                 DateTimeOffset.UtcNow,
                 CancellationToken.None));
@@ -99,6 +107,7 @@ public sealed class KubernetesBuildTransportPolicyTests
                 resources.Delivery,
                 resources.Identity,
                 Limits(),
+                [],
                 new FakeSigner(),
                 DateTimeOffset.UtcNow,
                 CancellationToken.None));
@@ -116,9 +125,64 @@ public sealed class KubernetesBuildTransportPolicyTests
                 resources.Delivery,
                 resources.Identity,
                 Limits(),
+                [],
                 signer,
                 DateTimeOffset.UtcNow,
                 CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ValidateSecret_RejectsChangedLookasideIdentity()
+    {
+        var resources = Resources();
+        var transport = await KubernetesBuildTransportPolicy.CreateAsync(
+            resources.Job,
+            resources.Delivery,
+            resources.Identity,
+            Limits(),
+            LookasideSources(),
+            new FakeSigner(),
+            DateTimeOffset.UtcNow,
+            CancellationToken.None);
+        var secret = KubernetesBuildTransportPolicy.CreateSecret(
+            resources.Identity.Namespace,
+            resources.Identity.JobName,
+            transport);
+        var changed = transport with
+        {
+            LookasideSources = [transport.LookasideSources[0] with { Size = 43 }]
+        };
+
+        Assert.Throws<ConflictException>(() => KubernetesBuildTransportPolicy.ValidateSecret(
+            secret,
+            resources.Identity,
+            changed));
+    }
+
+    [Fact]
+    public void ResolveLookasideSources_BindsExactPackageAndPipelineFromPersistedPlan()
+    {
+        var resources = Resources();
+        var pipelineId = Guid.NewGuid();
+        resources.Job.PipelineId = pipelineId;
+        resources.Job.ProjectPackageId = "firmware";
+        resources.Delivery.DispatchPlanJson = JsonSerializer.Serialize(new ProjectDispatchPlan(
+            [new ProjectDispatchStage(0, [new ProjectDispatchTarget(
+                "firmware",
+                pipelineId,
+                "fedora-44-aarch64",
+                "firmware/firmware.spec",
+                "jetson-r39.2",
+                LookasideSources())])],
+            [],
+            [],
+            false));
+
+        var source = Assert.Single(KubernetesBuildTransportService.ResolveLookasideSources(
+            resources.Job,
+            resources.Delivery));
+
+        Assert.Equal("payload.tar.gz", source.FileName);
     }
 
     private static TestResources Resources()
@@ -171,6 +235,16 @@ public sealed class KubernetesBuildTransportPolicyTests
         "4Gi",
         "16Gi");
 
+    private static IReadOnlyList<ProjectLookasideSource> LookasideSources()
+    {
+        var hash = new string('d', 64);
+        return [new ProjectLookasideSource(
+            "payload.tar.gz",
+            ProjectLookasideSourcePolicy.ObjectName("payload.tar.gz", hash),
+            42,
+            hash)];
+    }
+
     private sealed record TestResources(
         BuildJob Job,
         ProjectWebhookDelivery Delivery,
@@ -181,6 +255,7 @@ public sealed class KubernetesBuildTransportPolicyTests
         public string DownloadUrl { get; init; } = "https://minio.example/snapshot?signature=download";
         public string UploadUrl { get; init; } = "https://minio.example/bundle?signature=upload";
         public string? DownloadObject { get; private set; }
+        public string? ArtifactDownloadObject { get; private set; }
         public string? UploadObject { get; private set; }
         public int ExpirySeconds { get; private set; }
 
@@ -207,6 +282,11 @@ public sealed class KubernetesBuildTransportPolicyTests
         public Task<string> SignArtifactDownloadAsync(
             string objectName,
             int expirySeconds,
-            CancellationToken cancellationToken) => Task.FromResult(DownloadUrl);
+            CancellationToken cancellationToken)
+        {
+            ArtifactDownloadObject = objectName;
+            Assert.Equal(ExpirySeconds, expirySeconds);
+            return Task.FromResult(DownloadUrl);
+        }
     }
 }

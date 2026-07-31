@@ -89,6 +89,8 @@ try
     builder.Services.AddScoped<BuildProjectService>();
     builder.Services.AddScoped<ProjectWebhookService>();
     builder.Services.AddScoped<IRepositorySnapshotPublisher, RepositorySnapshotPublisher>();
+    builder.Services.AddScoped<IProjectLookasideObjectStore, ProjectLookasideObjectStore>();
+    builder.Services.AddScoped<IProjectLookasideSourceSealer, ProjectLookasideSourceSealer>();
     builder.Services.AddScoped<ProjectSnapshotPlanService>();
     builder.Services.AddScoped<IRepositorySnapshotStreamProvider, RepositorySnapshotStreamProvider>();
     builder.Services.AddScoped<ProjectDispatchService>();

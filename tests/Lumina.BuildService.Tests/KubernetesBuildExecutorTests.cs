@@ -330,6 +330,7 @@ public sealed class KubernetesBuildExecutorTests
             new string('a', 64),
             4096,
             "https://minio.example/snapshot?signature=download",
+            [],
             KubernetesBuildTransportPolicy.BundleObjectName(buildJobId, identity.JobUid),
             "https://minio.example/bundle?signature=upload",
             DateTimeOffset.UtcNow.AddHours(1)));

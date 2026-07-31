@@ -18,9 +18,17 @@ public sealed record KubernetesBuildTransport(
     [property: JsonPropertyName("snapshotSha256")] string SnapshotSha256,
     [property: JsonPropertyName("snapshotSize")] long SnapshotSize,
     [property: JsonPropertyName("snapshotDownloadUrl")] string SnapshotDownloadUrl,
+    [property: JsonPropertyName("lookasideSources")] IReadOnlyList<KubernetesBuildLookasideSource> LookasideSources,
     [property: JsonPropertyName("artifactBundleObjectName")] string ArtifactBundleObjectName,
     [property: JsonPropertyName("artifactBundleUploadUrl")] string ArtifactBundleUploadUrl,
     [property: JsonPropertyName("expiresAt")] DateTimeOffset ExpiresAt);
+
+public sealed record KubernetesBuildLookasideSource(
+    [property: JsonPropertyName("fileName")] string FileName,
+    [property: JsonPropertyName("objectName")] string ObjectName,
+    [property: JsonPropertyName("size")] long Size,
+    [property: JsonPropertyName("sha256")] string Sha256,
+    [property: JsonPropertyName("downloadUrl")] string DownloadUrl);
 
 internal interface IKubernetesObjectUrlSigner
 {
@@ -114,7 +122,7 @@ internal sealed class KubernetesRunnerObjectStore : IDisposable
 
 internal static class KubernetesBuildTransportPolicy
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
     public const string SecretDataKey = "transport.json";
     private const int ExpiryBufferSeconds = 15 * 60;
     private const int MaximumPresignedExpirySeconds = 7 * 24 * 60 * 60;
@@ -130,6 +138,7 @@ internal static class KubernetesBuildTransportPolicy
         ProjectWebhookDelivery delivery,
         KubernetesBuildResourceIdentity identity,
         KubernetesJobLimits limits,
+        IReadOnlyList<ProjectLookasideSource> lookasideSources,
         IKubernetesObjectUrlSigner signer,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -147,6 +156,22 @@ internal static class KubernetesBuildTransportPolicy
             bundleObject,
             expirySeconds,
             cancellationToken);
+        ProjectLookasideSourcePolicy.Validate(lookasideSources);
+        var transportedSources = new List<KubernetesBuildLookasideSource>(lookasideSources.Count);
+        foreach (var source in lookasideSources)
+        {
+            var downloadUrl = await signer.SignArtifactDownloadAsync(
+                source.ObjectName,
+                expirySeconds,
+                cancellationToken);
+            ValidatePresignedUrl(downloadUrl);
+            transportedSources.Add(new KubernetesBuildLookasideSource(
+                source.FileName,
+                source.ObjectName,
+                source.Size,
+                source.Sha256,
+                downloadUrl));
+        }
         ValidatePresignedUrl(snapshotUrl);
         ValidatePresignedUrl(uploadUrl);
 
@@ -158,6 +183,7 @@ internal static class KubernetesBuildTransportPolicy
             delivery.SnapshotSha256!.ToLowerInvariant(),
             delivery.SnapshotFileSize!.Value,
             snapshotUrl,
+            transportedSources,
             bundleObject,
             uploadUrl,
             now.AddSeconds(expirySeconds));
@@ -247,6 +273,7 @@ internal static class KubernetesBuildTransportPolicy
             !string.Equals(persisted.SnapshotObjectName, requested.SnapshotObjectName, StringComparison.Ordinal) ||
             !string.Equals(persisted.SnapshotSha256, requested.SnapshotSha256, StringComparison.Ordinal) ||
             persisted.SnapshotSize != requested.SnapshotSize ||
+            !SameLookasideIdentity(persisted.LookasideSources, requested.LookasideSources) ||
             !string.Equals(
                 persisted.ArtifactBundleObjectName,
                 requested.ArtifactBundleObjectName,
@@ -316,12 +343,36 @@ internal static class KubernetesBuildTransportPolicy
             transport.SnapshotSha256.Length != 64 ||
             transport.SnapshotSha256.Any(character => !Uri.IsHexDigit(character)) ||
             transport.SnapshotSize <= 0 ||
+            transport.LookasideSources is null ||
             transport.ExpiresAt <= DateTimeOffset.UtcNow)
         {
             throw new ValidationException("Kubernetes build transport document is invalid.");
         }
         ValidatePresignedUrl(transport.SnapshotDownloadUrl);
         ValidatePresignedUrl(transport.ArtifactBundleUploadUrl);
+        if (transport.LookasideSources.Any(source => source is null))
+            throw new ValidationException("Kubernetes lookaside transport identity is invalid.");
+        ProjectLookasideSourcePolicy.Validate(transport.LookasideSources.Select(source =>
+            new ProjectLookasideSource(
+                source.FileName,
+                source.ObjectName,
+                source.Size,
+                source.Sha256)).ToList());
+        foreach (var source in transport.LookasideSources)
+            ValidatePresignedUrl(source.DownloadUrl);
+    }
+
+    private static bool SameLookasideIdentity(
+        IReadOnlyList<KubernetesBuildLookasideSource>? persisted,
+        IReadOnlyList<KubernetesBuildLookasideSource>? requested)
+    {
+        if (persisted is null || requested is null || persisted.Count != requested.Count)
+            return false;
+        return !persisted.Zip(requested).Any(pair =>
+            pair.First.FileName != pair.Second.FileName ||
+            pair.First.ObjectName != pair.Second.ObjectName ||
+            pair.First.Size != pair.Second.Size ||
+            pair.First.Sha256 != pair.Second.Sha256);
     }
 
     private static void ValidatePresignedUrl(string value)

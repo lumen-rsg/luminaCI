@@ -140,6 +140,7 @@ public sealed class ProjectDispatchService(
                     delivery.Id, target.PipelineId, target.PackageId, stage.Order,
                     delivery.RepositoryUrl, delivery.Branch, delivery.CommitSha, target.SpecPath,
                     delivery.CommitAuthor, delivery.CommitMessage, target.PromotionGroup));
+                ProjectLookasideSourcePolicy.Validate(target.LookasideSources);
                 if (!packages.Add(target.PackageId))
                     throw new ValidationException($"Package '{target.PackageId}' occurs more than once in the dispatch plan.");
             }

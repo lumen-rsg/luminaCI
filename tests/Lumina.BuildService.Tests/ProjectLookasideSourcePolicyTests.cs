@@ -21,6 +21,7 @@ public sealed class ProjectLookasideSourcePolicyTests
 
     [Theory]
     [InlineData("../payload.tar.gz", 42, true)]
+    [InlineData(".", 42, true)]
     [InlineData("payload.tar.gz", 0, true)]
     [InlineData("payload.tar.gz", 42, false)]
     public void Normalize_RejectsInvalidIdentity(string fileName, long size, bool validHash)

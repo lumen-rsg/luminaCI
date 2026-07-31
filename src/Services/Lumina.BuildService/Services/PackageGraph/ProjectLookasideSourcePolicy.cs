@@ -20,7 +20,7 @@ public static class ProjectLookasideSourcePolicy
         {
             var fileName = source.FileName ?? string.Empty;
             var hash = (source.Sha256 ?? string.Empty).Trim().ToLowerInvariant();
-            if (fileName.Length is 0 or > 256 ||
+            if (fileName.Length is 0 or > 256 || fileName is "." or ".." ||
                 fileName.Any(character => !char.IsAsciiLetterOrDigit(character) &&
                                           character is not '.' and not '_' and not '+' and not '-') ||
                 source.Size is <= 0 or > MaximumSourceBytes ||
@@ -44,6 +44,8 @@ public static class ProjectLookasideSourcePolicy
     {
         if (sources is null or { Count: 0 })
             return;
+        if (sources.Any(source => source is null))
+            throw new ValidationException("Persisted lookaside source identity is invalid.");
         var normalized = Normalize(sources.Select(source => new RepositoryLookasideSource(
             source.FileName, source.Size, source.Sha256)).ToList());
         if (sources.Count != normalized.Count || sources.Zip(normalized).Any(pair =>

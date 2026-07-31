@@ -13,13 +13,16 @@ public sealed class ProjectSnapshotPlanService
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly BuildDbContext _db;
     private readonly IRepositorySnapshotStreamProvider _snapshots;
+    private readonly IProjectLookasideSourceSealer _lookasideSources;
 
     public ProjectSnapshotPlanService(
         BuildDbContext db,
-        IRepositorySnapshotStreamProvider snapshots)
+        IRepositorySnapshotStreamProvider snapshots,
+        IProjectLookasideSourceSealer lookasideSources)
     {
         _db = db;
         _snapshots = snapshots;
+        _lookasideSources = lookasideSources;
     }
 
     public async Task ProcessAsync(
@@ -62,6 +65,7 @@ public sealed class ProjectSnapshotPlanService
                 manifest,
                 delivery.ChangedPaths,
                 delivery.BuildProject.Pipelines);
+            await _lookasideSources.SealAsync(plan, cancellationToken);
 
             delivery.ManifestSha256 = Convert.ToHexString(
                 SHA256.HashData(Encoding.UTF8.GetBytes(manifest))).ToLowerInvariant();

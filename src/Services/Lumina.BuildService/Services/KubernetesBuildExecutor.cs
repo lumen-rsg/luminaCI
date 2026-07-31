@@ -73,10 +73,11 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
         if (job.ExecutionBackend != BuildExecutorBackend.Kubernetes)
             throw new BuildExecutorIdentityException("Kubernetes executor cannot start a non-Kubernetes build.");
         BuildSourceSecurityPolicy.EnsureCredentialFree(sourceUrl, gitUsername, gitToken);
-        if (!string.IsNullOrWhiteSpace(extraSourcesPipelineDir))
+        if (!string.IsNullOrWhiteSpace(extraSourcesPipelineDir) &&
+            job.ProjectWebhookDeliveryId is null)
         {
             throw new ValidationException(
-                "Kubernetes builds require extra sources to be staged in the immutable repository snapshot.");
+                "Manual Kubernetes builds cannot consume mutable pipeline extra sources.");
         }
 
         var runner = KubernetesBuildPolicy.ResolveRunner(_configuration, job, buildImage);
