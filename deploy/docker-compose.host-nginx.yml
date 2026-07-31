@@ -1,0 +1,38 @@
+# Run the bundled nginx behind an existing host-level reverse proxy.
+#
+# The loopback-only bindings keep application traffic off the public host
+# interface. The host nginx remains the sole owner of ports 80 and 443 and can
+# route console.lumina.1t.ru to https://127.0.0.1:18443 without affecting other
+# virtual hosts such as packages.lumina.1t.ru.
+services:
+  postgres:
+    restart: unless-stopped
+  redis:
+    restart: unless-stopped
+  rabbitmq:
+    restart: unless-stopped
+  minio:
+    restart: unless-stopped
+  api-gateway:
+    restart: unless-stopped
+  build-service:
+    restart: unless-stopped
+  security-service:
+    restart: unless-stopped
+  scanner-service:
+    restart: unless-stopped
+  trivy:
+    restart: unless-stopped
+  repository-service:
+    restart: unless-stopped
+    volumes:
+      - /home/mir1tlinux/lumina-ci-repositories:/app/repos/var/lib/lumina/repositories
+  source-service:
+    restart: unless-stopped
+  webapp:
+    restart: unless-stopped
+  nginx:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:18080:80"
+      - "127.0.0.1:18443:443"
