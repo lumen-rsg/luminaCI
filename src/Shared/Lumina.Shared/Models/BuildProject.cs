@@ -26,4 +26,6 @@ public class BuildProject
 
     [JsonIgnore]
     public string? GitToken { get; set; }
+
+    public List<Pipeline> Pipelines { get; set; } = [];
 }

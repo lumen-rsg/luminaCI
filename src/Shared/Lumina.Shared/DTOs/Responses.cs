@@ -37,6 +37,13 @@ public record BuildProjectListResponse(
     int Page,
     int PageSize);
 
+public record BuildProjectPipelineResponse(
+    Guid ProjectId,
+    string PackageId,
+    Guid PipelineId,
+    string PipelineName,
+    PipelineStatus PipelineStatus);
+
 // Build Responses
 public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null, List<BuildStepRunResponse>? StepRuns = null, string? TargetDistribution = null, string? TargetRelease = null, string? TargetArchitecture = null, string? BuildProfile = null, string? RunnerImageReference = null, string? RunnerImageDigest = null);
 

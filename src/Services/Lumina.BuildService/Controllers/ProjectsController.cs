@@ -87,6 +87,70 @@ public sealed class ProjectsController : ControllerBase
         }
     }
 
+    [HttpGet("{id:guid}/pipelines")]
+    public async Task<ActionResult<ApiResponse<List<BuildProjectPipelineResponse>>>> ListPipelines(
+        Guid id,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var pipelines = await _projects.ListPipelineBindingsAsync(id, cancellationToken);
+            return Ok(new ApiResponse<List<BuildProjectPipelineResponse>>(
+                true,
+                pipelines.Select(ToPipelineResponse).ToList(),
+                null,
+                null));
+        }
+        catch (Exception exception)
+        {
+            return ApiResults.FromException<List<BuildProjectPipelineResponse>>(
+                exception, _logger, "Projects.ListPipelines", id);
+        }
+    }
+
+    [HttpPut("{id:guid}/pipelines")]
+    [Authorize(Policy = AuthPolicies.Admin)]
+    public async Task<ActionResult<ApiResponse<BuildProjectPipelineResponse>>> BindPipeline(
+        Guid id,
+        [FromBody] BindProjectPipelineRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var pipeline = await _projects.BindPipelineAsync(id, request, cancellationToken);
+            return Ok(new ApiResponse<BuildProjectPipelineResponse>(
+                true, ToPipelineResponse(pipeline), null, "Pipeline bound to project package"));
+        }
+        catch (Exception exception)
+        {
+            return ApiResults.FromException<BuildProjectPipelineResponse>(
+                exception, _logger, "Projects.BindPipeline", id, request.PipelineId);
+        }
+    }
+
+    [HttpDelete("{id:guid}/pipelines/{packageId}")]
+    [Authorize(Policy = AuthPolicies.Admin)]
+    public async Task<ActionResult<ApiResponse<object>>> UnbindPipeline(
+        Guid id,
+        string packageId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            if (!await _projects.UnbindPipelineAsync(id, packageId, cancellationToken))
+            {
+                return NotFound(new ApiResponse<object>(
+                    false, null, "Project package binding not found", null));
+            }
+            return Ok(new ApiResponse<object>(true, null, null, "Pipeline unbound"));
+        }
+        catch (Exception exception)
+        {
+            return ApiResults.FromException<object>(
+                exception, _logger, "Projects.UnbindPipeline", id, packageId);
+        }
+    }
+
     [HttpPut("{id:guid}")]
     [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<BuildProjectResponse>>> Update(
@@ -139,4 +203,11 @@ public sealed class ProjectsController : ControllerBase
         !string.IsNullOrEmpty(project.WebhookSecret),
         project.GitUsername,
         !string.IsNullOrEmpty(project.GitToken));
+
+    private static BuildProjectPipelineResponse ToPipelineResponse(Pipeline pipeline) => new(
+        pipeline.BuildProjectId!.Value,
+        pipeline.PackageId!,
+        pipeline.Id,
+        pipeline.Name,
+        pipeline.Status);
 }

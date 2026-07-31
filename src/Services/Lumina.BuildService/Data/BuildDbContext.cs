@@ -62,7 +62,10 @@ public class BuildDbContext : DbContext
 
         modelBuilder.Entity<Pipeline>(entity =>
         {
-            entity.ToTable("pipelines", "build");
+            entity.ToTable("pipelines", "build", table => table.HasCheckConstraint(
+                "CK_pipelines_project_package_binding",
+                "(\"BuildProjectId\" IS NULL AND \"PackageId\" IS NULL) OR " +
+                "(\"BuildProjectId\" IS NOT NULL AND \"PackageId\" IS NOT NULL)"));
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(256);
             entity.Property(e => e.CreatedBy).IsRequired().HasMaxLength(256);
@@ -74,6 +77,10 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.TargetArchitecture).IsRequired().HasMaxLength(64);
             entity.Property(e => e.BuildProfile).IsRequired().HasMaxLength(128);
             entity.Property(e => e.UpdatedAt).IsConcurrencyToken();
+            entity.Property(e => e.PackageId).HasMaxLength(128);
+            entity.HasIndex(e => new { e.BuildProjectId, e.PackageId })
+                .IsUnique()
+                .HasFilter("\"BuildProjectId\" IS NOT NULL AND \"PackageId\" IS NOT NULL");
 
             // Encrypted secret columns. Stored as `text` because the ciphertext
             // (Base64 of nonce|ciphertext|tag with an "enc1:" prefix) is variable
@@ -96,6 +103,10 @@ public class BuildDbContext : DbContext
             }
 
             entity.HasMany(e => e.Steps).WithOne(e => e.Pipeline).HasForeignKey(e => e.PipelineId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.BuildProject)
+                .WithMany(e => e.Pipelines)
+                .HasForeignKey(e => e.BuildProjectId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<PipelineStep>(entity =>

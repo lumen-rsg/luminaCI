@@ -14,6 +14,17 @@ public sealed record NormalizedBuildProject(
 
 public static partial class BuildProjectPolicy
 {
+    public static string NormalizePackageId(string? packageId)
+    {
+        var normalized = packageId?.Trim() ?? string.Empty;
+        if (!PackageIdPattern().IsMatch(normalized))
+        {
+            throw new ValidationException(
+                "Package ID must start with a lowercase letter or digit and contain at most 128 lowercase letters, digits, '+', '_', '.', or '-'.");
+        }
+        return normalized;
+    }
+
     public static NormalizedBuildProject Validate(CreateBuildProjectRequest request) =>
         ValidateCore(
             request.Name,
@@ -134,4 +145,7 @@ public static partial class BuildProjectPolicy
 
     [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}[A-Za-z0-9]$|^[A-Za-z0-9]$")]
     private static partial Regex GitReferencePattern();
+
+    [GeneratedRegex("^[a-z0-9][a-z0-9+_.-]{0,127}$", RegexOptions.CultureInvariant)]
+    private static partial Regex PackageIdPattern();
 }

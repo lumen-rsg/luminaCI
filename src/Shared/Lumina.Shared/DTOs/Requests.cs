@@ -65,6 +65,8 @@ public record UpdateBuildProjectRequest(
     string? GitToken = null,
     bool ClearGitCredentials = false);
 
+public record BindProjectPipelineRequest(Guid PipelineId, string PackageId);
+
 // Build DTOs
 public record TriggerBuildRequest(string SpecName, string SpecContent, string? SourceUrl, string TriggeredBy, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null, string? IdempotencyKey = null);
 

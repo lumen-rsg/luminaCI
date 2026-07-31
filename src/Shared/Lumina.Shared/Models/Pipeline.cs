@@ -15,6 +15,12 @@ public class Pipeline
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public List<string> Tags { get; set; } = [];
 
+    // Optional repository-manifest binding. A project may bind at most one
+    // pipeline to each package ID in its package graph.
+    public Guid? BuildProjectId { get; set; }
+    public string? PackageId { get; set; }
+    public BuildProject? BuildProject { get; set; }
+
     // Git integration
     public string? GitRepoUrl { get; set; }
     public string? GitBranch { get; set; }

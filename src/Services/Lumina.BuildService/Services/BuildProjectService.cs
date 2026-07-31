@@ -41,6 +41,90 @@ public sealed class BuildProjectService
             project => project.Id == id,
             cancellationToken);
 
+    public async Task<List<Pipeline>> ListPipelineBindingsAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await _db.BuildProjects.AnyAsync(project => project.Id == projectId, cancellationToken))
+            throw new NotFoundException($"Build project {projectId} not found.");
+        return await _db.Pipelines.AsNoTracking()
+            .Where(pipeline => pipeline.BuildProjectId == projectId)
+            .OrderBy(pipeline => pipeline.PackageId)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<Pipeline> BindPipelineAsync(
+        Guid projectId,
+        BindProjectPipelineRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var packageId = BuildProjectPolicy.NormalizePackageId(request.PackageId);
+        if (!await _db.BuildProjects.AnyAsync(project => project.Id == projectId, cancellationToken))
+            throw new NotFoundException($"Build project {projectId} not found.");
+
+        var pipeline = await _db.Pipelines.SingleOrDefaultAsync(
+            item => item.Id == request.PipelineId,
+            cancellationToken);
+        if (pipeline is null)
+            throw new NotFoundException($"Pipeline {request.PipelineId} not found.");
+        if (pipeline.BuildProjectId.HasValue && pipeline.BuildProjectId != projectId)
+        {
+            throw new ConflictException(
+                $"Pipeline {pipeline.Id} is already bound to another build project.");
+        }
+
+        var existing = await _db.Pipelines.SingleOrDefaultAsync(
+            item => item.BuildProjectId == projectId && item.PackageId == packageId,
+            cancellationToken);
+        if (existing is not null && existing.Id != pipeline.Id)
+        {
+            throw new ConflictException(
+                $"Package '{packageId}' is already bound to pipeline {existing.Id}.");
+        }
+
+        pipeline.BuildProjectId = projectId;
+        pipeline.PackageId = packageId;
+        pipeline.UpdatedAt = DateTime.UtcNow;
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception)
+        {
+            throw new ConflictException(
+                $"Package '{packageId}' is already bound to another pipeline.", exception);
+        }
+
+        _logger.LogInformation(
+            "Pipeline {PipelineId} bound to project {ProjectId} package {PackageId}",
+            pipeline.Id, projectId, packageId);
+        return pipeline;
+    }
+
+    public async Task<bool> UnbindPipelineAsync(
+        Guid projectId,
+        string packageId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedPackageId = BuildProjectPolicy.NormalizePackageId(packageId);
+        if (!await _db.BuildProjects.AnyAsync(project => project.Id == projectId, cancellationToken))
+            throw new NotFoundException($"Build project {projectId} not found.");
+
+        var pipeline = await _db.Pipelines.SingleOrDefaultAsync(
+            item => item.BuildProjectId == projectId && item.PackageId == normalizedPackageId,
+            cancellationToken);
+        if (pipeline is null)
+            return false;
+
+        pipeline.BuildProjectId = null;
+        pipeline.PackageId = null;
+        pipeline.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation(
+            "Pipeline {PipelineId} unbound from project {ProjectId}", pipeline.Id, projectId);
+        return true;
+    }
+
     public async Task<BuildProject> CreateAsync(
         CreateBuildProjectRequest request,
         string createdBy,
@@ -148,6 +232,14 @@ public sealed class BuildProjectService
             cancellationToken);
         if (project is null)
             return false;
+
+        if (await _db.Pipelines.AnyAsync(
+                pipeline => pipeline.BuildProjectId == id,
+                cancellationToken))
+        {
+            throw new ConflictException(
+                "A build project with bound pipelines cannot be deleted. Unbind them first.");
+        }
 
         _db.BuildProjects.Remove(project);
         await _db.SaveChangesAsync(cancellationToken);

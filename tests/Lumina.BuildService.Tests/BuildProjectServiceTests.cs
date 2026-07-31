@@ -3,6 +3,7 @@ using Lumina.BuildService.Services;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Errors;
 using Lumina.Shared.Models;
+using Lumina.Shared.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
@@ -126,6 +127,74 @@ public class BuildProjectServiceTests
                 staleVersion)));
     }
 
+    [Fact]
+    public async Task BindPipelineAsync_PersistsExplicitPackageMapping()
+    {
+        await using var db = NewContext(nameof(BindPipelineAsync_PersistsExplicitPackageMapping));
+        var service = NewService(db);
+        var project = await service.CreateAsync(Request(), "cv2");
+        var pipeline = AddPipeline(db, "firmware-pipeline");
+        await db.SaveChangesAsync();
+
+        var binding = await service.BindPipelineAsync(
+            project.Id,
+            new BindProjectPipelineRequest(pipeline.Id, "tegra-l4t-firmware"));
+
+        Assert.Equal(project.Id, binding.BuildProjectId);
+        Assert.Equal("tegra-l4t-firmware", binding.PackageId);
+        var listed = await service.ListPipelineBindingsAsync(project.Id);
+        Assert.Equal(pipeline.Id, Assert.Single(listed).Id);
+    }
+
+    [Fact]
+    public async Task BindPipelineAsync_RejectsDuplicatePackageAndCrossProjectBinding()
+    {
+        await using var db = NewContext(
+            nameof(BindPipelineAsync_RejectsDuplicatePackageAndCrossProjectBinding));
+        var service = NewService(db);
+        var firstProject = await service.CreateAsync(Request(), "cv2");
+        var secondProject = await service.CreateAsync(
+            Request() with { Name = "Another project" }, "cv2");
+        var first = AddPipeline(db, "first");
+        var second = AddPipeline(db, "second");
+        await db.SaveChangesAsync();
+
+        await service.BindPipelineAsync(firstProject.Id,
+            new BindProjectPipelineRequest(first.Id, "driver"));
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            service.BindPipelineAsync(firstProject.Id,
+                new BindProjectPipelineRequest(second.Id, "driver")));
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            service.BindPipelineAsync(secondProject.Id,
+                new BindProjectPipelineRequest(first.Id, "driver")));
+    }
+
+    [Fact]
+    public async Task DeleteAsync_RequiresBindingsToBeRemovedFirst()
+    {
+        await using var db = NewContext(nameof(DeleteAsync_RequiresBindingsToBeRemovedFirst));
+        var service = NewService(db);
+        var project = await service.CreateAsync(Request(), "cv2");
+        var pipeline = AddPipeline(db, "driver");
+        await db.SaveChangesAsync();
+        await service.BindPipelineAsync(project.Id,
+            new BindProjectPipelineRequest(pipeline.Id, "driver"));
+
+        await Assert.ThrowsAsync<ConflictException>(() => service.DeleteAsync(project.Id));
+        Assert.True(await service.UnbindPipelineAsync(project.Id, "driver"));
+        Assert.True(await service.DeleteAsync(project.Id));
+    }
+
+    [Theory]
+    [InlineData("Driver")]
+    [InlineData("../driver")]
+    [InlineData("")]
+    public void Policy_RejectsInvalidPackageId(string packageId)
+    {
+        Assert.Throws<ValidationException>(() =>
+            BuildProjectPolicy.NormalizePackageId(packageId));
+    }
+
     private static CreateBuildProjectRequest Request() => new(
         "Lumina packages",
         "https://github.com/lumina/packages.git",
@@ -145,6 +214,26 @@ public class BuildProjectServiceTests
 
     private static BuildProjectService NewService(BuildDbContext db) =>
         new(db, NullLogger<BuildProjectService>.Instance);
+
+    private static Pipeline AddPipeline(BuildDbContext db, string name)
+    {
+        var pipeline = new Pipeline
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            Description = name,
+            Status = PipelineStatus.Active,
+            CreatedBy = "cv2",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+            TargetDistribution = "fedora",
+            TargetRelease = "44",
+            TargetArchitecture = "aarch64",
+            BuildProfile = "fedora-44-aarch64"
+        };
+        db.Pipelines.Add(pipeline);
+        return pipeline;
+    }
 
     private sealed class TestBuildDbContext(DbContextOptions<BuildDbContext> options)
         : BuildDbContext(options)
