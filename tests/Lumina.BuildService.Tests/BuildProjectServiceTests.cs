@@ -185,6 +185,29 @@ public class BuildProjectServiceTests
         Assert.True(await service.DeleteAsync(project.Id));
     }
 
+    [Fact]
+    public async Task DeliveryQueries_ArePagedAndConfinedToProject()
+    {
+        await using var db = NewContext(nameof(DeliveryQueries_ArePagedAndConfinedToProject));
+        var service = NewService(db);
+        var project = await service.CreateAsync(Request(), "cv2");
+        var other = await service.CreateAsync(Request() with { Name = "Other project" }, "cv2");
+        var older = Delivery(project.Id, DateTime.UtcNow.AddMinutes(-2));
+        var newer = Delivery(project.Id, DateTime.UtcNow.AddMinutes(-1));
+        var unrelated = Delivery(other.Id, DateTime.UtcNow);
+        db.ProjectWebhookDeliveries.AddRange(older, newer, unrelated);
+        await db.SaveChangesAsync();
+
+        var (items, totalCount) = await service.ListDeliveriesAsync(project.Id, 1, 1);
+
+        Assert.Equal(2, totalCount);
+        Assert.Equal(newer.Id, Assert.Single(items).Id);
+        Assert.Equal(older.Id, (await service.GetDeliveryAsync(project.Id, older.Id))!.Id);
+        Assert.Null(await service.GetDeliveryAsync(project.Id, unrelated.Id));
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            service.ListDeliveriesAsync(Guid.NewGuid(), 1, 20));
+    }
+
     [Theory]
     [InlineData("Driver")]
     [InlineData("../driver")]
@@ -234,6 +257,18 @@ public class BuildProjectServiceTests
         db.Pipelines.Add(pipeline);
         return pipeline;
     }
+
+    private static ProjectWebhookDelivery Delivery(Guid projectId, DateTime createdAt) => new()
+    {
+        Id = Guid.NewGuid(),
+        BuildProjectId = projectId,
+        ProviderDeliveryId = Guid.NewGuid().ToString("N"),
+        CommitSha = new string('a', 40),
+        Branch = "main",
+        ChangedPaths = ["package/file"],
+        CreatedAt = createdAt,
+        UpdatedAt = createdAt
+    };
 
     private sealed class TestBuildDbContext(DbContextOptions<BuildDbContext> options)
         : BuildDbContext(options)

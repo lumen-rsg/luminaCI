@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
 
@@ -52,6 +53,41 @@ public record ProjectWebhookDeliveryResponse(
     string Branch,
     int ChangedPathCount,
     DateTime CreatedAt);
+
+public record ProjectWebhookDeliverySummaryResponse(
+    Guid RequestId,
+    ProjectWebhookStatus Status,
+    string CommitSha,
+    string Branch,
+    int ChangedPathCount,
+    string? FailureCode,
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
+
+public record ProjectWebhookDeliveryListResponse(
+    List<ProjectWebhookDeliverySummaryResponse> Deliveries,
+    int TotalCount,
+    int Page,
+    int PageSize);
+
+public record ProjectWebhookDeliveryDetailResponse(
+    Guid RequestId,
+    Guid ProjectId,
+    string ProviderDeliveryId,
+    ProjectWebhookStatus Status,
+    string CommitSha,
+    string Branch,
+    List<string> ChangedPaths,
+    string? CommitAuthor,
+    string? CommitMessage,
+    Guid? SourceJobId,
+    string? SnapshotSha256,
+    long? SnapshotFileSize,
+    string? ManifestSha256,
+    JsonElement? DispatchPlan,
+    string? FailureCode,
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
 
 // Build Responses
 public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null, List<BuildStepRunResponse>? StepRuns = null, string? TargetDistribution = null, string? TargetRelease = null, string? TargetArchitecture = null, string? BuildProfile = null, string? RunnerImageReference = null, string? RunnerImageDigest = null);

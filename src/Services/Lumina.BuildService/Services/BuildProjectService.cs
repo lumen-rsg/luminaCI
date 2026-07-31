@@ -41,6 +41,37 @@ public sealed class BuildProjectService
             project => project.Id == id,
             cancellationToken);
 
+    public async Task<(List<ProjectWebhookDelivery> Items, int TotalCount)> ListDeliveriesAsync(
+        Guid projectId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await _db.BuildProjects.AnyAsync(project => project.Id == projectId, cancellationToken))
+            throw new NotFoundException($"Build project {projectId} not found.");
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var query = _db.ProjectWebhookDeliveries.AsNoTracking()
+            .Where(delivery => delivery.BuildProjectId == projectId);
+        var totalCount = await query.CountAsync(cancellationToken);
+        var deliveries = await query
+            .OrderByDescending(delivery => delivery.CreatedAt)
+            .ThenByDescending(delivery => delivery.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        return (deliveries, totalCount);
+    }
+
+    public Task<ProjectWebhookDelivery?> GetDeliveryAsync(
+        Guid projectId,
+        Guid deliveryId,
+        CancellationToken cancellationToken = default) =>
+        _db.ProjectWebhookDeliveries.AsNoTracking().SingleOrDefaultAsync(
+            delivery => delivery.BuildProjectId == projectId && delivery.Id == deliveryId,
+            cancellationToken);
+
     public async Task<List<Pipeline>> ListPipelineBindingsAsync(
         Guid projectId,
         CancellationToken cancellationToken = default)

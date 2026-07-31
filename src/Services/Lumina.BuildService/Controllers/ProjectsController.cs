@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Lumina.BuildService.Services;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Models;
@@ -108,6 +109,60 @@ public sealed class ProjectsController : ControllerBase
         }
     }
 
+    [HttpGet("{id:guid}/deliveries")]
+    public async Task<ActionResult<ApiResponse<ProjectWebhookDeliveryListResponse>>> ListDeliveries(
+        Guid id,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var normalizedPage = Math.Max(1, page);
+            var normalizedPageSize = Math.Clamp(pageSize, 1, 100);
+            var (deliveries, totalCount) = await _projects.ListDeliveriesAsync(
+                id, normalizedPage, normalizedPageSize, cancellationToken);
+            return Ok(new ApiResponse<ProjectWebhookDeliveryListResponse>(
+                true,
+                new ProjectWebhookDeliveryListResponse(
+                    deliveries.Select(ToDeliverySummary).ToList(),
+                    totalCount,
+                    normalizedPage,
+                    normalizedPageSize),
+                null,
+                null));
+        }
+        catch (Exception exception)
+        {
+            return ApiResults.FromException<ProjectWebhookDeliveryListResponse>(
+                exception, _logger, "Projects.ListDeliveries", id, page, pageSize);
+        }
+    }
+
+    [HttpGet("{id:guid}/deliveries/{deliveryId:guid}")]
+    public async Task<ActionResult<ApiResponse<ProjectWebhookDeliveryDetailResponse>>> GetDelivery(
+        Guid id,
+        Guid deliveryId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var delivery = await _projects.GetDeliveryAsync(id, deliveryId, cancellationToken);
+            if (delivery is null)
+            {
+                return NotFound(new ApiResponse<ProjectWebhookDeliveryDetailResponse>(
+                    false, null, "Project webhook delivery not found", null));
+            }
+            return Ok(new ApiResponse<ProjectWebhookDeliveryDetailResponse>(
+                true, ToDeliveryDetail(delivery), null, null));
+        }
+        catch (Exception exception)
+        {
+            return ApiResults.FromException<ProjectWebhookDeliveryDetailResponse>(
+                exception, _logger, "Projects.GetDelivery", id, deliveryId);
+        }
+    }
+
     [HttpPut("{id:guid}/pipelines")]
     [Authorize(Policy = AuthPolicies.Admin)]
     public async Task<ActionResult<ApiResponse<BuildProjectPipelineResponse>>> BindPipeline(
@@ -210,4 +265,40 @@ public sealed class ProjectsController : ControllerBase
         pipeline.Id,
         pipeline.Name,
         pipeline.Status);
+
+    private static ProjectWebhookDeliverySummaryResponse ToDeliverySummary(
+        ProjectWebhookDelivery delivery) => new(
+        delivery.Id,
+        delivery.Status,
+        delivery.CommitSha,
+        delivery.Branch,
+        delivery.ChangedPaths.Count,
+        delivery.FailureCode,
+        delivery.CreatedAt,
+        delivery.UpdatedAt);
+
+    private static ProjectWebhookDeliveryDetailResponse ToDeliveryDetail(
+        ProjectWebhookDelivery delivery) => new(
+        delivery.Id,
+        delivery.BuildProjectId,
+        delivery.ProviderDeliveryId,
+        delivery.Status,
+        delivery.CommitSha,
+        delivery.Branch,
+        delivery.ChangedPaths,
+        delivery.CommitAuthor,
+        delivery.CommitMessage,
+        delivery.SourceJobId,
+        delivery.SnapshotSha256,
+        delivery.SnapshotFileSize,
+        delivery.ManifestSha256,
+        ParsePlan(delivery.DispatchPlanJson),
+        delivery.FailureCode,
+        delivery.CreatedAt,
+        delivery.UpdatedAt);
+
+    private static JsonElement? ParsePlan(string? json) =>
+        string.IsNullOrWhiteSpace(json)
+            ? null
+            : JsonSerializer.Deserialize<JsonElement>(json);
 }
