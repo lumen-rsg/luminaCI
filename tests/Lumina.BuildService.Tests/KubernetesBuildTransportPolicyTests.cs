@@ -3,12 +3,39 @@ using Lumina.BuildService.Services;
 using Lumina.Shared.Errors;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
+using Microsoft.Extensions.Configuration;
+using Minio.DataModel.Args;
 using Xunit;
 
 namespace Lumina.BuildService.Tests;
 
 public sealed class KubernetesBuildTransportPolicyTests
 {
+    [Fact]
+    public async Task RunnerObjectStore_SignsAgainstControlledHttpsOrigin()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["MinIO:RunnerEndpoint"] = "packages.lumina.1t.ru:443",
+                ["MinIO:RunnerUseSSL"] = "true",
+                ["MinIO:AccessKey"] = "test-access-key",
+                ["MinIO:SecretKey"] = "test-secret-key"
+            }).Build();
+
+        using var store = KubernetesRunnerObjectStore.Create(configuration);
+        var url = await store.Client.PresignedGetObjectAsync(
+            new PresignedGetObjectArgs()
+                .WithBucket("lumina-sources")
+                .WithObject("project/snapshot.tar.gz")
+                .WithExpiry(900));
+
+        Assert.StartsWith(
+            "https://packages.lumina.1t.ru/lumina-sources/project/snapshot.tar.gz?",
+            url,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task CreateAsync_BindsExactSnapshotBundleAndExpiryToJobUid()
     {

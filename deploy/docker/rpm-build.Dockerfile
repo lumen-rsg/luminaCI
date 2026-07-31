@@ -63,6 +63,7 @@ WORKDIR /home/rpmbuilder/rpmbuild
 # we chown the in-image placeholder here as a fallback for the non-root copy.
 COPY --chown=rpmbuilder:rpmbuilder scripts/build-rpm.sh /usr/local/bin/build-rpm.sh
 COPY --chown=rpmbuilder:rpmbuilder scripts/lumina-kubernetes-build /usr/local/bin/lumina-kubernetes-build
+COPY deploy/docker/lumina-fedora.repo /etc/yum.repos.d/lumina-fedora.repo
 RUN chmod +x /usr/local/bin/build-rpm.sh /usr/local/bin/lumina-kubernetes-build
 
 USER root

@@ -32,6 +32,12 @@ TARGET_DISTRIBUTION="${TARGET_DISTRIBUTION:?TARGET_DISTRIBUTION is required}"
 TARGET_RELEASE="${TARGET_RELEASE:?TARGET_RELEASE is required}"
 TARGET_ARCHITECTURE="${TARGET_ARCHITECTURE:?TARGET_ARCHITECTURE is required}"
 BUILD_PROFILE="${BUILD_PROFILE:?BUILD_PROFILE is required}"
+FEDORA_REPOSITORY_BASE_URL="${FEDORA_REPOSITORY_BASE_URL:-https://dl.fedoraproject.org/pub/fedora/linux}"
+if [[ ! "${FEDORA_REPOSITORY_BASE_URL}" =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?(/[a-zA-Z0-9._~+/-]+)?$ ]]; then
+    echo "ERROR: controlled Fedora repository base URL is invalid" >&2
+    exit 1
+fi
+FEDORA_REPOSITORY_BASE_URL="${FEDORA_REPOSITORY_BASE_URL%/}"
 
 runner_distribution=$(. /etc/os-release && printf '%s' "${ID:-unknown}")
 runner_release=$(. /etc/os-release && printf '%s' "${VERSION_ID:-unknown}")
@@ -696,7 +702,9 @@ external_build_requirements="$({
 
 if [ -n "${external_build_requirements}" ]; then
     echo "Installing build dependencies from SRPM metadata (as root)..."
-    if ! dnf --disablerepo='*' --enablerepo=fedora builddep -y \
+    if ! dnf --disablerepo='*' --enablerepo=lumina-fedora \
+        --setopt="lumina-fedora.baseurl=${FEDORA_REPOSITORY_BASE_URL}/releases/${TARGET_RELEASE}/Everything/${TARGET_ARCHITECTURE}/os/" \
+        builddep -y \
         "${SOURCE_RPM}"; then
         echo "ERROR: dnf builddep failed — see stderr above for the unresolvable/missing dependencies."
         exit 1

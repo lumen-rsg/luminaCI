@@ -36,14 +36,14 @@ internal interface IKubernetesObjectUrlSigner
 }
 
 internal sealed class KubernetesObjectUrlSigner(
-    IMinioClient minio,
+    KubernetesRunnerObjectStore runnerObjectStore,
     ArtifactStorageService artifactStorage) : IKubernetesObjectUrlSigner
 {
     public Task<string> SignSnapshotDownloadAsync(
         string objectName,
         int expirySeconds,
         CancellationToken cancellationToken) =>
-        minio.PresignedGetObjectAsync(
+        runnerObjectStore.Client.PresignedGetObjectAsync(
             new PresignedGetObjectArgs()
                 .WithBucket(RepositorySnapshotStreamProvider.BucketName)
                 .WithObject(objectName)
@@ -55,11 +55,45 @@ internal sealed class KubernetesObjectUrlSigner(
         CancellationToken cancellationToken)
     {
         await artifactStorage.EnsureBucketAsync(cancellationToken);
-        return await minio.PresignedPutObjectAsync(
+        return await runnerObjectStore.Client.PresignedPutObjectAsync(
             new PresignedPutObjectArgs()
                 .WithBucket(ArtifactStorageService.BucketName)
                 .WithObject(objectName)
                 .WithExpiry(expirySeconds));
+    }
+}
+
+internal sealed class KubernetesRunnerObjectStore : IDisposable
+{
+    private KubernetesRunnerObjectStore(IMinioClient client) => Client = client;
+
+    public IMinioClient Client { get; }
+
+    public static KubernetesRunnerObjectStore Create(IConfiguration configuration)
+    {
+        var endpoint = configuration["MinIO:RunnerEndpoint"]?.Trim();
+        var accessKey = configuration["MinIO:AccessKey"];
+        var secretKey = configuration["MinIO:SecretKey"];
+        if (string.IsNullOrWhiteSpace(endpoint) ||
+            string.IsNullOrWhiteSpace(accessKey) ||
+            string.IsNullOrWhiteSpace(secretKey))
+        {
+            throw new InvalidOperationException(
+                "MinIO runner endpoint and credentials must be configured for Kubernetes builds.");
+        }
+
+        var client = new MinioClient()
+            .WithEndpoint(endpoint)
+            .WithCredentials(accessKey, secretKey)
+            .WithSSL(configuration.GetValue("MinIO:RunnerUseSSL", true))
+            .Build();
+        return new KubernetesRunnerObjectStore(client);
+    }
+
+    public void Dispose()
+    {
+        if (Client is IDisposable disposable)
+            disposable.Dispose();
     }
 }
 

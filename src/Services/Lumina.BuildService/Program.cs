@@ -64,6 +64,8 @@ try
     builder.Services.AddSingleton<IKubernetesApiOperations, KubernetesApiOperations>();
     builder.Services.AddSingleton<IKubernetesBuildResourceClient, KubernetesBuildResourceClient>();
     builder.Services.AddSingleton<IKubernetesArtifactObjectStore, KubernetesArtifactObjectStore>();
+    builder.Services.AddSingleton(services =>
+        KubernetesRunnerObjectStore.Create(services.GetRequiredService<IConfiguration>()));
     builder.Services.AddScoped<IKubernetesObjectUrlSigner, KubernetesObjectUrlSigner>();
     builder.Services.AddScoped<IKubernetesBuildTransportService, KubernetesBuildTransportService>();
     builder.Services.AddScoped<IKubernetesArtifactImporter, KubernetesArtifactImporter>();

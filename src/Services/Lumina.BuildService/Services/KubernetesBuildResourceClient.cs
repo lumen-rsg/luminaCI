@@ -670,12 +670,51 @@ internal sealed class KubernetesBuildResourceClient(IKubernetesApiOperations api
             Label(persisted.Metadata?.Labels, BuildIdLabel) != expectedBuildId ||
             Label(persisted.Spec?.PodSelector?.MatchLabels, BuildIdLabel) != expectedBuildId ||
             persisted.Spec?.Ingress is not { Count: 0 } ||
-            persisted.Spec?.Egress is not { Count: 0 } ||
+            !HasRequiredEgressShape(requested.Spec?.Egress) ||
+            !string.Equals(
+                KubernetesJson.Serialize(requested.Spec),
+                KubernetesJson.Serialize(persisted.Spec),
+                StringComparison.Ordinal) ||
             persisted.Spec.PolicyTypes?.ToHashSet(StringComparer.Ordinal) is not { } types ||
             !types.SetEquals(["Ingress", "Egress"]))
         {
-            throw new ConflictException("Existing Kubernetes NetworkPolicy is not the required default-deny policy.");
+            throw new ConflictException("Existing Kubernetes NetworkPolicy is not the required narrow-egress policy.");
         }
+    }
+
+    private static bool HasRequiredEgressShape(
+        IList<V1NetworkPolicyEgressRule>? rules)
+    {
+        if (rules is not { Count: 2 })
+            return false;
+        var https = rules[0];
+        var httpsPeer = https.To?.SingleOrDefault();
+        var httpsPort = https.Ports?.SingleOrDefault();
+        if (httpsPeer?.IpBlock is not { Cidr: { } cidr, Except: null or { Count: 0 } } ||
+            cidr is not { Length: > 0 } ||
+            httpsPeer.NamespaceSelector != null ||
+            httpsPeer.PodSelector != null ||
+            httpsPort?.Protocol != "TCP" ||
+            !int.TryParse(httpsPort.Port?.Value, out var parsedHttpsPort) ||
+            parsedHttpsPort is not (>= 1 and <= 65535))
+        {
+            return false;
+        }
+
+        var dns = rules[1];
+        var dnsPeer = dns.To?.SingleOrDefault();
+        var dnsPorts = dns.Ports;
+        return dnsPeer?.IpBlock == null &&
+               dnsPeer?.NamespaceSelector?.MatchLabels is { Count: 1 } namespaceLabels &&
+               namespaceLabels.TryGetValue("kubernetes.io/metadata.name", out var dnsNamespace) &&
+               dnsNamespace == "kube-system" &&
+               dnsPeer.PodSelector?.MatchLabels is { Count: 1 } podLabels &&
+               podLabels.TryGetValue("k8s-app", out var dnsApp) &&
+               dnsApp == "kube-dns" &&
+               dnsPorts is { Count: 2 } &&
+               dnsPorts.All(port => port.Port?.Value == "53") &&
+               dnsPorts.Select(port => port.Protocol).ToHashSet(StringComparer.Ordinal)
+                   .SetEquals(["TCP", "UDP"]);
     }
 
     private static void ValidateIdentity(

@@ -330,10 +330,11 @@ public sealed class KubernetesBuildExecutor : IBuildExecutor
             throw new BuildExecutorIdentityException("Kubernetes build creation intent was not recorded.");
         }
 
+        var network = KubernetesBuildPolicy.ResolveNetworkPolicy(_configuration);
         return await _resources.EnsureCreatedAsync(
             job.KubernetesNamespace,
-            KubernetesJobFactory.Create(job, runner, limits),
-            KubernetesJobFactory.CreateDefaultDenyNetworkPolicy(job),
+            KubernetesJobFactory.Create(job, runner, limits, network),
+            KubernetesJobFactory.CreateNetworkPolicy(job, network),
             cancellationToken);
     }
 

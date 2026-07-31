@@ -63,12 +63,42 @@ public sealed class KubernetesJobFactoryTests
     }
 
     [Fact]
+    public void ResolveNetworkPolicy_RequiresOneSharedExactHttpsOrigin()
+    {
+        var configuration = Configuration(
+            ("Kubernetes:Network:EgressCidr", "146.120.224.52/32"),
+            ("Kubernetes:Network:HttpsPort", "443"),
+            ("Kubernetes:Network:FedoraRepositoryBaseUrl", "https://packages.lumina.1t.ru/fedora/"),
+            ("MinIO:RunnerEndpoint", "packages.lumina.1t.ru:443"),
+            ("MinIO:RunnerUseSSL", "true"));
+
+        var network = KubernetesBuildPolicy.ResolveNetworkPolicy(configuration);
+
+        Assert.Equal("146.120.224.52/32", network.EgressCidr);
+        Assert.Equal(443, network.HttpsPort);
+        Assert.Equal("https://packages.lumina.1t.ru/fedora", network.FedoraRepositoryBaseUrl);
+        Assert.Throws<InvalidOperationException>(() => KubernetesBuildPolicy.ResolveNetworkPolicy(
+            Configuration(
+                ("Kubernetes:Network:EgressCidr", "0.0.0.0/0"),
+                ("Kubernetes:Network:FedoraRepositoryBaseUrl", "https://packages.lumina.1t.ru/fedora"),
+                ("MinIO:RunnerEndpoint", "packages.lumina.1t.ru:443"))));
+        Assert.Throws<InvalidOperationException>(() => KubernetesBuildPolicy.ResolveNetworkPolicy(
+            Configuration(
+                ("Kubernetes:Network:EgressCidr", "146.120.224.52/32"),
+                ("Kubernetes:Network:FedoraRepositoryBaseUrl", "https://packages.lumina.1t.ru/fedora"),
+                ("MinIO:RunnerEndpoint", "minio.example:443"))));
+    }
+
+    [Fact]
     public void Create_ProducesHardenedArchitecturePinnedJob()
     {
         var job = Job();
         var runner = new KubernetesRunner(job.BuildProfile, "arm64", Digest);
         var manifest = KubernetesJobFactory.Create(
-            job, runner, KubernetesBuildPolicy.ResolveLimits(Configuration()));
+            job,
+            runner,
+            KubernetesBuildPolicy.ResolveLimits(Configuration()),
+            Network());
         var pod = manifest.Spec.Template.Spec;
         var container = Assert.Single(pod.Containers);
 
@@ -128,15 +158,22 @@ public sealed class KubernetesJobFactoryTests
     }
 
     [Fact]
-    public void CreateDefaultDenyNetworkPolicy_DeniesIngressAndEgressForOnlyThisJob()
+    public void CreateNetworkPolicy_AllowsOnlyExactHttpsOriginAndCoreDns()
     {
         var job = Job();
 
-        var policy = KubernetesJobFactory.CreateDefaultDenyNetworkPolicy(job);
+        var policy = KubernetesJobFactory.CreateNetworkPolicy(job, Network());
 
         Assert.Equal(["Ingress", "Egress"], policy.Spec.PolicyTypes);
         Assert.Empty(policy.Spec.Ingress);
-        Assert.Empty(policy.Spec.Egress);
+        Assert.Equal(2, policy.Spec.Egress.Count);
+        var https = policy.Spec.Egress[0];
+        Assert.Equal("146.120.224.52/32", Assert.Single(https.To).IpBlock.Cidr);
+        Assert.Equal("443", Assert.Single(https.Ports).Port.Value);
+        var dns = policy.Spec.Egress[1];
+        Assert.Equal("kube-system", Assert.Single(dns.To).NamespaceSelector
+            .MatchLabels["kubernetes.io/metadata.name"]);
+        Assert.Equal(["TCP", "UDP"], dns.Ports.Select(port => port.Protocol).Order().ToArray());
         Assert.Equal(
             job.Id.ToString("N"),
             policy.Spec.PodSelector.MatchLabels["lumina.1t.ru/build-job-id"]);
@@ -149,12 +186,12 @@ public sealed class KubernetesJobFactoryTests
         var limits = KubernetesBuildPolicy.ResolveLimits(Configuration());
 
         Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(
-            job, new KubernetesRunner(job.BuildProfile, "amd64", Digest), limits));
+            job, new KubernetesRunner(job.BuildProfile, "amd64", Digest), limits, Network()));
         Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(
-            job, new KubernetesRunner(job.BuildProfile, "arm64", "runner:latest"), limits));
+            job, new KubernetesRunner(job.BuildProfile, "arm64", "runner:latest"), limits, Network()));
         job.CommitSha = "bad/label";
         Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(
-            job, new KubernetesRunner(job.BuildProfile, "arm64", Digest), limits));
+            job, new KubernetesRunner(job.BuildProfile, "arm64", Digest), limits, Network()));
     }
 
     [Fact]
@@ -164,10 +201,10 @@ public sealed class KubernetesJobFactoryTests
         var limits = KubernetesBuildPolicy.ResolveLimits(Configuration());
         var runner = new KubernetesRunner(job.BuildProfile, "arm64", Digest);
         job.SourceUrl = "git://https://example.com/lumina.git#branch=main";
-        Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(job, runner, limits));
+        Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(job, runner, limits, Network()));
 
         job.SourceUrl = "git://https://example.com/lumina.git#specPath=one.spec&specPath=two.spec";
-        Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(job, runner, limits));
+        Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(job, runner, limits, Network()));
     }
 
     private static BuildJob Job() => new()
@@ -183,6 +220,11 @@ public sealed class KubernetesJobFactoryTests
         BuildProfile = "fedora-44-aarch64",
         RunnerImageDigest = "sha256:" + new string('a', 64)
     };
+
+    private static KubernetesBuildNetworkPolicy Network() => new(
+        "146.120.224.52/32",
+        443,
+        "https://packages.lumina.1t.ru/fedora");
 
     private static IConfiguration Configuration(params (string Key, string Value)[] values) =>
         new ConfigurationBuilder()

@@ -1,0 +1,9 @@
+[lumina-fedora]
+name=Lumina controlled Fedora $releasever - $basearch
+baseurl=https://invalid.invalid/fedora/releases/$releasever/Everything/$basearch/os/
+enabled=0
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-$releasever-$basearch
+metadata_expire=1h
+skip_if_unavailable=0

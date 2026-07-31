@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Net;
 using Lumina.Shared.Errors;
 using Lumina.Shared.Models;
 
@@ -8,6 +9,11 @@ public sealed record KubernetesRunner(
     string BuildProfile,
     string Architecture,
     string Image);
+
+public sealed record KubernetesBuildNetworkPolicy(
+    string EgressCidr,
+    int HttpsPort,
+    string FedoraRepositoryBaseUrl);
 
 /// <summary>
 /// Resolves a target to one operator-managed, digest-pinned Fedora runner.
@@ -26,6 +32,7 @@ public static partial class KubernetesBuildPolicy
         IConfiguration configuration)
     {
         ResolveLimits(configuration);
+        ResolveNetworkPolicy(configuration);
         var configuredProfiles = configuration.GetSection("Kubernetes:RunnerImages")
             .GetChildren()
             .Select(item => item.Key)
@@ -51,6 +58,53 @@ public static partial class KubernetesBuildPolicy
                 },
                 requestedImage: null);
         }).ToList();
+    }
+
+    public static KubernetesBuildNetworkPolicy ResolveNetworkPolicy(
+        IConfiguration configuration)
+    {
+        var cidr = configuration["Kubernetes:Network:EgressCidr"]?.Trim() ?? string.Empty;
+        if (!IsExactHostCidr(cidr))
+        {
+            throw new InvalidOperationException(
+                "Kubernetes:Network:EgressCidr must be one exact IPv4 /32 or IPv6 /128 host.");
+        }
+        var httpsPort = ReadBoundedInt(
+            configuration,
+            "Kubernetes:Network:HttpsPort",
+            443,
+            1,
+            65535);
+        var repository = configuration["Kubernetes:Network:FedoraRepositoryBaseUrl"]?.Trim();
+        if (!Uri.TryCreate(repository, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(uri.Host) ||
+            !string.IsNullOrEmpty(uri.UserInfo) ||
+            !string.IsNullOrEmpty(uri.Query) ||
+            !string.IsNullOrEmpty(uri.Fragment) ||
+            uri.Port != httpsPort ||
+            uri.AbsolutePath is "/" or "" ||
+            uri.AbsolutePath.Any(char.IsControl))
+        {
+            throw new InvalidOperationException(
+                "Kubernetes:Network:FedoraRepositoryBaseUrl must be an HTTPS path on the configured port.");
+        }
+
+        var runnerEndpoint = configuration["MinIO:RunnerEndpoint"]?.Trim();
+        var runnerUseSsl = configuration.GetValue("MinIO:RunnerUseSSL", true);
+        if (!runnerUseSsl || string.IsNullOrWhiteSpace(runnerEndpoint) ||
+            !TryParseEndpoint(runnerEndpoint, out var endpointHost, out var endpointPort) ||
+            !string.Equals(endpointHost, uri.Host, StringComparison.OrdinalIgnoreCase) ||
+            endpointPort != httpsPort)
+        {
+            throw new InvalidOperationException(
+                "MinIO runner endpoint and Fedora repository must share the configured HTTPS origin.");
+        }
+
+        return new KubernetesBuildNetworkPolicy(
+            cidr,
+            httpsPort,
+            repository!.TrimEnd('/'));
     }
 
     public static KubernetesRunner ResolveRunner(
@@ -181,6 +235,40 @@ public static partial class KubernetesBuildPolicy
             _ => throw new InvalidOperationException("Unsupported binary resource suffix.")
         };
         return checked(amount * multiplier);
+    }
+
+    private static bool IsExactHostCidr(string value)
+    {
+        var separator = value.LastIndexOf('/');
+        if (separator <= 0 || !IPAddress.TryParse(value[..separator], out var address))
+            return false;
+        var prefix = value[(separator + 1)..];
+        return address.AddressFamily switch
+        {
+            System.Net.Sockets.AddressFamily.InterNetwork => prefix == "32",
+            System.Net.Sockets.AddressFamily.InterNetworkV6 => prefix == "128",
+            _ => false
+        };
+    }
+
+    private static bool TryParseEndpoint(
+        string value,
+        out string host,
+        out int port)
+    {
+        host = string.Empty;
+        port = 0;
+        if (!Uri.TryCreate($"https://{value}", UriKind.Absolute, out var endpoint) ||
+            !string.IsNullOrEmpty(endpoint.UserInfo) ||
+            !string.IsNullOrEmpty(endpoint.Query) ||
+            !string.IsNullOrEmpty(endpoint.Fragment) ||
+            endpoint.AbsolutePath != "/")
+        {
+            return false;
+        }
+        host = endpoint.Host;
+        port = endpoint.Port;
+        return !string.IsNullOrWhiteSpace(host);
     }
 
     [GeneratedRegex("^(?:[a-z0-9.-]+(?::[0-9]+)?/)?[a-z0-9._-]+(?:/[a-z0-9._-]+)*@sha256:[a-f0-9]{64}$", RegexOptions.CultureInvariant)]

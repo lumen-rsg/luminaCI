@@ -222,13 +222,18 @@ public sealed class KubernetesBuildResourceClientTests
             RunnerImageDigest = "sha256:" + new string('a', 64)
         };
         var runner = new KubernetesRunner(buildJob.BuildProfile, "arm64", Digest);
+        var network = new KubernetesBuildNetworkPolicy(
+            "146.120.224.52/32",
+            443,
+            "https://packages.lumina.1t.ru/fedora");
         return new TestResources(
             buildJob,
             KubernetesJobFactory.Create(
                 buildJob,
                 runner,
-                new KubernetesJobLimits(7200, 86400, "500m", "2", "1Gi", "4Gi", "4Gi", "16Gi")),
-            KubernetesJobFactory.CreateDefaultDenyNetworkPolicy(buildJob));
+                new KubernetesJobLimits(7200, 86400, "500m", "2", "1Gi", "4Gi", "4Gi", "16Gi"),
+                network),
+            KubernetesJobFactory.CreateNetworkPolicy(buildJob, network));
     }
 
     private static V1Pod Pod(string name, string jobUid, string phase) => new()

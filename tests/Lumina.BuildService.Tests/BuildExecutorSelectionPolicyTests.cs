@@ -101,11 +101,20 @@ public sealed class BuildExecutorSelectionPolicyTests
         Assert.Throws<ValidationException>(() => KubernetesBuildIdentity.Apply(job, identity));
     }
 
-    private static IConfiguration Configuration(params (string Key, string Value)[] values) =>
-        new ConfigurationBuilder()
-            .AddInMemoryCollection(values.Select(item =>
-                new KeyValuePair<string, string?>(item.Key, item.Value)))
-            .Build();
+    private static IConfiguration Configuration(params (string Key, string Value)[] values)
+    {
+        var configuration = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Kubernetes:Network:EgressCidr"] = "146.120.224.52/32",
+            ["Kubernetes:Network:HttpsPort"] = "443",
+            ["Kubernetes:Network:FedoraRepositoryBaseUrl"] = "https://packages.lumina.1t.ru/fedora",
+            ["MinIO:RunnerEndpoint"] = "packages.lumina.1t.ru:443",
+            ["MinIO:RunnerUseSSL"] = "true"
+        };
+        foreach (var (key, value) in values)
+            configuration[key] = value;
+        return new ConfigurationBuilder().AddInMemoryCollection(configuration).Build();
+    }
 
     private static string Runner(string digestCharacter) =>
         $"registry.example/lumina/fedora-runner@sha256:{new string(digestCharacter[0], 64)}";

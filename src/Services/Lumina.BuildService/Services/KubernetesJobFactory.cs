@@ -22,11 +22,13 @@ public static class KubernetesJobFactory
     public static V1Job Create(
         BuildJob job,
         KubernetesRunner runner,
-        KubernetesJobLimits limits)
+        KubernetesJobLimits limits,
+        KubernetesBuildNetworkPolicy network)
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(runner);
         ArgumentNullException.ThrowIfNull(limits);
+        ArgumentNullException.ThrowIfNull(network);
         Validate(job, runner, limits);
         var name = KubernetesBuildIdentity.JobName(job.Id);
         var labels = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -127,7 +129,7 @@ public static class KubernetesJobFactory
                                 ImagePullPolicy = "IfNotPresent",
                                 Command = ["/usr/local/bin/lumina-kubernetes-build"],
                                 Args = ["--job-id", job.Id.ToString("D")],
-                                Env = SafeEnvironment(job),
+                                Env = SafeEnvironment(job, network),
                                 Resources = resources,
                                 SecurityContext = securityContext,
                                 VolumeMounts =
@@ -177,8 +179,11 @@ public static class KubernetesJobFactory
         };
     }
 
-    public static V1NetworkPolicy CreateDefaultDenyNetworkPolicy(BuildJob job)
+    public static V1NetworkPolicy CreateNetworkPolicy(
+        BuildJob job,
+        KubernetesBuildNetworkPolicy network)
     {
+        ArgumentNullException.ThrowIfNull(network);
         if (job.Id == Guid.Empty)
             throw new ValidationException("Kubernetes build identity is invalid.");
         var jobId = job.Id.ToString("N");
@@ -205,13 +210,71 @@ public static class KubernetesJobFactory
                     }
                 },
                 Ingress = [],
-                Egress = [],
+                Egress =
+                [
+                    new V1NetworkPolicyEgressRule
+                    {
+                        To =
+                        [
+                            new V1NetworkPolicyPeer
+                            {
+                                IpBlock = new V1IPBlock { Cidr = network.EgressCidr }
+                            }
+                        ],
+                        Ports =
+                        [
+                            new V1NetworkPolicyPort
+                            {
+                                Protocol = "TCP",
+                                Port = network.HttpsPort
+                            }
+                        ]
+                    },
+                    new V1NetworkPolicyEgressRule
+                    {
+                        To =
+                        [
+                            new V1NetworkPolicyPeer
+                            {
+                                NamespaceSelector = new V1LabelSelector
+                                {
+                                    MatchLabels = new Dictionary<string, string>
+                                    {
+                                        ["kubernetes.io/metadata.name"] = "kube-system"
+                                    }
+                                },
+                                PodSelector = new V1LabelSelector
+                                {
+                                    MatchLabels = new Dictionary<string, string>
+                                    {
+                                        ["k8s-app"] = "kube-dns"
+                                    }
+                                }
+                            }
+                        ],
+                        Ports =
+                        [
+                            new V1NetworkPolicyPort
+                            {
+                                Protocol = "UDP",
+                                Port = 53
+                            },
+                            new V1NetworkPolicyPort
+                            {
+                                Protocol = "TCP",
+                                Port = 53
+                            }
+                        ]
+                    }
+                ],
                 PolicyTypes = ["Ingress", "Egress"]
             }
         };
     }
 
-    private static List<V1EnvVar> SafeEnvironment(BuildJob job) =>
+    private static List<V1EnvVar> SafeEnvironment(
+        BuildJob job,
+        KubernetesBuildNetworkPolicy network) =>
     [
         new() { Name = "LUMINA_BUILD_JOB_ID", Value = job.Id.ToString("D") },
         new() { Name = "LUMINA_PIPELINE_ID", Value = job.PipelineId.ToString("D") },
@@ -222,6 +285,7 @@ public static class KubernetesJobFactory
         new() { Name = "SPEC_NAME", Value = job.SpecName },
         new() { Name = "SPEC_PATH_IN_REPO", Value = ResolveSpecPath(job) },
         new() { Name = "RUNNER_IMAGE_DIGEST", Value = job.RunnerImageDigest },
+        new() { Name = "FEDORA_REPOSITORY_BASE_URL", Value = network.FedoraRepositoryBaseUrl },
         new() { Name = "COMMIT_SHA", Value = job.CommitSha ?? string.Empty }
     ];
 

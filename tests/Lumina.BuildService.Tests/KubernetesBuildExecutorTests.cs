@@ -147,6 +147,11 @@ public sealed class KubernetesBuildExecutorTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Kubernetes:RunnerImages:fedora-44-aarch64"] = Digest,
+                ["Kubernetes:Network:EgressCidr"] = "146.120.224.52/32",
+                ["Kubernetes:Network:HttpsPort"] = "443",
+                ["Kubernetes:Network:FedoraRepositoryBaseUrl"] = "https://packages.lumina.1t.ru/fedora",
+                ["MinIO:RunnerEndpoint"] = "packages.lumina.1t.ru:443",
+                ["MinIO:RunnerUseSSL"] = "true",
                 ["Kubernetes:Monitoring:PollSeconds"] = "2",
                 ["BuildMonitoring:MaxConcurrentBuilds"] = "4",
                 ["BuildMonitoring:LeaseSeconds"] = "60",

@@ -186,6 +186,13 @@ services:
       - MinIO__Endpoint=minio:9000
       - MinIO__AccessKey=${MINIO_USER:-luminaadmin}
       - MinIO__SecretKey=${MINIO_PASSWORD:?MINIO_PASSWORD must be set in .env (see deploy/.env.example)}
+      # Kubernetes runners receive presigned URLs for this single controlled
+      # HTTPS origin; they never receive the MinIO credentials above.
+      - MinIO__RunnerEndpoint=${KUBERNETES_RUNNER_ENDPOINT:-packages.lumina.1t.ru:443}
+      - MinIO__RunnerUseSSL=true
+      - Kubernetes__Network__EgressCidr=${KUBERNETES_BUILD_EGRESS_CIDR:-146.120.224.52/32}
+      - Kubernetes__Network__HttpsPort=443
+      - Kubernetes__Network__FedoraRepositoryBaseUrl=${KUBERNETES_FEDORA_BASE_URL:-https://packages.lumina.1t.ru/fedora}
       # Docker daemon reached via the socket-proxy container below (not the raw socket).
       - Docker__SocketPath=http://docker-socket-proxy:2375
       # Untrusted build-container isolation knobs (see DockerBuildService.cs).
