@@ -196,6 +196,7 @@ services:
       - Docker__BuildCpuQuota=${BUILD_CPU_QUOTA:-150000}
       - Docker__AllowedBuildImages__0=${RPM_BUILD_IMAGE:-lumina-rpm-build:f44-v1}
       - Docker__AllowedBuildImages__1=${DOTNET_BUILD_IMAGE:-lumina-dotnet-build:f44-v1}
+      - Docker__AllowedBuildImages__2=${RPM_AARCH64_BUILD_IMAGE:-lumina-rpm-build:f44-aarch64-v1}
       - Services__SecurityService=http://security-service:5002
       # Shared JWT secret + issuer/audience so build-service can independently
       # re-validate bearer tokens (defense-in-depth) — see SEC-04. The internal
@@ -558,6 +559,15 @@ services:
       context: ../
       dockerfile: deploy/docker/rpm-build.Dockerfile
     image: lumina-rpm-build:f44-v1
+    restart: "no"
+    entrypoint: ["true"]
+
+  rpm-build-image-aarch64:
+    platform: linux/arm64
+    build:
+      context: ../
+      dockerfile: deploy/docker/rpm-build.Dockerfile
+    image: ${RPM_AARCH64_BUILD_IMAGE:-lumina-rpm-build:f44-aarch64-v1}
     restart: "no"
     entrypoint: ["true"]
 
