@@ -66,8 +66,13 @@ public class RepositoryDbContext : DbContext
                 "(\"Status\" = 0 AND \"GateJobName\" IS NULL AND \"GateJobUid\" IS NULL AND \"GateResultSha256\" IS NULL AND \"GateCompletedAt\" IS NULL AND \"FailureReason\" IS NULL AND \"PromotedAt\" IS NULL) OR " +
                 "(\"Status\" = 1 AND \"GateJobName\" IS NOT NULL AND \"GateJobUid\" IS NOT NULL AND \"GateResultSha256\" IS NULL AND \"GateCompletedAt\" IS NULL AND \"FailureReason\" IS NULL AND \"PromotedAt\" IS NULL) OR " +
                 "(\"Status\" = 2 AND \"GateJobName\" IS NOT NULL AND \"GateJobUid\" IS NOT NULL AND \"GateResultSha256\" IS NOT NULL AND \"GateCompletedAt\" IS NOT NULL AND \"FailureReason\" IS NULL AND \"PromotedAt\" IS NULL) OR " +
-                "(\"Status\" = 3 AND \"GateJobName\" IS NOT NULL AND \"GateJobUid\" IS NOT NULL AND \"GateResultSha256\" IS NULL AND \"GateCompletedAt\" IS NOT NULL AND \"FailureReason\" IS NOT NULL AND \"PromotedAt\" IS NULL) OR " +
+                "(\"Status\" = 3 AND \"GateResultSha256\" IS NULL AND \"GateCompletedAt\" IS NOT NULL AND \"FailureReason\" IS NOT NULL AND \"PromotedAt\" IS NULL AND ((\"GateJobName\" IS NULL AND \"GateJobUid\" IS NULL) OR (\"GateJobName\" IS NOT NULL AND \"GateJobUid\" IS NOT NULL))) OR " +
                 "(\"Status\" = 4 AND \"GateJobName\" IS NOT NULL AND \"GateJobUid\" IS NOT NULL AND \"GateResultSha256\" IS NOT NULL AND \"GateCompletedAt\" IS NOT NULL AND \"FailureReason\" IS NULL AND \"PromotedAt\" IS NOT NULL)"));
+            entity.ToTable("PromotionSets", table => table.HasCheckConstraint(
+                "CK_PromotionSets_gate_bundle",
+                "((\"GateBundleObjectName\" IS NULL AND \"GateCandidateManifestSha256\" IS NULL AND \"GateBundleSha256\" IS NULL AND \"GateBundleSize\" IS NULL AND \"GateBundlePreparedAt\" IS NULL) OR " +
+                "(\"GateBundleObjectName\" IS NOT NULL AND \"GateCandidateManifestSha256\" IS NOT NULL AND \"GateBundleSha256\" IS NOT NULL AND \"GateBundleSize\" > 0 AND \"GateBundlePreparedAt\" IS NOT NULL)) AND " +
+                "(\"Status\" IN (0, 3) OR \"GateBundleObjectName\" IS NOT NULL)"));
             entity.HasKey(e => e.Id);
             entity.HasAlternateKey(e => new { e.Id, e.RepositoryId });
             entity.Property(e => e.PromotionGroup).IsRequired().HasMaxLength(128);
@@ -78,6 +83,9 @@ public class RepositoryDbContext : DbContext
             entity.Property(e => e.GateJobUid).HasMaxLength(128);
             entity.Property(e => e.GateResultSha256).HasMaxLength(64);
             entity.Property(e => e.FailureReason).HasMaxLength(2048);
+            entity.Property(e => e.GateBundleObjectName).HasMaxLength(1024);
+            entity.Property(e => e.GateCandidateManifestSha256).HasMaxLength(64);
+            entity.Property(e => e.GateBundleSha256).HasMaxLength(64);
             entity.HasIndex(e => new { e.RepositoryId, e.Status });
             entity.HasIndex(e => new { e.RepositoryId, e.PromotionGroup, e.CreatedAt });
         });

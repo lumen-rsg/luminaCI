@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Lumina.Shared.Errors;
+using Lumina.Shared.Events;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
@@ -131,6 +132,35 @@ public static class NativePromotionGateManifestPolicy
                 throw new ValidationException("Native promotion gate candidate manifest entry is invalid.");
         }
         return manifest;
+    }
+
+    public static void RecordPrepared(NativePromotionGate gate, PromotionGatePrepared prepared)
+    {
+        ArgumentNullException.ThrowIfNull(gate);
+        ArgumentNullException.ThrowIfNull(prepared);
+        var hash = (prepared.BundleSha256 ?? string.Empty).ToLowerInvariant();
+        var expectedObject = $"promotion-gates/{gate.Id:N}/sha256/{hash}/input.tar";
+        if (prepared.PromotionSetId != gate.Id || prepared.RepositoryId != gate.RepositoryId ||
+            prepared.CandidateManifestSha256 != gate.CandidateManifestSha256 ||
+            prepared.BundleObjectName != expectedObject || hash.Length != 64 ||
+            hash.Any(character => !Uri.IsHexDigit(character)) ||
+            prepared.BundleSize is <= 0 or > 8L * 1024 * 1024 * 1024 ||
+            prepared.PreparedAt.Kind != DateTimeKind.Utc)
+            throw new ValidationException("Prepared promotion gate bundle identity is invalid.");
+        if (gate.BundleObjectName is not null)
+        {
+            if (gate.BundleObjectName == expectedObject && gate.BundleSha256 == hash &&
+                gate.BundleSize == prepared.BundleSize)
+                return;
+            throw new ConflictException("Prepared promotion gate bundle identity changed.");
+        }
+        if (gate.Status != NativePromotionGateStatus.Pending)
+            throw new ConflictException("Native promotion gate no longer accepts bundle preparation.");
+        gate.BundleObjectName = expectedObject;
+        gate.BundleSha256 = hash;
+        gate.BundleSize = prepared.BundleSize;
+        gate.BundlePreparedAt = prepared.PreparedAt;
+        gate.UpdatedAt = prepared.PreparedAt;
     }
 
     private static NativePromotionGateCandidate CreateCandidate(

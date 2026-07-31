@@ -31,6 +31,31 @@ public record PackageCandidateStaged(
     Guid PromotionSetId,
     DateTime StagedAt);
 
+public record PromotionGateCandidateInput(
+    Guid ArtifactId,
+    Guid CandidatePackageId,
+    string ProjectPackageId,
+    string FileName,
+    string ObjectName,
+    long Size,
+    string Sha256);
+
+public record PromotionGatePreparationRequested(
+    Guid PromotionSetId,
+    Guid RepositoryId,
+    string CandidateManifestSha256,
+    IReadOnlyList<PromotionGateCandidateInput> Candidates,
+    DateTime RequestedAt);
+
+public record PromotionGatePrepared(
+    Guid PromotionSetId,
+    Guid RepositoryId,
+    string CandidateManifestSha256,
+    string BundleObjectName,
+    string BundleSha256,
+    long BundleSize,
+    DateTime PreparedAt);
+
 public record PromotionGateStarted(
     Guid PromotionSetId,
     Guid RepositoryId,

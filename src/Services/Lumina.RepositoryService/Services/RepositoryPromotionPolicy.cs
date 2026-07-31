@@ -115,10 +115,49 @@ public static partial class RepositoryPromotionPolicy
         }
         if (set.Packages.Count == 0)
             throw new ValidationException("A promotion set cannot be tested without candidate packages.");
+        if (string.IsNullOrWhiteSpace(set.GateBundleObjectName) ||
+            string.IsNullOrWhiteSpace(set.GateCandidateManifestSha256) ||
+            string.IsNullOrWhiteSpace(set.GateBundleSha256) ||
+            set.GateBundleSize is null or <= 0 || set.GateBundlePreparedAt is null)
+            throw new ValidationException("A promotion set cannot be tested without an immutable gate bundle.");
 
         set.Status = PromotionSetStatus.Testing;
         set.GateJobName = jobName;
         set.GateJobUid = jobUid;
+        set.UpdatedAt = now;
+    }
+
+    public static void RecordGateBundle(
+        RepositoryPromotionSet set,
+        string candidateManifestSha256,
+        string bundleObjectName,
+        string bundleSha256,
+        long bundleSize,
+        DateTime now)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+        var manifestHash = NormalizeSha256(candidateManifestSha256, "Candidate manifest SHA-256");
+        var bundleHash = NormalizeSha256(bundleSha256, "Gate bundle SHA-256");
+        var expectedObject = $"promotion-gates/{set.Id:N}/sha256/{bundleHash}/input.tar";
+        if (!string.Equals(bundleObjectName, expectedObject, StringComparison.Ordinal) ||
+            bundleSize is <= 0 or > 8L * 1024 * 1024 * 1024)
+            throw new ValidationException("Gate bundle object identity is invalid.");
+        if (set.GateBundleObjectName is not null)
+        {
+            if (set.GateCandidateManifestSha256 == manifestHash &&
+                set.GateBundleObjectName == expectedObject && set.GateBundleSha256 == bundleHash &&
+                set.GateBundleSize == bundleSize)
+                return;
+            throw new ConflictException("Promotion gate bundle identity changed after preparation.");
+        }
+        RequireStatus(set, PromotionSetStatus.Candidate);
+        if (set.Packages.Count == 0)
+            throw new ValidationException("A promotion gate bundle requires candidate packages.");
+        set.GateCandidateManifestSha256 = manifestHash;
+        set.GateBundleObjectName = expectedObject;
+        set.GateBundleSha256 = bundleHash;
+        set.GateBundleSize = bundleSize;
+        set.GateBundlePreparedAt = now;
         set.UpdatedAt = now;
     }
 
@@ -145,15 +184,33 @@ public static partial class RepositoryPromotionPolicy
         string failureReason,
         DateTime now)
     {
-        var reason = (failureReason ?? string.Empty).Trim();
-        if (reason.Length is < 1 or > 2048)
-            throw new ValidationException("Native gate failure reason is invalid.");
+        var reason = NormalizeFailureReason(failureReason);
         if (set.Status == PromotionSetStatus.Failed &&
             string.Equals(set.FailureReason, reason, StringComparison.Ordinal))
         {
             return;
         }
         RequireStatus(set, PromotionSetStatus.Testing);
+        set.Status = PromotionSetStatus.Failed;
+        set.FailureReason = reason;
+        set.GateCompletedAt = now;
+        set.UpdatedAt = now;
+    }
+
+    public static void RecordGatePreparationFailure(
+        RepositoryPromotionSet set,
+        string failureReason,
+        DateTime now)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+        var reason = NormalizeFailureReason(failureReason);
+        if (set.Status == PromotionSetStatus.Failed && set.GateJobName is null)
+        {
+            if (string.Equals(set.FailureReason, reason, StringComparison.Ordinal))
+                return;
+            throw new ConflictException("Promotion gate preparation failure changed after recording.");
+        }
+        RequireStatus(set, PromotionSetStatus.Candidate);
         set.Status = PromotionSetStatus.Failed;
         set.FailureReason = reason;
         set.GateCompletedAt = now;
@@ -179,6 +236,14 @@ public static partial class RepositoryPromotionPolicy
         if (normalized.Length != 64 || normalized.Any(character => !Uri.IsHexDigit(character)))
             throw new ValidationException($"{field} must be a full SHA-256 digest.");
         return normalized;
+    }
+
+    private static string NormalizeFailureReason(string? value)
+    {
+        var reason = (value ?? string.Empty).Trim();
+        if (reason.Length is < 1 or > 2048)
+            throw new ValidationException("Native gate failure reason is invalid.");
+        return reason;
     }
 
     private static void RequireStatus(RepositoryPromotionSet set, PromotionSetStatus expected)

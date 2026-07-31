@@ -24,6 +24,7 @@ public sealed class RepositoryPromotionPolicyTests
         Assert.Throws<ConflictException>(() =>
             RepositoryPromotionPolicy.MarkPromoted(set, Now.AddMinutes(2)));
 
+        Prepare(set);
         RepositoryPromotionPolicy.BeginGate(set, "lumina-gate-123", "job-uid-1", Now.AddMinutes(2));
         RepositoryPromotionPolicy.RecordGateSuccess(set, Digest, Now.AddMinutes(3));
         package.Status = "Ready";
@@ -41,6 +42,7 @@ public sealed class RepositoryPromotionPolicyTests
         var package = Candidate(set.RepositoryId);
         RepositoryPromotionPolicy.AttachCandidate(
             set, package, $"sha256/{Digest}/{package.FileName}", Now);
+        Prepare(set);
         RepositoryPromotionPolicy.BeginGate(set, "lumina-gate-123", "job-uid-1", Now);
 
         RepositoryPromotionPolicy.RecordGateFailure(set, "dnf transaction failed", Now);
@@ -52,12 +54,31 @@ public sealed class RepositoryPromotionPolicyTests
     }
 
     [Fact]
+    public void FailedBundlePreparation_IsTerminalWithoutKubernetesIdentity()
+    {
+        var set = CreateSet();
+        var package = Candidate(set.RepositoryId);
+        RepositoryPromotionPolicy.AttachCandidate(
+            set, package, $"sha256/{Digest}/{package.FileName}", Now);
+
+        RepositoryPromotionPolicy.RecordGatePreparationFailure(set, "snapshot failed", Now);
+        RepositoryPromotionPolicy.RecordGatePreparationFailure(set, "snapshot failed", Now.AddMinutes(1));
+
+        Assert.Equal(PromotionSetStatus.Failed, set.Status);
+        Assert.Null(set.GateJobName);
+        Assert.Equal("snapshot failed", set.FailureReason);
+        Assert.Throws<ConflictException>(() => RepositoryPromotionPolicy.RecordGatePreparationFailure(
+            set, "changed", Now));
+    }
+
+    [Fact]
     public void GateAcknowledgements_AreIdempotentButRejectChangedIdentityOrResult()
     {
         var set = CreateSet();
         var package = Candidate(set.RepositoryId);
         RepositoryPromotionPolicy.AttachCandidate(
             set, package, $"sha256/{Digest}/{package.FileName}", Now);
+        Prepare(set);
         RepositoryPromotionPolicy.BeginGate(set, "lumina-gate-123", "job-uid-1", Now);
         RepositoryPromotionPolicy.BeginGate(set, "lumina-gate-123", "job-uid-1", Now.AddSeconds(1));
         Assert.Throws<ConflictException>(() => RepositoryPromotionPolicy.BeginGate(
@@ -67,6 +88,23 @@ public sealed class RepositoryPromotionPolicyTests
         RepositoryPromotionPolicy.RecordGateSuccess(set, Digest, Now.AddMinutes(2));
         Assert.Throws<ConflictException>(() => RepositoryPromotionPolicy.RecordGateSuccess(
             set, new string('b', 64), Now.AddMinutes(2)));
+    }
+
+    [Fact]
+    public void GateBundle_IsContentAddressedAndRetryStable()
+    {
+        var set = CreateSet();
+        var package = Candidate(set.RepositoryId);
+        RepositoryPromotionPolicy.AttachCandidate(
+            set, package, $"sha256/{Digest}/{package.FileName}", Now);
+        Prepare(set);
+        Prepare(set);
+
+        Assert.Equal(new string('c', 64), set.GateCandidateManifestSha256);
+        Assert.Throws<ConflictException>(() => RepositoryPromotionPolicy.RecordGateBundle(
+            set, new string('c', 64),
+            $"promotion-gates/{set.Id:N}/sha256/{new string('e', 64)}/input.tar",
+            new string('e', 64), 4096, Now));
     }
 
     [Fact]
@@ -99,6 +137,15 @@ public sealed class RepositoryPromotionPolicyTests
         RepositoryPromotionPolicy.Create(
             Guid.NewGuid(), Guid.NewGuid(), "jetson-r39.2", "aarch64",
             $"sha256:{Digest}", "cv2", Now);
+
+    private static void Prepare(RepositoryPromotionSet set) =>
+        RepositoryPromotionPolicy.RecordGateBundle(
+            set,
+            new string('c', 64),
+            $"promotion-gates/{set.Id:N}/sha256/{new string('d', 64)}/input.tar",
+            new string('d', 64),
+            4096,
+            Now);
 
     private static Package Candidate(Guid repositoryId) => new()
     {

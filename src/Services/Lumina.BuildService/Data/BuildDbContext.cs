@@ -235,13 +235,20 @@ public class BuildDbContext : DbContext
                 "(\"Status\" = 0 AND \"KubernetesNamespace\" IS NULL AND \"KubernetesJobName\" IS NULL AND \"KubernetesJobUid\" IS NULL AND \"KubernetesPodName\" IS NULL AND \"ResultSha256\" IS NULL AND \"FailureReason\" IS NULL AND \"StartedAt\" IS NULL AND \"CompletedAt\" IS NULL) OR " +
                 "(\"Status\" = 1 AND \"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL AND \"KubernetesJobUid\" IS NOT NULL AND \"ResultSha256\" IS NULL AND \"FailureReason\" IS NULL AND \"StartedAt\" IS NOT NULL AND \"CompletedAt\" IS NULL) OR " +
                 "(\"Status\" = 2 AND \"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL AND \"KubernetesJobUid\" IS NOT NULL AND \"ResultSha256\" IS NOT NULL AND \"FailureReason\" IS NULL AND \"StartedAt\" IS NOT NULL AND \"CompletedAt\" IS NOT NULL) OR " +
-                "(\"Status\" = 3 AND \"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL AND \"KubernetesJobUid\" IS NOT NULL AND \"ResultSha256\" IS NULL AND \"FailureReason\" IS NOT NULL AND \"StartedAt\" IS NOT NULL AND \"CompletedAt\" IS NOT NULL)"));
+                "(\"Status\" = 3 AND \"ResultSha256\" IS NULL AND \"FailureReason\" IS NOT NULL AND \"CompletedAt\" IS NOT NULL AND ((\"KubernetesNamespace\" IS NULL AND \"KubernetesJobName\" IS NULL AND \"KubernetesJobUid\" IS NULL AND \"KubernetesPodName\" IS NULL AND \"StartedAt\" IS NULL) OR (\"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL AND \"KubernetesJobUid\" IS NOT NULL AND \"StartedAt\" IS NOT NULL)))"));
+            entity.ToTable("native_promotion_gates", "build", table => table.HasCheckConstraint(
+                "CK_native_promotion_gates_bundle",
+                "((\"BundleObjectName\" IS NULL AND \"BundleSha256\" IS NULL AND \"BundleSize\" IS NULL AND \"BundlePreparedAt\" IS NULL) OR " +
+                "(\"BundleObjectName\" IS NOT NULL AND \"BundleSha256\" IS NOT NULL AND \"BundleSize\" > 0 AND \"BundlePreparedAt\" IS NOT NULL))" +
+                " AND (\"Status\" IN (0, 3) OR \"BundleObjectName\" IS NOT NULL)"));
             entity.HasKey(e => e.Id);
             entity.Property(e => e.PromotionGroup).IsRequired().HasMaxLength(128);
             entity.Property(e => e.TargetArchitecture).IsRequired().HasMaxLength(64);
             entity.Property(e => e.RunnerImageDigest).IsRequired().HasMaxLength(71);
             entity.Property(e => e.CandidateManifestJson).IsRequired().HasColumnType("jsonb");
             entity.Property(e => e.CandidateManifestSha256).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.BundleObjectName).HasMaxLength(1024);
+            entity.Property(e => e.BundleSha256).HasMaxLength(64);
             entity.Property(e => e.KubernetesNamespace).HasMaxLength(63);
             entity.Property(e => e.KubernetesJobName).HasMaxLength(63);
             entity.Property(e => e.KubernetesJobUid).HasMaxLength(128);

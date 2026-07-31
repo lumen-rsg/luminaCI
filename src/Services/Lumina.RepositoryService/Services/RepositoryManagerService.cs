@@ -328,6 +328,49 @@ public class RepositoryManagerService
         return stagedPath;
     }
 
+    public string GetLiveRpmPath(string basePath, string arch, string fileName)
+    {
+        EnsureSafeRepoSegments(basePath, arch);
+        var safeName = Path.GetFileName(fileName);
+        if (safeName != fileName || !safeName.EndsWith(".rpm", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("Live package filename is invalid.");
+        var path = ProcessArgumentSanitizer.ResolveConfinedPath(
+            Path.Combine(basePath.Trim('/'), arch, safeName), _reposBasePath);
+        if (!File.Exists(path))
+            throw new ValidationException($"Live package '{safeName}' is missing from repository storage.");
+        return path;
+    }
+
+    public async Task GenerateGateMetadataAsync(string directory, long revision)
+    {
+        var safeDirectory = ProcessArgumentSanitizer.ResolveConfinedPath(directory, _reposBasePath);
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "createrepo_c",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = safeDirectory
+        };
+        startInfo.ArgumentList.Add("--revision");
+        startInfo.ArgumentList.Add(revision.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add("--set-timestamp-to-revision");
+        startInfo.ArgumentList.Add("--simple-md-filenames");
+        startInfo.ArgumentList.Add(safeDirectory);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start createrepo_c for promotion gate.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"Promotion gate createrepo_c failed: {await stderr}");
+        _logger.LogInformation(
+            "Generated deterministic promotion gate metadata in {Directory}: {Output}",
+            safeDirectory, await stdout);
+    }
+
     public RpmMetadata ValidateStagedRpm(string stagedPath, string expectedFileName)
     {
         var metadata = ExtractRpmMetadata(stagedPath)

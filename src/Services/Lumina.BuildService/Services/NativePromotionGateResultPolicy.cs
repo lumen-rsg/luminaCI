@@ -19,6 +19,7 @@ internal sealed record NativePromotionGateResult(
     [property: JsonPropertyName("runnerImageDigest")] string RunnerImageDigest,
     [property: JsonPropertyName("targetArchitecture")] string TargetArchitecture,
     [property: JsonPropertyName("transaction")] string Transaction,
+    [property: JsonPropertyName("baselinePackageNames")] IReadOnlyList<string> BaselinePackageNames,
     [property: JsonPropertyName("candidates")] IReadOnlyList<NativePromotionGateResultCandidate> Candidates);
 
 internal static class NativePromotionGateResultPolicy
@@ -66,7 +67,9 @@ internal static class NativePromotionGateResultPolicy
             result.KubernetesJobUid != identity.JobUid ||
             result.RunnerImageDigest != gate.RunnerImageDigest ||
             result.TargetArchitecture != gate.TargetArchitecture ||
-            result.Transaction != "clean-install" || !expected.SequenceEqual(actual) ||
+            result.Transaction != "baseline-upgrade" || !expected.SequenceEqual(actual) ||
+            result.BaselinePackageNames is null ||
+            result.BaselinePackageNames.Any(item => string.IsNullOrWhiteSpace(item) || item.Length > 256) ||
             resultCandidates.Any(item => string.IsNullOrWhiteSpace(item.Nevra) || item.Nevra.Length > 512))
             throw new ValidationException("Native gate result provenance does not match its candidate manifest.");
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();

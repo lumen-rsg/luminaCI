@@ -44,6 +44,7 @@ try
     builder.Services.AddScoped<RepositoryManagerService>();
     builder.Services.AddScoped<MinioStorageService>();
     builder.Services.AddScoped<SignatureVerificationService>();
+    builder.Services.AddScoped<PromotionGateBundleService>();
     builder.Services.AddHttpClient("ArtifactStorage", client =>
         client.Timeout = TimeSpan.FromMinutes(2));
 
@@ -62,6 +63,8 @@ try
         x.AddConsumer<PackageCandidateRequestedConsumer>();
         x.AddConsumer<PromotionGateStartedConsumer>();
         x.AddConsumer<PromotionGateCompletedConsumer>();
+        x.AddConsumer<PromotionGatePreparationRequestedConsumer>();
+        x.AddConsumer<PromotionGatePreparationFaultConsumer>();
         x.AddEntityFrameworkOutbox<RepositoryDbContext>(outbox =>
         {
             outbox.UsePostgres();
@@ -88,6 +91,8 @@ try
                 endpoint.ConfigureConsumer<PackageCandidateRequestedConsumer>(ctx);
                 endpoint.ConfigureConsumer<PromotionGateStartedConsumer>(ctx);
                 endpoint.ConfigureConsumer<PromotionGateCompletedConsumer>(ctx);
+                endpoint.ConfigureConsumer<PromotionGatePreparationRequestedConsumer>(ctx);
+                endpoint.ConfigureConsumer<PromotionGatePreparationFaultConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));

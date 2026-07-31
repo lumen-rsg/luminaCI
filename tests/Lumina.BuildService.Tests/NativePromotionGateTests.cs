@@ -54,11 +54,15 @@ public sealed class NativePromotionGateTests
         Assert.Equal(["/bin/bash"], container.Command);
         Assert.DoesNotContain("SYS_CHROOT", container.SecurityContext.Capabilities.Add);
         Assert.DoesNotContain(pod.Volumes, volume => volume.HostPath is not null);
-        Assert.Contains("dnf --disablerepo", NativePromotionGateTransportPolicy.RunnerScript);
+        Assert.Contains("baseline-upgrade", NativePromotionGateTransportPolicy.RunnerScript);
 
         gate.KubernetesNamespace = "lumina-builds";
         gate.KubernetesJobName = job.Metadata.Name;
         gate.KubernetesJobUid = "job-uid-1";
+        gate.BundleSha256 = new string('c', 64);
+        gate.BundleObjectName = $"promotion-gates/{gate.Id:N}/sha256/{gate.BundleSha256}/input.tar";
+        gate.BundleSize = 4096;
+        gate.BundlePreparedAt = DateTime.UtcNow;
         var identity = new KubernetesBuildResourceIdentity(
             "lumina-builds", job.Metadata.Name, "job-uid-1", null);
         var signer = new FakeSigner();
@@ -67,7 +71,7 @@ public sealed class NativePromotionGateTests
         var secret = NativePromotionGateTransportPolicy.CreateSecret(
             identity.Namespace, identity.JobName, transport);
 
-        Assert.Equal([resource.Artifact.StoragePath], signer.Objects);
+        Assert.Equal([gate.BundleObjectName], signer.Objects);
         Assert.True(secret.Immutable);
         Assert.Equal(2, secret.Data.Count);
         var persisted = NativePromotionGateTransportPolicy.ValidateSecret(secret, identity, gate);
@@ -90,7 +94,8 @@ public sealed class NativePromotionGateTests
             kubernetesJobUid = identity.JobUid,
             runnerImageDigest = Digest,
             targetArchitecture = "aarch64",
-            transaction = "clean-install",
+            transaction = "baseline-upgrade",
+            baselinePackageNames = new[] { "firmware" },
             candidates = new[]
             {
                 new
@@ -108,6 +113,28 @@ public sealed class NativePromotionGateTests
         Assert.Equal(64, hash.Length);
         Assert.Throws<ValidationException>(() => NativePromotionGateResultPolicy.ValidateAndHash(
             gate, identity, $"LUMINA_GATE_RESULT={result.Replace(Hash, new string('c', 64))}\n"));
+    }
+
+    [Fact]
+    public void PreparedBundle_IsBoundToCandidateManifestAndContentAddress()
+    {
+        var resource = Resources("firmware");
+        var gate = CreateGate(resource);
+        var bundleHash = new string('d', 64);
+        var prepared = new Lumina.Shared.Events.PromotionGatePrepared(
+            gate.Id, gate.RepositoryId, gate.CandidateManifestSha256,
+            $"promotion-gates/{gate.Id:N}/sha256/{bundleHash}/input.tar",
+            bundleHash, 4096, DateTime.UtcNow);
+
+        NativePromotionGateManifestPolicy.RecordPrepared(gate, prepared);
+        gate.Status = NativePromotionGateStatus.Running;
+        NativePromotionGateManifestPolicy.RecordPrepared(gate, prepared);
+
+        Assert.Equal(bundleHash, gate.BundleSha256);
+        Assert.Throws<ConflictException>(() => NativePromotionGateManifestPolicy.RecordPrepared(
+            gate, prepared with { BundleSize = 8192 }));
+        Assert.Throws<ValidationException>(() => NativePromotionGateManifestPolicy.RecordPrepared(
+            CreateGate(resource), prepared with { CandidateManifestSha256 = new string('e', 64) }));
     }
 
     private static NativePromotionGate CreateGate(TestResources resource) =>

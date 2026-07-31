@@ -12,6 +12,11 @@ public sealed class NativePromotionGate
     public string RunnerImageDigest { get; set; } = string.Empty;
     public string CandidateManifestJson { get; set; } = string.Empty;
     public string CandidateManifestSha256 { get; set; } = string.Empty;
+    public DateTime? PreparationRequestedAt { get; set; }
+    public string? BundleObjectName { get; set; }
+    public string? BundleSha256 { get; set; }
+    public long? BundleSize { get; set; }
+    public DateTime? BundlePreparedAt { get; set; }
     public NativePromotionGateStatus Status { get; set; } = NativePromotionGateStatus.Pending;
     public string? KubernetesNamespace { get; set; }
     public string? KubernetesJobName { get; set; }

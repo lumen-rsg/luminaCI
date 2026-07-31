@@ -19,6 +19,11 @@ public sealed class RepositoryPromotionSet
     public DateTime? GateCompletedAt { get; set; }
     public string? FailureReason { get; set; }
     public DateTime? PromotedAt { get; set; }
+    public string? GateBundleObjectName { get; set; }
+    public string? GateCandidateManifestSha256 { get; set; }
+    public string? GateBundleSha256 { get; set; }
+    public long? GateBundleSize { get; set; }
+    public DateTime? GateBundlePreparedAt { get; set; }
 
     public PackageRepository? Repository { get; set; }
     public List<Package> Packages { get; set; } = [];

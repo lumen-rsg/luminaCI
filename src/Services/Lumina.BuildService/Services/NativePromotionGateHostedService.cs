@@ -76,6 +76,29 @@ internal sealed class NativePromotionGateHostedService(
             if (!candidatePromotion.Enabled || executorSelection.Backend != BuildExecutorBackend.Kubernetes ||
                 string.IsNullOrWhiteSpace(executorSelection.KubernetesNamespace))
                 return;
+            if (gate.BundlePreparedAt is null)
+            {
+                if (gate.PreparationRequestedAt is null)
+                {
+                    var manifest = NativePromotionGateManifestPolicy.Read(gate);
+                    var preparationRequestedAt = DateTime.UtcNow;
+                    var preparationPublisher = scope.ServiceProvider.GetRequiredService<IPublishEndpoint>();
+                    await preparationPublisher.Publish(new PromotionGatePreparationRequested(
+                        gate.Id,
+                        gate.RepositoryId,
+                        gate.CandidateManifestSha256,
+                        manifest.Candidates.Select(item => new PromotionGateCandidateInput(
+                            item.ArtifactId, item.CandidatePackageId, item.ProjectPackageId,
+                            item.FileName, item.ObjectName, item.Size, item.Sha256)).ToList(),
+                        preparationRequestedAt), cancellationToken);
+                    gate.PreparationRequestedAt = preparationRequestedAt;
+                    gate.UpdatedAt = preparationRequestedAt;
+                    await db.SaveChangesAsync(cancellationToken);
+                    logger.LogInformation(
+                        "Requested immutable repository bundle for promotion set {PromotionSetId}", gate.Id);
+                }
+                return;
+            }
             var identity = await resources.EnsureCreatedAsync(
                 executorSelection.KubernetesNamespace,
                 NativePromotionGateJobFactory.Create(gate, runner, limits, network),
