@@ -471,7 +471,7 @@ public class PipelineEngineTests
         var engine = await NewEngineAsync(sp);
         var pipeline = await engine.CreatePipelineAsync(BuildRequest("s3cret"), "ops");
         var deliveryId = Guid.NewGuid();
-        var binding = new PipelineEngine.ProjectBuildBinding(deliveryId, "kernel", 2);
+        var binding = new PipelineEngine.ProjectBuildBinding(deliveryId, "kernel", 2, "jetson-r39.2");
 
         var job = await engine.TriggerProjectBuildAsync(
             pipeline.Id,
@@ -490,6 +490,7 @@ public class PipelineEngineTests
         Assert.Same(job, launched);
         Assert.Equal(deliveryId, launched.ProjectWebhookDeliveryId);
         Assert.Equal("kernel", launched.ProjectPackageId);
+        Assert.Equal("jetson-r39.2", launched.PromotionGroup);
         Assert.Equal(2, launched.ProjectStageOrder);
     }
 

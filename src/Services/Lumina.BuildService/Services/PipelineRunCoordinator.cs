@@ -262,6 +262,10 @@ public sealed class PipelineRunCoordinator
 
             case StepType.Publish:
                 var repositoryId = Guid.Parse(step.Configuration["repositoryId"]);
+                var promotionGroup = PromotionSetIdentity.NormalizeGroup(
+                    job.PromotionGroup ?? job.ProjectPackageId ?? $"build-{job.Id:N}");
+                var promotionOwner = job.ProjectWebhookDeliveryId ?? job.Id;
+                var promotionSetId = PromotionSetIdentity.Create(promotionOwner, promotionGroup);
                 foreach (var artifact in job.Artifacts)
                 {
                     await _publishEndpoint.Publish(new PackagePublishRequested(
@@ -270,7 +274,11 @@ public sealed class PipelineRunCoordinator
                         artifact.HashSha256
                             ?? throw new InvalidOperationException($"Artifact {artifact.Id} has no signed SHA-256 digest."),
                         job.TriggeredBy,
-                        DateTime.UtcNow), cancellationToken);
+                        DateTime.UtcNow,
+                        promotionSetId,
+                        promotionGroup,
+                        job.TargetArchitecture,
+                        job.RunnerImageDigest), cancellationToken);
                 }
                 break;
 

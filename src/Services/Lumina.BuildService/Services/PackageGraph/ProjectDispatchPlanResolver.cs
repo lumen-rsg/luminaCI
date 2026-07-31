@@ -18,7 +18,8 @@ public sealed record ProjectDispatchTarget(
     string PackageId,
     Guid PipelineId,
     string BuildProfile,
-    string SpecPath);
+    string SpecPath,
+    string? PromotionGroup = null);
 
 public static class ProjectDispatchPlanResolver
 {
@@ -45,11 +46,13 @@ public static class ProjectDispatchPlanResolver
             stage.PackageIds.Select(packageId =>
             {
                 var pipeline = bindings[packageId];
+                var definition = packageDefinitions[packageId];
                 return new ProjectDispatchTarget(
                     packageId,
                     pipeline.Id,
                     pipeline.BuildProfile,
-                    NormalizePath(pipeline.SpecPath!));
+                    NormalizePath(pipeline.SpecPath!),
+                    definition.PromotionGroup ?? packageId);
             }).ToList())).ToList();
 
         return new ProjectDispatchPlan(

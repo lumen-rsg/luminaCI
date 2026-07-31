@@ -214,6 +214,7 @@ public class PipelineEngine
             ExecutionBackend = _buildLauncher.Backend,
             ProjectWebhookDeliveryId = projectBinding?.DeliveryId,
             ProjectPackageId = projectBinding?.PackageId,
+            PromotionGroup = projectBinding?.PromotionGroup,
             ProjectStageOrder = projectBinding?.StageOrder,
             StepRuns = pipeline.Steps
                 .OrderBy(step => step.Order)
@@ -286,13 +287,15 @@ public class PipelineEngine
     internal sealed record ProjectBuildBinding(
         Guid DeliveryId,
         string PackageId,
-        int StageOrder)
+        int StageOrder,
+        string? PromotionGroup = null)
     {
         public void Validate()
         {
             if (DeliveryId == Guid.Empty || StageOrder < 0)
                 throw new ValidationException("Project build binding is invalid.");
             _ = BuildProjectPolicy.NormalizePackageId(PackageId);
+            _ = PromotionSetIdentity.NormalizeGroup(PromotionGroup ?? PackageId);
         }
 
         public static void EnsureMatches(BuildJob job, ProjectBuildBinding? binding)
@@ -301,6 +304,10 @@ public class PipelineEngine
                 return;
             if (job.ProjectWebhookDeliveryId != binding.DeliveryId ||
                 !string.Equals(job.ProjectPackageId, binding.PackageId, StringComparison.Ordinal) ||
+                !string.Equals(
+                    job.PromotionGroup ?? job.ProjectPackageId,
+                    binding.PromotionGroup ?? binding.PackageId,
+                    StringComparison.Ordinal) ||
                 job.ProjectStageOrder != binding.StageOrder)
             {
                 throw new ConflictException(

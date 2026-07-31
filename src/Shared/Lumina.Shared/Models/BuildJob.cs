@@ -53,6 +53,7 @@ public class BuildJob
     // manual and legacy per-pipeline builds.
     public Guid? ProjectWebhookDeliveryId { get; set; }
     public string? ProjectPackageId { get; set; }
+    public string? PromotionGroup { get; set; }
     public int? ProjectStageOrder { get; set; }
     public ProjectWebhookDelivery? ProjectWebhookDelivery { get; set; }
 

@@ -92,6 +92,10 @@ public class PipelineRunCoordinatorTests
         Assert.Equal(StepStatus.Success, job.StepRuns[2].Status);
         Assert.Equal(StepStatus.Running, job.StepRuns[3].Status);
         Assert.True(await harness.Published.Any<PackagePublishRequested>());
+        var publication = await harness.Published.SelectAsync<PackagePublishRequested>().First();
+        Assert.Equal(PromotionSetIdentity.Create(job.Id, $"build-{job.Id:N}"), publication.Context.Message.PromotionSetId);
+        Assert.Equal($"build-{job.Id:N}", publication.Context.Message.PromotionGroup);
+        Assert.Equal(job.TargetArchitecture, publication.Context.Message.TargetArchitecture);
 
         await coordinator.ReportPublishedAsync(new PackagePublished(
             job.Artifacts[0].Id,

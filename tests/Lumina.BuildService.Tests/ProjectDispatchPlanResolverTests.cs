@@ -20,8 +20,12 @@ public sealed class ProjectDispatchPlanResolverTests
             Manifest(), ["firmware/blob.bin"], [driver, firmware]);
 
         Assert.Equal(2, plan.Stages.Count);
-        Assert.Equal(firmware.Id, Assert.Single(plan.Stages[0].Targets).PipelineId);
-        Assert.Equal(driver.Id, Assert.Single(plan.Stages[1].Targets).PipelineId);
+        var firmwareTarget = Assert.Single(plan.Stages[0].Targets);
+        Assert.Equal(firmware.Id, firmwareTarget.PipelineId);
+        Assert.Equal("firmware", firmwareTarget.PromotionGroup);
+        var driverTarget = Assert.Single(plan.Stages[1].Targets);
+        Assert.Equal(driver.Id, driverTarget.PipelineId);
+        Assert.Equal("jetson-r39.2", driverTarget.PromotionGroup);
         Assert.False(plan.IsConservative);
     }
 
@@ -105,5 +109,6 @@ public sealed class ProjectDispatchPlanResolverTests
             paths: [driver/**]
             targets: [fedora-44-aarch64]
             depends_on: [firmware]
+            promotion_group: jetson-r39.2
         """;
 }

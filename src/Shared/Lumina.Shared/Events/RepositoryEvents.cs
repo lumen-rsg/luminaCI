@@ -6,7 +6,11 @@ public record PackagePublishRequested(
     Guid RepositoryId,
     string ExpectedSha256,
     string PublishedBy,
-    DateTime RequestedAt);
+    DateTime RequestedAt,
+    Guid PromotionSetId = default,
+    string PromotionGroup = "",
+    string TargetArchitecture = "",
+    string? GateRunnerImageDigest = null);
 
 public record PackagePublished(Guid ArtifactId, Guid RepositoryId, Guid PackageId, DateTime PublishedAt);
 

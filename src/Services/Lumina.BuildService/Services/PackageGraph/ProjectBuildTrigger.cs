@@ -14,7 +14,8 @@ public sealed record ProjectBuildLaunch(
     string CommitSha,
     string SpecPath,
     string? CommitAuthor,
-    string? CommitMessage);
+    string? CommitMessage,
+    string? PromotionGroup = null);
 
 public interface IProjectBuildTrigger
 {
@@ -40,7 +41,8 @@ public sealed class ProjectBuildTrigger(IServiceScopeFactory scopeFactory) : IPr
         var binding = new PipelineEngine.ProjectBuildBinding(
             launch.DeliveryId,
             launch.PackageId,
-            launch.StageOrder);
+            launch.StageOrder,
+            NormalizePromotionGroup(launch));
         var job = await engine.TriggerProjectBuildAsync(
             launch.PipelineId,
             request,
@@ -70,6 +72,7 @@ public sealed class ProjectBuildTrigger(IServiceScopeFactory scopeFactory) : IPr
     {
         ArgumentNullException.ThrowIfNull(launch);
         _ = BuildProjectPolicy.NormalizePackageId(launch.PackageId);
+        _ = NormalizePromotionGroup(launch);
         if (launch.DeliveryId == Guid.Empty || launch.PipelineId == Guid.Empty || launch.StageOrder < 0)
             throw new ValidationException("Project build identity is invalid.");
         if (!Uri.TryCreate(launch.RepositoryUrl, UriKind.Absolute, out var repository) ||
@@ -98,4 +101,7 @@ public sealed class ProjectBuildTrigger(IServiceScopeFactory scopeFactory) : IPr
             throw new ValidationException("Project build spec path cannot be represented safely.");
         }
     }
+
+    private static string NormalizePromotionGroup(ProjectBuildLaunch launch) =>
+        PromotionSetIdentity.NormalizeGroup(launch.PromotionGroup ?? launch.PackageId);
 }

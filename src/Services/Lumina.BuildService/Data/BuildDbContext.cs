@@ -181,6 +181,7 @@ public class BuildDbContext : DbContext
             entity.Property(e => e.KubernetesPodName).HasMaxLength(253);
             entity.Property(e => e.KubernetesArtifactManifestSha256).HasMaxLength(64);
             entity.Property(e => e.ProjectPackageId).HasMaxLength(128);
+            entity.Property(e => e.PromotionGroup).HasMaxLength(128);
             entity.Property(e => e.LeaseOwner).HasMaxLength(128);
             entity.HasIndex(e => new { e.Status, e.LeaseExpiresAt });
             entity.HasIndex(e => new { e.ExecutionBackend, e.Status });

@@ -56,7 +56,8 @@ public sealed class ProjectDispatchService(
                         delivery.CommitSha,
                         target.SpecPath,
                         delivery.CommitAuthor,
-                        delivery.CommitMessage), cancellationToken);
+                        delivery.CommitMessage,
+                        target.PromotionGroup), cancellationToken);
                     jobs[target.PackageId] = job;
                 }
 
@@ -122,7 +123,7 @@ public sealed class ProjectDispatchService(
                 ProjectBuildTrigger.Validate(new ProjectBuildLaunch(
                     delivery.Id, target.PipelineId, target.PackageId, stage.Order,
                     delivery.RepositoryUrl, delivery.Branch, delivery.CommitSha, target.SpecPath,
-                    delivery.CommitAuthor, delivery.CommitMessage));
+                    delivery.CommitAuthor, delivery.CommitMessage, target.PromotionGroup));
                 if (!packages.Add(target.PackageId))
                     throw new ValidationException($"Package '{target.PackageId}' occurs more than once in the dispatch plan.");
             }
