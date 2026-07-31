@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-readonly DEFAULT_SOURCE_IMAGE="registry.lumina.1t.ru/lumina-rpm-build:fedora44-arm64-d0728bc"
-readonly DEFAULT_DIGEST_IMAGE="registry.lumina.1t.ru/lumina-rpm-build@sha256:72a1e05e7a9b13a421e4ff8090c3fbaf1762148fa8073d9fface726826d32a97"
+readonly DEFAULT_SOURCE_IMAGE="registry.lumina.1t.ru/lumina-rpm-build:fedora44-arm64-4b5a29b"
+readonly DEFAULT_DIGEST_IMAGE="registry.lumina.1t.ru/lumina-rpm-build@sha256:2cb01a20e14f32b93dbae55536c8aeb830d9f4f948ae221e7199af34cf5dd08d"
 
 if [[ "${EUID}" -ne 0 ]]; then
     printf 'Usage: sudo %s WIREGUARD_CONFIG K3S_AGENT_TOKEN\n' "$0" >&2
