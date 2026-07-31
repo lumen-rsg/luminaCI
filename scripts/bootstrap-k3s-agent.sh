@@ -134,6 +134,7 @@ install -d -o root -g root -m 0755 /etc/rancher/k3s
 install -o root -g root -m 0600 "${temporary_directory}/config.yaml" "${target_config}"
 install -o root -g root -m 0644 \
     "${repository_root}/deploy/kubernetes/k3s-agent.service" "${target_service}"
+"${repository_root}/scripts/configure-k3s-worker-firewall.sh"
 systemctl daemon-reload
 systemctl enable --now k3s-agent.service
 

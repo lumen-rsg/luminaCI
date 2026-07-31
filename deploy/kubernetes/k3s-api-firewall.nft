@@ -12,6 +12,12 @@ table inet lumina_k3s_api {
         } accept
         tcp dport 6443 ip6 saddr ::1 accept
 
+        # K3s's remotedialer reaches the server's advertised node address even
+        # on a single control-plane node. That self-connection is routed over
+        # loopback; admit only that exact interface/address pair so pod logs and
+        # exec requests can traverse the authenticated agent tunnel.
+        iifname "lo" tcp dport 6443 ip saddr 146.120.224.52 accept
+
         # K3s binds the node address so its ClusterIP endpoint works, but the
         # API is never reachable directly from the public internet.
         tcp dport 6443 drop
