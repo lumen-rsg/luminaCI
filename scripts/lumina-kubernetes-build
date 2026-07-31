@@ -106,6 +106,8 @@ fi
 
 readonly sources_dir="${source_root}/SOURCES"
 mkdir -p "${sources_dir}"
+chown 1000:1654 "${sources_dir}"
+chmod 0750 "${sources_dir}"
 lookaside_count="$(jq '.lookasideSources | length' "${TRANSPORT_PATH}")"
 ((lookaside_count <= MAX_LOOKASIDE_SOURCES)) || fail "lookaside source count exceeds policy"
 lookaside_total=0
@@ -139,6 +141,7 @@ while IFS= read -r source_json; do
         || fail "lookaside source size does not match transport metadata"
     [[ "$(sha256sum "${temporary}" | awk '{print $1}')" == "${source_sha256}" ]] \
         || fail "lookaside source digest does not match transport metadata"
+    chown 1000:1654 "${temporary}"
     chmod 0640 "${temporary}"
     mv -- "${temporary}" "${destination}"
 done < <(jq -c '.lookasideSources[]' "${TRANSPORT_PATH}")
