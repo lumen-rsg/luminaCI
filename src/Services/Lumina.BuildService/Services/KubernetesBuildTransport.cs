@@ -33,6 +33,11 @@ internal interface IKubernetesObjectUrlSigner
         string objectName,
         int expirySeconds,
         CancellationToken cancellationToken);
+
+    Task<string> SignArtifactDownloadAsync(
+        string objectName,
+        int expirySeconds,
+        CancellationToken cancellationToken);
 }
 
 internal sealed class KubernetesObjectUrlSigner(
@@ -61,6 +66,16 @@ internal sealed class KubernetesObjectUrlSigner(
                 .WithObject(objectName)
                 .WithExpiry(expirySeconds));
     }
+
+    public Task<string> SignArtifactDownloadAsync(
+        string objectName,
+        int expirySeconds,
+        CancellationToken cancellationToken) =>
+        runnerObjectStore.Client.PresignedGetObjectAsync(
+            new PresignedGetObjectArgs()
+                .WithBucket(ArtifactStorageService.BucketName)
+                .WithObject(objectName)
+                .WithExpiry(expirySeconds));
 }
 
 internal sealed class KubernetesRunnerObjectStore : IDisposable

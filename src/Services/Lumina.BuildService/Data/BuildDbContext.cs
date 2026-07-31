@@ -26,6 +26,7 @@ public class BuildDbContext : DbContext
     public DbSet<BuildJob> BuildJobs => Set<BuildJob>();
     public DbSet<BuildArtifact> BuildArtifacts => Set<BuildArtifact>();
     public DbSet<BuildStepRun> BuildStepRuns => Set<BuildStepRun>();
+    public DbSet<NativePromotionGate> NativePromotionGates => Set<NativePromotionGate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -225,6 +226,37 @@ public class BuildDbContext : DbContext
                 .HasFilter("\"SourceStoragePath\" IS NOT NULL");
             entity.HasIndex(e => new { e.PromotionSetId, e.CandidateStagedAt })
                 .HasFilter("\"PromotionSetId\" IS NOT NULL");
+        });
+
+        modelBuilder.Entity<NativePromotionGate>(entity =>
+        {
+            entity.ToTable("native_promotion_gates", "build", table => table.HasCheckConstraint(
+                "CK_native_promotion_gates_state",
+                "(\"Status\" = 0 AND \"KubernetesNamespace\" IS NULL AND \"KubernetesJobName\" IS NULL AND \"KubernetesJobUid\" IS NULL AND \"KubernetesPodName\" IS NULL AND \"ResultSha256\" IS NULL AND \"FailureReason\" IS NULL AND \"StartedAt\" IS NULL AND \"CompletedAt\" IS NULL) OR " +
+                "(\"Status\" = 1 AND \"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL AND \"KubernetesJobUid\" IS NOT NULL AND \"ResultSha256\" IS NULL AND \"FailureReason\" IS NULL AND \"StartedAt\" IS NOT NULL AND \"CompletedAt\" IS NULL) OR " +
+                "(\"Status\" = 2 AND \"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL AND \"KubernetesJobUid\" IS NOT NULL AND \"ResultSha256\" IS NOT NULL AND \"FailureReason\" IS NULL AND \"StartedAt\" IS NOT NULL AND \"CompletedAt\" IS NOT NULL) OR " +
+                "(\"Status\" = 3 AND \"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL AND \"KubernetesJobUid\" IS NOT NULL AND \"ResultSha256\" IS NULL AND \"FailureReason\" IS NOT NULL AND \"StartedAt\" IS NOT NULL AND \"CompletedAt\" IS NOT NULL)"));
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.PromotionGroup).IsRequired().HasMaxLength(128);
+            entity.Property(e => e.TargetArchitecture).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.RunnerImageDigest).IsRequired().HasMaxLength(71);
+            entity.Property(e => e.CandidateManifestJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(e => e.CandidateManifestSha256).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.KubernetesNamespace).HasMaxLength(63);
+            entity.Property(e => e.KubernetesJobName).HasMaxLength(63);
+            entity.Property(e => e.KubernetesJobUid).HasMaxLength(128);
+            entity.Property(e => e.KubernetesPodName).HasMaxLength(253);
+            entity.Property(e => e.ResultSha256).HasMaxLength(64);
+            entity.Property(e => e.FailureReason).HasMaxLength(2048);
+            entity.Property(e => e.Logs).HasColumnType("text");
+            entity.HasIndex(e => new { e.Status, e.UpdatedAt });
+            entity.HasIndex(e => new { e.KubernetesNamespace, e.KubernetesJobName })
+                .IsUnique()
+                .HasFilter("\"KubernetesNamespace\" IS NOT NULL AND \"KubernetesJobName\" IS NOT NULL");
+            entity.HasOne(e => e.ProjectWebhookDelivery)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectWebhookDeliveryId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

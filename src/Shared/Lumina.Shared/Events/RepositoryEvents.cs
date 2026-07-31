@@ -31,6 +31,24 @@ public record PackageCandidateStaged(
     Guid PromotionSetId,
     DateTime StagedAt);
 
+public record PromotionGateStarted(
+    Guid PromotionSetId,
+    Guid RepositoryId,
+    string KubernetesJobName,
+    string KubernetesJobUid,
+    DateTime StartedAt);
+
+public record PromotionGateCompleted(
+    Guid PromotionSetId,
+    Guid RepositoryId,
+    string KubernetesJobName,
+    string KubernetesJobUid,
+    string RunnerImageDigest,
+    bool Succeeded,
+    string? ResultSha256,
+    string? FailureReason,
+    DateTime CompletedAt);
+
 public record PackagePublished(Guid ArtifactId, Guid RepositoryId, Guid PackageId, DateTime PublishedAt);
 
 public record RepositoryUpdated(Guid RepositoryId, string RepositoryName, DateTime UpdatedAt);

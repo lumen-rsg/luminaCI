@@ -52,6 +52,24 @@ public sealed class RepositoryPromotionPolicyTests
     }
 
     [Fact]
+    public void GateAcknowledgements_AreIdempotentButRejectChangedIdentityOrResult()
+    {
+        var set = CreateSet();
+        var package = Candidate(set.RepositoryId);
+        RepositoryPromotionPolicy.AttachCandidate(
+            set, package, $"sha256/{Digest}/{package.FileName}", Now);
+        RepositoryPromotionPolicy.BeginGate(set, "lumina-gate-123", "job-uid-1", Now);
+        RepositoryPromotionPolicy.BeginGate(set, "lumina-gate-123", "job-uid-1", Now.AddSeconds(1));
+        Assert.Throws<ConflictException>(() => RepositoryPromotionPolicy.BeginGate(
+            set, "lumina-gate-changed", "job-uid-2", Now));
+
+        RepositoryPromotionPolicy.RecordGateSuccess(set, Digest, Now.AddMinutes(1));
+        RepositoryPromotionPolicy.RecordGateSuccess(set, Digest, Now.AddMinutes(2));
+        Assert.Throws<ConflictException>(() => RepositoryPromotionPolicy.RecordGateSuccess(
+            set, new string('b', 64), Now.AddMinutes(2)));
+    }
+
+    [Fact]
     public void Candidate_RejectsWrongArchitectureAndObjectIdentity()
     {
         var set = CreateSet();

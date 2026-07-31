@@ -203,5 +203,10 @@ public sealed class KubernetesBuildTransportPolicyTests
             Assert.Equal(ExpirySeconds, expirySeconds);
             return Task.FromResult(UploadUrl);
         }
+
+        public Task<string> SignArtifactDownloadAsync(
+            string objectName,
+            int expirySeconds,
+            CancellationToken cancellationToken) => Task.FromResult(DownloadUrl);
     }
 }

@@ -97,14 +97,24 @@ public static partial class RepositoryPromotionPolicy
         string jobUid,
         DateTime now)
     {
-        RequireStatus(set, PromotionSetStatus.Candidate);
-        if (set.Packages.Count == 0)
-            throw new ValidationException("A promotion set cannot be tested without candidate packages.");
         if (!KubernetesNamePattern().IsMatch(jobName ?? string.Empty) ||
             string.IsNullOrWhiteSpace(jobUid) || jobUid.Length > 128)
         {
             throw new ValidationException("Native gate Job identity is invalid.");
         }
+        if (set.Status != PromotionSetStatus.Candidate)
+        {
+            if (set.Status is PromotionSetStatus.Testing or PromotionSetStatus.Passed or
+                    PromotionSetStatus.Failed or PromotionSetStatus.Promoted &&
+                string.Equals(set.GateJobName, jobName, StringComparison.Ordinal) &&
+                string.Equals(set.GateJobUid, jobUid, StringComparison.Ordinal))
+            {
+                return;
+            }
+            RequireStatus(set, PromotionSetStatus.Candidate);
+        }
+        if (set.Packages.Count == 0)
+            throw new ValidationException("A promotion set cannot be tested without candidate packages.");
 
         set.Status = PromotionSetStatus.Testing;
         set.GateJobName = jobName;
@@ -117,9 +127,15 @@ public static partial class RepositoryPromotionPolicy
         string resultSha256,
         DateTime now)
     {
+        var normalized = NormalizeSha256(resultSha256, "Gate result SHA-256");
+        if (set.Status is PromotionSetStatus.Passed or PromotionSetStatus.Promoted &&
+            string.Equals(set.GateResultSha256, normalized, StringComparison.Ordinal))
+        {
+            return;
+        }
         RequireStatus(set, PromotionSetStatus.Testing);
         set.Status = PromotionSetStatus.Passed;
-        set.GateResultSha256 = NormalizeSha256(resultSha256, "Gate result SHA-256");
+        set.GateResultSha256 = normalized;
         set.GateCompletedAt = now;
         set.UpdatedAt = now;
     }
@@ -129,10 +145,15 @@ public static partial class RepositoryPromotionPolicy
         string failureReason,
         DateTime now)
     {
-        RequireStatus(set, PromotionSetStatus.Testing);
         var reason = (failureReason ?? string.Empty).Trim();
         if (reason.Length is < 1 or > 2048)
             throw new ValidationException("Native gate failure reason is invalid.");
+        if (set.Status == PromotionSetStatus.Failed &&
+            string.Equals(set.FailureReason, reason, StringComparison.Ordinal))
+        {
+            return;
+        }
+        RequireStatus(set, PromotionSetStatus.Testing);
         set.Status = PromotionSetStatus.Failed;
         set.FailureReason = reason;
         set.GateCompletedAt = now;

@@ -65,6 +65,7 @@ try
     builder.Services.AddSingleton<IKubernetesReadinessProbe, KubernetesReadinessProbe>();
     builder.Services.AddSingleton<IKubernetesApiOperations, KubernetesApiOperations>();
     builder.Services.AddSingleton<IKubernetesBuildResourceClient, KubernetesBuildResourceClient>();
+    builder.Services.AddSingleton<INativePromotionGateResourceClient, NativePromotionGateResourceClient>();
     builder.Services.AddSingleton<IKubernetesArtifactObjectStore, KubernetesArtifactObjectStore>();
     builder.Services.AddSingleton(services =>
         KubernetesRunnerObjectStore.Create(services.GetRequiredService<IConfiguration>()));
@@ -93,6 +94,7 @@ try
     builder.Services.AddScoped<ProjectDispatchService>();
     builder.Services.AddScoped<IProjectBuildTrigger, ProjectBuildTrigger>();
     builder.Services.AddHostedService<ProjectDispatchHostedService>();
+    builder.Services.AddHostedService<NativePromotionGateHostedService>();
     builder.Services.AddScoped<PipelineRunCoordinator>();
     builder.Services.AddScoped<ArtifactStorageService>();
     builder.Services.AddHttpClient("ArtifactStorage", client =>

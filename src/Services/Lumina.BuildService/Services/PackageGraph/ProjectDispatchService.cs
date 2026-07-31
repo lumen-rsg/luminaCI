@@ -85,6 +85,9 @@ public sealed class ProjectDispatchService(
                 throw new ValidationException(
                     "Project delivery cannot mix direct publication with candidate promotion.");
 
+            if (candidateJobs.Count > 0)
+                await EnsureNativePromotionGatesAsync(delivery, candidateJobs, cancellationToken);
+
             delivery.Status = candidateJobs.Count > 0
                 ? ProjectWebhookStatus.PromotionPending
                 : ProjectWebhookStatus.Completed;
@@ -192,6 +195,51 @@ public sealed class ProjectDispatchService(
                    artifact.PromotionSetId == first.PromotionSetId &&
                    artifact.CandidatePackageId is not null &&
                    artifact.CandidateStagedAt is not null);
+    }
+
+    private async Task EnsureNativePromotionGatesAsync(
+        ProjectWebhookDelivery delivery,
+        IReadOnlyCollection<BuildJob> jobs,
+        CancellationToken cancellationToken)
+    {
+        var artifactGroups = jobs
+            .SelectMany(job => job.Artifacts.Select(artifact => (Job: job, Artifact: artifact)))
+            .GroupBy(item => item.Artifact.PromotionSetId!.Value)
+            .ToList();
+        var requestedIds = artifactGroups.Select(group => group.Key).ToList();
+        var existingIds = await db.NativePromotionGates
+            .Where(gate => requestedIds.Contains(gate.Id))
+            .Select(gate => gate.Id)
+            .ToListAsync(cancellationToken);
+
+        foreach (var group in artifactGroups.Where(group => !existingIds.Contains(group.Key)))
+        {
+            var repositoryIds = group.Select(item => item.Artifact.CandidateRepositoryId!.Value)
+                .Distinct().ToList();
+            var promotionGroups = group.Select(item => item.Job.PromotionGroup)
+                .Distinct(StringComparer.Ordinal).ToList();
+            var targetArchitectures = group.Select(item => item.Job.TargetArchitecture)
+                .Distinct(StringComparer.Ordinal).ToList();
+            var runnerDigests = group.Select(item => item.Job.RunnerImageDigest)
+                .Distinct(StringComparer.Ordinal).ToList();
+            if (repositoryIds.Count != 1 || promotionGroups is not [{ Length: > 0 } promotionGroup] ||
+                targetArchitectures is not [{ Length: > 0 } architecture] ||
+                runnerDigests is not [{ Length: > 0 } runnerDigest])
+            {
+                throw new ValidationException(
+                    $"Promotion set {group.Key} does not have one repository, group, architecture, and runner digest.");
+            }
+
+            db.NativePromotionGates.Add(NativePromotionGateManifestPolicy.Create(
+                delivery.Id,
+                group.Key,
+                repositoryIds[0],
+                promotionGroup,
+                architecture,
+                runnerDigest,
+                group,
+                DateTime.UtcNow));
+        }
     }
 
     private async Task FailAsync(

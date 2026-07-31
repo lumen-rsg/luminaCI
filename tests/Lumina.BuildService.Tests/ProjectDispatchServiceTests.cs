@@ -114,6 +114,9 @@ public sealed class ProjectDispatchServiceTests
         Assert.All(delivery.BuildJobs, job => Assert.Equal(BuildStatus.Building, job.Status));
         Assert.All(delivery.BuildJobs, job =>
             Assert.Equal(StepStatus.Running, job.StepRuns.Single().Status));
+        var gate = Assert.Single(db.NativePromotionGates);
+        Assert.Equal(PromotionSetIdentity.Create(delivery.Id, "jetson-r39.2"), gate.Id);
+        Assert.Equal(NativePromotionGateStatus.Pending, gate.Status);
     }
 
     [Fact]
@@ -277,13 +280,19 @@ public sealed class ProjectDispatchServiceTests
     {
         job.Status = BuildStatus.Building;
         job.PromotionGroup = promotionGroup;
+        job.RunnerImageDigest = $"sha256:{new string('a', 64)}";
         var setId = PromotionSetIdentity.Create(deliveryId, promotionGroup);
+        var hash = new string('b', 64);
+        var fileName = $"{job.ProjectPackageId}-1.0-1.aarch64.rpm";
         var artifact = new BuildArtifact
         {
             Id = Guid.NewGuid(),
             BuildJobId = job.Id,
-            FileName = $"{job.ProjectPackageId}.rpm",
+            FileName = fileName,
             FilePath = "/tmp/package.rpm",
+            FileSize = 42,
+            HashSha256 = hash,
+            StoragePath = $"sha256/{hash}/{fileName}",
             CandidateRepositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
             CandidatePackageId = Guid.NewGuid(),
             PromotionSetId = setId,

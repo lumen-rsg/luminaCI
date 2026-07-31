@@ -60,6 +60,8 @@ try
         x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
         x.AddConsumer<PackagePublishRequestedConsumer>();
         x.AddConsumer<PackageCandidateRequestedConsumer>();
+        x.AddConsumer<PromotionGateStartedConsumer>();
+        x.AddConsumer<PromotionGateCompletedConsumer>();
         x.AddEntityFrameworkOutbox<RepositoryDbContext>(outbox =>
         {
             outbox.UsePostgres();
@@ -84,6 +86,8 @@ try
                 endpoint.UseInMemoryOutbox(ctx);
                 endpoint.ConfigureConsumer<PackagePublishRequestedConsumer>(ctx);
                 endpoint.ConfigureConsumer<PackageCandidateRequestedConsumer>(ctx);
+                endpoint.ConfigureConsumer<PromotionGateStartedConsumer>(ctx);
+                endpoint.ConfigureConsumer<PromotionGateCompletedConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
