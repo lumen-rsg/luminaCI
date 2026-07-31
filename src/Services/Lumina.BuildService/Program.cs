@@ -5,6 +5,7 @@ using Lumina.BuildService.Services;
 using Lumina.BuildService.Services.PackageGraph;
 using Lumina.Shared.Events;
 using Lumina.Shared.Extensions;
+using Lumina.Shared.Models.Enums;
 using Lumina.Shared.Security;
 using Lumina.Web.Shared;
 using Lumina.Web.Shared.Health;
@@ -51,13 +52,16 @@ try
     builder.Services.AddSingleton<BuildExecutionCoordinator>();
     builder.Services.AddHostedService<BuildMonitorHostedService>();
 
-    // Services. DockerBuildService is registered both concretely (BuildsController
-    // depends on its LogSubscription / log-streaming surface) and as IBuildLauncher
-    // (PipelineEngine depends on the abstraction so it can be unit-tested without
-    // a Docker daemon). The same instance satisfies both — AddScoped<X>() then
-    // AddScoped<IX>(sp => sp.GetRequiredService<X>()) keeps it a single scoped object.
+    // Register every lifecycle backend lazily. Recovery resolves the immutable
+    // backend recorded on each job, while PipelineEngine uses only the globally
+    // selected backend for new work.
     builder.Services.AddScoped<DockerBuildService>();
-    builder.Services.AddScoped<IBuildLauncher>(sp => sp.GetRequiredService<DockerBuildService>());
+    builder.Services.AddSingleton(new BuildExecutorRegistration(
+        BuildExecutorBackend.Docker,
+        services => services.GetRequiredService<DockerBuildService>()));
+    builder.Services.AddScoped<IBuildExecutorResolver, BuildExecutorResolver>();
+    builder.Services.AddScoped<IBuildLauncher>(services =>
+        services.GetRequiredService<IBuildExecutorResolver>().Resolve(executorSelection.Backend));
     builder.Services.AddSingleton<IRpmArtifactValidator, RpmArtifactValidator>();
     builder.Services.AddScoped<ISigningKeyGate, SigningKeyGate>();
     builder.Services.AddScoped<PipelineEngine>();

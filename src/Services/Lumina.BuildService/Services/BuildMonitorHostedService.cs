@@ -6,7 +6,7 @@ namespace Lumina.BuildService.Services;
 
 /// <summary>
 /// Reclaims expired build leases after startup and resumes monitoring their
-/// Docker containers. The database claim makes adoption safe across replicas.
+/// recorded executor resources. The database claim makes adoption safe across replicas.
 /// </summary>
 public sealed class BuildMonitorHostedService(
     IServiceScopeFactory scopeFactory,
@@ -77,23 +77,31 @@ public sealed class BuildMonitorHostedService(
             await using var scope = scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
             var job = await db.BuildJobs.AsNoTracking().SingleAsync(item => item.Id == jobId, cancellationToken);
-            if (string.IsNullOrWhiteSpace(job.ContainerId))
-            {
-                var coordinator = scope.ServiceProvider.GetRequiredService<PipelineRunCoordinator>();
-                await coordinator.FailStepAsync(
-                    jobId,
-                    StepType.Build,
-                    "Build monitoring was interrupted before a container was recorded.",
-                    cancellationToken);
-                return;
-            }
-
-            var builds = scope.ServiceProvider.GetRequiredService<DockerBuildService>();
+            var executors = scope.ServiceProvider.GetRequiredService<IBuildExecutorResolver>();
+            var executor = executors.Resolve(job.ExecutionBackend);
             await execution.AcquireAsync(jobId, recovered: true, cancellationToken);
-            await builds.MonitorBuildAsync(job, job.ContainerId, cancellationToken);
+            await executor.MonitorBuildAsync(job, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (BuildExecutorIdentityException ex)
+        {
+            logger.LogError(ex, "Cannot recover executor identity for build {BuildJobId}", jobId);
+            try
+            {
+                await using var failureScope = scopeFactory.CreateAsyncScope();
+                var coordinator = failureScope.ServiceProvider.GetRequiredService<PipelineRunCoordinator>();
+                await coordinator.FailStepAsync(
+                    jobId,
+                    StepType.Build,
+                    ex.Message,
+                    cancellationToken);
+            }
+            finally
+            {
+                execution.Release(jobId);
+            }
         }
         catch (Exception ex)
         {

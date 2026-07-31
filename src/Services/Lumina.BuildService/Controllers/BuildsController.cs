@@ -14,12 +14,18 @@ namespace Lumina.BuildService.Controllers;
 public class BuildsController : ControllerBase
 {
     private readonly Services.PipelineEngine _engine;
+    private readonly Services.IBuildExecutorResolver _executors;
     private readonly Services.DockerBuildService _dockerBuild;
     private readonly ILogger<BuildsController> _logger;
 
-    public BuildsController(Services.PipelineEngine engine, Services.DockerBuildService dockerBuild, ILogger<BuildsController> logger)
+    public BuildsController(
+        Services.PipelineEngine engine,
+        Services.IBuildExecutorResolver executors,
+        Services.DockerBuildService dockerBuild,
+        ILogger<BuildsController> logger)
     {
         _engine = engine;
+        _executors = executors;
         _dockerBuild = dockerBuild;
         _logger = logger;
     }
@@ -76,7 +82,11 @@ public class BuildsController : ControllerBase
     [HttpPost("{id:guid}/cancel")]
     public async Task<ActionResult<ApiResponse<object>>> Cancel(Guid id)
     {
-        var result = await _dockerBuild.CancelBuildAsync(id);
+        var job = await _engine.GetBuildJobAsync(id);
+        if (job == null)
+            return NotFound(new ApiResponse<object>(false, null, "Build not found", null));
+        var result = await _executors.Resolve(job.ExecutionBackend)
+            .CancelBuildAsync(id, HttpContext.RequestAborted);
         if (!result) return BadRequest(new ApiResponse<object>(false, null, "Failed to cancel build", null));
         return Ok(new ApiResponse<object>(true, null, null, "Build cancelled"));
     }

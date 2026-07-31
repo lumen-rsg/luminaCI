@@ -15,7 +15,7 @@ namespace Lumina.BuildService.Services;
 /// Logs are streamed from Docker containers as they arrive and made available
 /// to SSE subscribers via Channel-based pub/sub.
 /// </summary>
-public class DockerBuildService : IBuildLauncher
+public class DockerBuildService : IBuildExecutor
 {
     public BuildExecutorBackend Backend => BuildExecutorBackend.Docker;
 
@@ -967,6 +967,17 @@ public class DockerBuildService : IBuildLauncher
         }
     }
 
+    Task IBuildExecutor.MonitorBuildAsync(
+        BuildJob job,
+        CancellationToken cancellationToken)
+    {
+        if (job.ExecutionBackend != BuildExecutorBackend.Docker)
+            throw new BuildExecutorIdentityException("Docker executor cannot monitor a non-Docker build.");
+        if (string.IsNullOrWhiteSpace(job.ContainerId))
+            throw new BuildExecutorIdentityException("Docker build has no recorded container identity.");
+        return MonitorBuildAsync(job, job.ContainerId, cancellationToken);
+    }
+
     /// <summary>
     /// Scan the artifacts directory for built .rpm files and create BuildArtifact records.
     /// </summary>
@@ -1180,10 +1191,15 @@ public class DockerBuildService : IBuildLauncher
         }
     }
 
-    public async Task<bool> CancelBuildAsync(Guid jobId)
+    public async Task<bool> CancelBuildAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
     {
-        var job = await _db.BuildJobs.FindAsync(jobId);
+        var job = await _db.BuildJobs
+            .Include(item => item.StepRuns)
+            .SingleOrDefaultAsync(item => item.Id == jobId, cancellationToken);
         if (job == null) return false;
+        if (job.ExecutionBackend != BuildExecutorBackend.Docker) return false;
         if (job.Status != BuildStatus.Queued && job.Status != BuildStatus.Building) return false;
 
         try
@@ -1193,7 +1209,10 @@ public class DockerBuildService : IBuildLauncher
             {
                 try
                 {
-                    await _docker.Containers.StopContainerAsync(job.ContainerId, new ContainerStopParameters { WaitBeforeKillSeconds = 5 });
+                    await _docker.Containers.StopContainerAsync(
+                        job.ContainerId,
+                        new ContainerStopParameters { WaitBeforeKillSeconds = 5 },
+                        cancellationToken);
                     _logger.LogInformation("Stopped container {ContainerId} for cancelled build {BuildId}", job.ContainerId, jobId);
                 }
                 catch (Exception ex)
@@ -1204,7 +1223,10 @@ public class DockerBuildService : IBuildLauncher
                 // Remove the container
                 try
                 {
-                    await _docker.Containers.RemoveContainerAsync(job.ContainerId, new ContainerRemoveParameters { Force = true });
+                    await _docker.Containers.RemoveContainerAsync(
+                        job.ContainerId,
+                        new ContainerRemoveParameters { Force = true },
+                        cancellationToken);
                 }
                 catch { /* best effort */ }
             }
@@ -1220,7 +1242,7 @@ public class DockerBuildService : IBuildLauncher
                 step.Error = "Build cancelled.";
             }
             _db.BuildJobs.Update(job);
-            await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync(cancellationToken);
             _logger.LogInformation("Build {BuildId} cancelled (was {PreviousStatus})", jobId, previousStatus);
             return true;
         }
