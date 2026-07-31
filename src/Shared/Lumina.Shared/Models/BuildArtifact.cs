@@ -14,6 +14,10 @@ public class BuildArtifact
     public string? HashMd5 { get; set; }
     public string? SigningKeyFingerprint { get; set; }
     public DateTime? SignedAt { get; set; }
+    public Guid? CandidateRepositoryId { get; set; }
+    public Guid? CandidatePackageId { get; set; }
+    public Guid? PromotionSetId { get; set; }
+    public DateTime? CandidateStagedAt { get; set; }
     public Guid? PublishedRepositoryId { get; set; }
     public DateTime? PublishedAt { get; set; }
     public ScanStatus CveScanStatus { get; set; } = ScanStatus.Pending;

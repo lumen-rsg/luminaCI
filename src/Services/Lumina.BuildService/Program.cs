@@ -124,6 +124,7 @@ try
         x.AddConsumer<PackageSignedConsumer>();
         x.AddConsumer<PackageSigningFaultConsumer>();
         x.AddConsumer<PackagePublishedConsumer>();
+        x.AddConsumer<PackageCandidateStagedConsumer>();
         x.AddConsumer<PackagePublishFaultConsumer>();
         x.AddConsumer<GetArtifactSignatureConsumer>();
         x.AddConsumer<GetArtifactLocationConsumer>();
@@ -150,6 +151,7 @@ try
                 e.ConfigureConsumer<PackageSignedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSigningFaultConsumer>(ctx);
                 e.ConfigureConsumer<PackagePublishedConsumer>(ctx);
+                e.ConfigureConsumer<PackageCandidateStagedConsumer>(ctx);
                 e.ConfigureConsumer<PackagePublishFaultConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactSignatureConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactLocationConsumer>(ctx);

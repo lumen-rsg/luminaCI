@@ -160,6 +160,80 @@ public sealed class PipelineRunCoordinator
         }
     }
 
+    public async Task ReportCandidateStagedAsync(
+        PackageCandidateStaged result,
+        CancellationToken cancellationToken = default)
+    {
+        var job = await LoadJobByArtifactAsync(result.ArtifactId, cancellationToken);
+        var publishRun = job.StepRuns.SingleOrDefault(step => step.Type == StepType.Publish);
+        if (publishRun is null || publishRun.Status != StepStatus.Running)
+        {
+            _logger.LogWarning(
+                "Ignoring candidate result for artifact {ArtifactId}: build {BuildJobId} has no running Publish step",
+                result.ArtifactId, job.Id);
+            return;
+        }
+
+        var repositoryId = Guid.Parse(publishRun.Configuration["repositoryId"]);
+        var promotionGroup = PromotionSetIdentity.NormalizeGroup(
+            job.PromotionGroup ?? job.ProjectPackageId ?? $"build-{job.Id:N}");
+        var expectedSetId = PromotionSetIdentity.Create(
+            job.ProjectWebhookDeliveryId ?? job.Id,
+            promotionGroup);
+        if (result.RepositoryId != repositoryId ||
+            result.PromotionSetId != expectedSetId ||
+            result.CandidatePackageId == Guid.Empty ||
+            result.StagedAt.Kind != DateTimeKind.Utc)
+        {
+            await FailStepAsync(
+                job,
+                publishRun,
+                "Candidate acknowledgement does not match the immutable publication request.",
+                cancellationToken);
+            return;
+        }
+
+        var artifact = job.Artifacts.Single(item => item.Id == result.ArtifactId);
+        if (artifact.CandidateStagedAt is not null)
+        {
+            if (artifact.CandidateRepositoryId == result.RepositoryId &&
+                artifact.CandidatePackageId == result.CandidatePackageId &&
+                artifact.PromotionSetId == result.PromotionSetId &&
+                artifact.CandidateStagedAt == result.StagedAt)
+            {
+                return;
+            }
+
+            await FailStepAsync(
+                job,
+                publishRun,
+                "Candidate acknowledgement changed after it was recorded.",
+                cancellationToken);
+            return;
+        }
+
+        artifact.CandidateRepositoryId = result.RepositoryId;
+        artifact.CandidatePackageId = result.CandidatePackageId;
+        artifact.PromotionSetId = result.PromotionSetId;
+        artifact.CandidateStagedAt = result.StagedAt;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        var allStaged = await _db.BuildArtifacts
+            .Where(item => item.BuildJobId == job.Id)
+            .AllAsync(
+                item => item.CandidateRepositoryId == result.RepositoryId &&
+                        item.PromotionSetId == result.PromotionSetId &&
+                        item.CandidatePackageId != null &&
+                        item.CandidateStagedAt != null,
+                cancellationToken);
+        if (allStaged)
+        {
+            _logger.LogInformation(
+                "Build {BuildJobId} staged every artifact in promotion set {PromotionSetId}",
+                job.Id, result.PromotionSetId);
+        }
+    }
+
     public async Task FailStepAsync(
         Guid buildJobId,
         StepType type,

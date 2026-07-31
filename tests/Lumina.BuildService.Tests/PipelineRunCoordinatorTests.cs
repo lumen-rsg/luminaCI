@@ -170,6 +170,67 @@ public class PipelineRunCoordinatorTests
         Assert.False(await harness.Published.Any<PackageSigningRequested>());
     }
 
+    [Fact]
+    public async Task Candidate_acknowledgement_is_durable_without_completing_publish()
+    {
+        await using var provider = BuildProvider(
+            nameof(Candidate_acknowledgement_is_durable_without_completing_publish),
+            Guid.NewGuid());
+        var db = provider.GetRequiredService<BuildDbContext>();
+        var repositoryId = Guid.NewGuid();
+        var job = CreateJob(
+            Step(StepType.Build, 1, StepStatus.Success),
+            Step(StepType.Publish, 2, StepStatus.Running,
+                new() { ["repositoryId"] = repositoryId.ToString() }));
+        db.BuildJobs.Add(job);
+        await db.SaveChangesAsync();
+        var group = $"build-{job.Id:N}";
+        var setId = PromotionSetIdentity.Create(job.Id, group);
+        var stagedAt = DateTime.UtcNow;
+        var result = new PackageCandidateStaged(
+            job.Artifacts[0].Id, repositoryId, Guid.NewGuid(), setId, stagedAt);
+
+        var coordinator = provider.GetRequiredService<PipelineRunCoordinator>();
+        await coordinator.ReportCandidateStagedAsync(result);
+        await coordinator.ReportCandidateStagedAsync(result);
+
+        var artifact = job.Artifacts[0];
+        Assert.Equal(repositoryId, artifact.CandidateRepositoryId);
+        Assert.Equal(result.CandidatePackageId, artifact.CandidatePackageId);
+        Assert.Equal(setId, artifact.PromotionSetId);
+        Assert.Equal(stagedAt, artifact.CandidateStagedAt);
+        Assert.Equal(StepStatus.Running, job.StepRuns[1].Status);
+        Assert.Equal(BuildStatus.Building, job.Status);
+    }
+
+    [Fact]
+    public async Task Candidate_acknowledgement_with_changed_identity_fails_publish()
+    {
+        await using var provider = BuildProvider(
+            nameof(Candidate_acknowledgement_with_changed_identity_fails_publish),
+            Guid.NewGuid());
+        var db = provider.GetRequiredService<BuildDbContext>();
+        var repositoryId = Guid.NewGuid();
+        var job = CreateJob(
+            Step(StepType.Build, 1, StepStatus.Success),
+            Step(StepType.Publish, 2, StepStatus.Running,
+                new() { ["repositoryId"] = repositoryId.ToString() }));
+        db.BuildJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var coordinator = provider.GetRequiredService<PipelineRunCoordinator>();
+        await coordinator.ReportCandidateStagedAsync(new PackageCandidateStaged(
+            job.Artifacts[0].Id,
+            repositoryId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            DateTime.UtcNow));
+
+        Assert.Equal(StepStatus.Failed, job.StepRuns[1].Status);
+        Assert.Equal(BuildStatus.Failed, job.Status);
+        Assert.Contains("immutable publication request", job.StepRuns[1].Error);
+    }
+
     private static ServiceProvider BuildProvider(string databaseName, Guid keyId)
     {
         var options = new DbContextOptionsBuilder<BuildDbContext>()

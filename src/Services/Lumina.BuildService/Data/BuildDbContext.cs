@@ -211,7 +211,10 @@ public class BuildDbContext : DbContext
 
         modelBuilder.Entity<BuildArtifact>(entity =>
         {
-            entity.ToTable("build_artifacts", "build");
+            entity.ToTable("build_artifacts", "build", table => table.HasCheckConstraint(
+                "CK_build_artifacts_candidate_identity",
+                "(\"CandidateRepositoryId\" IS NULL AND \"CandidatePackageId\" IS NULL AND \"PromotionSetId\" IS NULL AND \"CandidateStagedAt\" IS NULL) OR " +
+                "(\"CandidateRepositoryId\" IS NOT NULL AND \"CandidatePackageId\" IS NOT NULL AND \"PromotionSetId\" IS NOT NULL AND \"CandidateStagedAt\" IS NOT NULL)"));
             entity.HasKey(e => e.Id);
             entity.Property(e => e.FileName).IsRequired().HasMaxLength(512);
             entity.Property(e => e.SourceStoragePath).HasMaxLength(1024);
@@ -220,6 +223,8 @@ public class BuildDbContext : DbContext
             entity.HasIndex(e => new { e.BuildJobId, e.FileName })
                 .IsUnique()
                 .HasFilter("\"SourceStoragePath\" IS NOT NULL");
+            entity.HasIndex(e => new { e.PromotionSetId, e.CandidateStagedAt })
+                .HasFilter("\"PromotionSetId\" IS NOT NULL");
         });
     }
 }
