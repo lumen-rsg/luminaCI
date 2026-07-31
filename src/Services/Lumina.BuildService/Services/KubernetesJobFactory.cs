@@ -14,6 +14,8 @@ public static class KubernetesJobFactory
 {
     public const string ContainerName = "fedora-builder";
     public const string RunnerServiceAccountName = "lumina-build-runner";
+    public const string TransportVolumeName = "transport";
+    public const string TransportMountPath = "/run/lumina-transport";
     public const string WorkerLabel = "lumina.1t.ru/build-worker";
     public const string WorkerTaint = "lumina.1t.ru/build-worker";
 
@@ -71,6 +73,7 @@ public static class KubernetesJobFactory
             Metadata = new V1ObjectMeta { Name = name, Labels = labels },
             Spec = new V1JobSpec
             {
+                Suspend = true,
                 BackoffLimit = 0,
                 ActiveDeadlineSeconds = limits.ActiveDeadlineSeconds,
                 TtlSecondsAfterFinished = limits.TtlSecondsAfterFinished,
@@ -127,6 +130,12 @@ public static class KubernetesJobFactory
                                 [
                                     new V1VolumeMount
                                     {
+                                        MountPath = TransportMountPath,
+                                        Name = TransportVolumeName,
+                                        ReadOnlyProperty = true
+                                    },
+                                    new V1VolumeMount
+                                    {
                                         MountPath = "/workspace",
                                         Name = "workspace"
                                     }
@@ -135,6 +144,16 @@ public static class KubernetesJobFactory
                         ],
                         Volumes =
                         [
+                            new V1Volume
+                            {
+                                Name = TransportVolumeName,
+                                Secret = new V1SecretVolumeSource
+                                {
+                                    SecretName = KubernetesBuildTransportPolicy.SecretName(name),
+                                    Optional = false,
+                                    DefaultMode = 0x120
+                                }
+                            },
                             new V1Volume
                             {
                                 Name = "workspace",

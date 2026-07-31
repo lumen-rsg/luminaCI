@@ -98,7 +98,7 @@ public class ArtifactStorageService
         }
     }
 
-    private async Task EnsureBucketAsync(CancellationToken cancellationToken)
+    public async Task EnsureBucketAsync(CancellationToken cancellationToken = default)
     {
         // MinIO .NET 6 can incorrectly report a non-existent bucket as present
         // once another bucket exists on the endpoint. Creation is idempotent:

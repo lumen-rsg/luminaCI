@@ -65,8 +65,8 @@ kubectl apply --server-side --field-manager=lumina-bootstrap \
 The manifest creates a Pod Security `restricted` namespace, a namespace-wide
 default-deny NetworkPolicy, bounded quota/default limits, and two identities:
 
-- `lumina-build-controller` has only the Job, Pod-log, and per-Job
-  NetworkPolicy operations used by BuildService.
+- `lumina-build-controller` has only the Job, Pod-log, per-Job NetworkPolicy,
+  and short-lived transport-Secret operations used by BuildService.
 - `lumina-build-runner` has no RBAC grants and never receives an automatically
   mounted service-account token.
 

@@ -73,6 +73,7 @@ public sealed class KubernetesJobFactoryTests
         var container = Assert.Single(pod.Containers);
 
         Assert.Equal("batch/v1", manifest.ApiVersion);
+        Assert.True(manifest.Spec.Suspend);
         Assert.Equal(0, manifest.Spec.BackoffLimit);
         Assert.Equal("Never", pod.RestartPolicy);
         Assert.False(pod.AutomountServiceAccountToken);
@@ -94,6 +95,16 @@ public sealed class KubernetesJobFactoryTests
         Assert.NotNull(container.Resources.Requests["ephemeral-storage"]);
         Assert.NotNull(container.Resources.Limits["ephemeral-storage"]);
         Assert.All(pod.Volumes, volume => Assert.Null(volume.HostPath));
+        var transportVolume = Assert.Single(pod.Volumes, volume =>
+            volume.Name == KubernetesJobFactory.TransportVolumeName);
+        Assert.Equal(
+            KubernetesBuildTransportPolicy.SecretName(manifest.Metadata.Name),
+            transportVolume.Secret.SecretName);
+        Assert.False(transportVolume.Secret.Optional);
+        var transportMount = Assert.Single(container.VolumeMounts, mount =>
+            mount.Name == KubernetesJobFactory.TransportVolumeName);
+        Assert.True(transportMount.ReadOnlyProperty);
+        Assert.Equal(KubernetesJobFactory.TransportMountPath, transportMount.MountPath);
         Assert.DoesNotContain(container.Env, variable =>
             variable.Name.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) ||
             variable.Name.Contains("SECRET", StringComparison.OrdinalIgnoreCase) ||

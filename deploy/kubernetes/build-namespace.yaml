@@ -33,7 +33,10 @@ metadata:
 rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    verbs: ["create", "get", "list", "delete"]
+    verbs: ["create", "get", "list", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "delete"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["create", "get", "update", "delete"]
@@ -77,6 +80,7 @@ metadata:
 spec:
   hard:
     count/jobs.batch: "16"
+    count/secrets: "16"
     pods: "20"
     requests.cpu: "8"
     requests.memory: 16Gi
