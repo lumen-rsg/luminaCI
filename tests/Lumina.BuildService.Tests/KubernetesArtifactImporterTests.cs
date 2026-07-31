@@ -1,3 +1,4 @@
+using System.Formats.Tar;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Lumina.BuildService.Data;
@@ -41,6 +42,8 @@ public sealed class KubernetesArtifactImporterTests
             Assert.Equal("kernel-0:1.0-1.aarch64", artifact.RpmNevra);
             Assert.Equal(bytes, await File.ReadAllBytesAsync(artifact.FilePath));
             Assert.Equal(1, objects.DownloadCount);
+            Assert.Equal(1, objects.ArtifactUploadCount);
+            Assert.Equal(1, objects.ManifestUploadCount);
             Assert.NotNull(persisted.KubernetesArtifactsImportedAt);
             Assert.Equal(64, persisted.KubernetesArtifactManifestSha256?.Length);
         }
@@ -160,7 +163,37 @@ public sealed class KubernetesArtifactImporterTests
                     .ImportAsync(job.Id, CancellationToken.None));
 
             Assert.Contains("JSON is invalid", exception.Message, StringComparison.Ordinal);
-            Assert.Equal(0, objects.DownloadCount);
+            Assert.Equal(1, objects.DownloadCount);
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task ImportAsync_RejectsBundleThatDoesNotExactlyMatchManifest()
+    {
+        var root = TemporaryRoot();
+        try
+        {
+            await using var db = Context();
+            var job = Job();
+            db.BuildJobs.Add(job);
+            await db.SaveChangesAsync();
+            var objects = Store(
+                job,
+                "kernel-1.0-1.aarch64.rpm",
+                new byte[] { 0xed, 0xab, 0xee, 0xdb, 1 });
+            objects.BundleFileName = "unexpected-1.0-1.aarch64.rpm";
+
+            var exception = await Assert.ThrowsAsync<ValidationException>(() =>
+                Importer(db, objects, root, "aarch64")
+                    .ImportAsync(job.Id, CancellationToken.None));
+
+            Assert.Contains("exactly match", exception.Message, StringComparison.Ordinal);
+            Assert.Empty(db.BuildArtifacts);
+            Assert.Equal(0, objects.ArtifactUploadCount);
         }
         finally
         {
@@ -197,6 +230,7 @@ public sealed class KubernetesArtifactImporterTests
         return new FakeObjectStore
         {
             Entry = entry,
+            BundleFileName = fileName,
             ArtifactBytes = bytes,
             ManifestBytes = JsonSerializer.SerializeToUtf8Bytes(Manifest(job, entry))
         };
@@ -255,7 +289,10 @@ public sealed class KubernetesArtifactImporterTests
         public required byte[] ManifestBytes { get; set; }
         public required byte[] ArtifactBytes { get; set; }
         public required KubernetesArtifactManifestEntry Entry { get; init; }
+        public required string BundleFileName { get; set; }
         public int DownloadCount { get; private set; }
+        public int ArtifactUploadCount { get; private set; }
+        public int ManifestUploadCount { get; private set; }
 
         public Task<byte[]> ReadManifestAsync(
             string objectName,
@@ -267,15 +304,57 @@ public sealed class KubernetesArtifactImporterTests
             return Task.FromResult(ManifestBytes);
         }
 
-        public async Task DownloadArtifactAsync(
+        public async Task DownloadBundleAsync(
             string objectName,
             string destinationPath,
+            long maximumBytes,
+            CancellationToken cancellationToken)
+        {
+            Assert.Contains("/bundle.tar", objectName, StringComparison.Ordinal);
+            DownloadCount++;
+            await using var stream = new FileStream(
+                destinationPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None);
+            using var writer = new TarWriter(stream, leaveOpen: true);
+            writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, "manifest.json")
+            {
+                DataStream = new MemoryStream(ManifestBytes)
+            });
+            writer.WriteEntry(new PaxTarEntry(
+                TarEntryType.RegularFile,
+                $"artifacts/{BundleFileName}")
+            {
+                DataStream = new MemoryStream(ArtifactBytes)
+            });
+            await stream.FlushAsync(cancellationToken);
+            Assert.True(stream.Length <= maximumBytes);
+        }
+
+        public async Task UploadVerifiedArtifactAsync(
+            string objectName,
+            string sourcePath,
             long expectedBytes,
+            string expectedSha256,
             CancellationToken cancellationToken)
         {
             Assert.Equal(Entry.ObjectName, objectName);
-            DownloadCount++;
-            await File.WriteAllBytesAsync(destinationPath, ArtifactBytes, cancellationToken);
+            Assert.Equal(Entry.Size, expectedBytes);
+            Assert.Equal(Entry.Sha256, expectedSha256);
+            Assert.Equal(ArtifactBytes, await File.ReadAllBytesAsync(sourcePath, cancellationToken));
+            ArtifactUploadCount++;
+        }
+
+        public Task UploadManifestAsync(
+            string objectName,
+            byte[] manifestBytes,
+            CancellationToken cancellationToken)
+        {
+            Assert.EndsWith("/manifest.json", objectName, StringComparison.Ordinal);
+            ManifestBytes = manifestBytes;
+            ManifestUploadCount++;
+            return Task.CompletedTask;
         }
     }
 

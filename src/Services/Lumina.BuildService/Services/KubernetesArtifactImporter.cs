@@ -22,7 +22,10 @@ internal interface IKubernetesArtifactImporter
 /// </summary>
 internal sealed class KubernetesArtifactImporter : IKubernetesArtifactImporter
 {
-    private const int MaximumManifestBytes = 1024 * 1024;
+    private const long MaximumBundleBytes =
+        KubernetesArtifactManifestPolicy.MaximumTotalBytes +
+        KubernetesArtifactBundleReader.MaximumManifestBytes +
+        (2L * 1024 * 1024);
     private static readonly JsonSerializerOptions ManifestJson = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = false,
@@ -62,18 +65,14 @@ internal sealed class KubernetesArtifactImporter : IKubernetesArtifactImporter
             .SingleAsync(item => item.Id == buildJobId, cancellationToken);
         EnsureImportable(job);
 
-        var manifestObject = KubernetesArtifactManifestPolicy.ManifestObjectName(
-            job.Id,
-            job.KubernetesJobUid!);
-        var manifestBytes = await _objects.ReadManifestAsync(
-            manifestObject,
-            MaximumManifestBytes,
-            cancellationToken);
-        var manifest = DeserializeManifest(manifestBytes);
-        var validated = KubernetesArtifactManifestPolicy.Validate(manifest, job);
-
         if (job.KubernetesArtifactsImportedAt != null)
         {
+            var recordedManifestBytes = await _objects.ReadManifestAsync(
+                KubernetesArtifactManifestPolicy.ManifestObjectName(job.Id, job.KubernetesJobUid!),
+                KubernetesArtifactBundleReader.MaximumManifestBytes,
+                cancellationToken);
+            var recordedManifest = DeserializeManifest(recordedManifestBytes);
+            var validated = KubernetesArtifactManifestPolicy.Validate(recordedManifest, job);
             ValidateRecordedImport(job, validated);
             return job.Artifacts.Count;
         }
@@ -87,6 +86,30 @@ internal sealed class KubernetesArtifactImporter : IKubernetesArtifactImporter
         Directory.CreateDirectory(temporaryDirectory);
         try
         {
+            var bundlePath = Path.Combine(temporaryDirectory, "bundle.tar");
+            await _objects.DownloadBundleAsync(
+                KubernetesBuildTransportPolicy.BundleObjectName(job.Id, job.KubernetesJobUid!),
+                bundlePath,
+                MaximumBundleBytes,
+                cancellationToken);
+            KubernetesArtifactBundle bundle;
+            await using (var stream = new FileStream(
+                bundlePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                bundle = await KubernetesArtifactBundleReader.ExtractAsync(
+                    stream,
+                    Path.Combine(temporaryDirectory, "artifacts"),
+                    cancellationToken);
+            }
+            var manifest = DeserializeManifest(bundle.ManifestBytes);
+            var validated = KubernetesArtifactManifestPolicy.Validate(manifest, job);
+            ValidateBundleContents(bundle, validated);
+
             var imported = new List<BuildArtifact>(validated.Artifacts.Count);
             foreach (var entry in validated.Artifacts)
             {
@@ -94,8 +117,14 @@ internal sealed class KubernetesArtifactImporter : IKubernetesArtifactImporter
                 var verified = await MaterializeAndVerifyAsync(
                     job,
                     entry,
-                    temporaryDirectory,
+                    bundle.ArtifactPaths[entry.FileName],
                     finalPath,
+                    cancellationToken);
+                await _objects.UploadVerifiedArtifactAsync(
+                    entry.ObjectName,
+                    finalPath,
+                    verified.Size,
+                    verified.Sha256,
                     cancellationToken);
                 imported.Add(new BuildArtifact
                 {
@@ -113,6 +142,10 @@ internal sealed class KubernetesArtifactImporter : IKubernetesArtifactImporter
                     CreatedAt = DateTime.UtcNow
                 });
             }
+            await _objects.UploadManifestAsync(
+                KubernetesArtifactManifestPolicy.ManifestObjectName(job.Id, job.KubernetesJobUid!),
+                bundle.ManifestBytes,
+                cancellationToken);
 
             _db.BuildArtifacts.AddRange(imported);
             job.KubernetesArtifactManifestSha256 = validated.ManifestSha256;
@@ -134,16 +167,10 @@ internal sealed class KubernetesArtifactImporter : IKubernetesArtifactImporter
     private async Task<VerifiedArtifact> MaterializeAndVerifyAsync(
         BuildJob job,
         KubernetesArtifactManifestEntry entry,
-        string temporaryDirectory,
+        string temporaryPath,
         string finalPath,
         CancellationToken cancellationToken)
     {
-        var temporaryPath = Path.Combine(temporaryDirectory, entry.FileName);
-        await _objects.DownloadArtifactAsync(
-            entry.ObjectName,
-            temporaryPath,
-            entry.Size,
-            cancellationToken);
         var verified = await VerifyFileAsync(job, entry, temporaryPath, cancellationToken);
         if (File.Exists(finalPath))
         {
@@ -160,6 +187,18 @@ internal sealed class KubernetesArtifactImporter : IKubernetesArtifactImporter
             // A previous monitor may have completed the same immutable download
             // before losing its lease. Accept it only after full revalidation.
             return await VerifyFileAsync(job, entry, finalPath, cancellationToken);
+        }
+    }
+
+    private static void ValidateBundleContents(
+        KubernetesArtifactBundle bundle,
+        ValidatedKubernetesArtifactManifest manifest)
+    {
+        if (bundle.ArtifactPaths.Count != manifest.Artifacts.Count ||
+            manifest.Artifacts.Any(entry => !bundle.ArtifactPaths.ContainsKey(entry.FileName)))
+        {
+            throw new ValidationException(
+                "Kubernetes artifact bundle does not exactly match its manifest.");
         }
     }
 

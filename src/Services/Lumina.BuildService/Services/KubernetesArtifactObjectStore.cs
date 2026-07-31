@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Security.Cryptography;
 using Lumina.Shared.Errors;
 using Minio;
 using Minio.DataModel.Args;
@@ -12,16 +13,29 @@ internal interface IKubernetesArtifactObjectStore
         int maximumBytes,
         CancellationToken cancellationToken);
 
-    Task DownloadArtifactAsync(
+    Task DownloadBundleAsync(
         string objectName,
         string destinationPath,
+        long maximumBytes,
+        CancellationToken cancellationToken);
+
+    Task UploadVerifiedArtifactAsync(
+        string objectName,
+        string sourcePath,
         long expectedBytes,
+        string expectedSha256,
+        CancellationToken cancellationToken);
+
+    Task UploadManifestAsync(
+        string objectName,
+        byte[] manifestBytes,
         CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// Reads runner-staged objects through short-lived MinIO URLs. Callers supply
-/// only object names already derived and validated by server-side policy.
+/// Moves runner-staged objects across the trusted BuildService boundary through
+/// short-lived MinIO URLs. Callers supply only object names already derived and
+/// validated by server-side policy.
 /// </summary>
 internal sealed class KubernetesArtifactObjectStore : IKubernetesArtifactObjectStore
 {
@@ -54,20 +68,20 @@ internal sealed class KubernetesArtifactObjectStore : IKubernetesArtifactObjectS
         return destination.ToArray();
     }
 
-    public async Task DownloadArtifactAsync(
+    public async Task DownloadBundleAsync(
         string objectName,
         string destinationPath,
-        long expectedBytes,
+        long maximumBytes,
         CancellationToken cancellationToken)
     {
-        if (expectedBytes <= 0)
-            throw new ValidationException("Kubernetes artifact expected size is invalid.");
+        if (maximumBytes <= 0)
+            throw new ValidationException("Kubernetes artifact bundle size limit is invalid.");
 
         using var response = await GetAsync(objectName, cancellationToken);
         if (response.Content.Headers.ContentLength is long contentLength &&
-            contentLength != expectedBytes)
+            contentLength > maximumBytes)
         {
-            throw new ValidationException("Kubernetes artifact object size does not match its manifest.");
+            throw new ValidationException("Kubernetes artifact bundle exceeds the size limit.");
         }
 
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -78,9 +92,60 @@ internal sealed class KubernetesArtifactObjectStore : IKubernetesArtifactObjectS
             FileShare.None,
             128 * 1024,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var copied = await CopyBoundedAsync(source, destination, expectedBytes, cancellationToken);
-        if (copied != expectedBytes)
-            throw new ValidationException("Kubernetes artifact object size does not match its manifest.");
+        var copied = await CopyBoundedAsync(source, destination, maximumBytes, cancellationToken);
+        if (copied == 0)
+            throw new ValidationException("Kubernetes artifact bundle is empty.");
+    }
+
+    public async Task UploadVerifiedArtifactAsync(
+        string objectName,
+        string sourcePath,
+        long expectedBytes,
+        string expectedSha256,
+        CancellationToken cancellationToken)
+    {
+        if (expectedBytes <= 0 ||
+            expectedSha256.Length != 64 ||
+            expectedSha256.Any(character => !Uri.IsHexDigit(character)))
+        {
+            throw new ValidationException("Verified Kubernetes artifact metadata is invalid.");
+        }
+
+        await using var source = new FileStream(
+            sourcePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            128 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        if (source.Length != expectedBytes)
+            throw new ValidationException("Verified Kubernetes artifact size changed before upload.");
+        var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(source, cancellationToken))
+            .ToLowerInvariant();
+        if (!string.Equals(sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("Verified Kubernetes artifact digest changed before upload.");
+        source.Position = 0;
+        await PutAsync(
+            objectName,
+            new StreamContent(source),
+            "application/x-rpm",
+            expectedBytes,
+            cancellationToken);
+    }
+
+    public Task UploadManifestAsync(
+        string objectName,
+        byte[] manifestBytes,
+        CancellationToken cancellationToken)
+    {
+        if (manifestBytes is not { Length: > 0 and <= KubernetesArtifactBundleReader.MaximumManifestBytes })
+            throw new ValidationException("Kubernetes artifact manifest size is invalid.");
+        return PutAsync(
+            objectName,
+            new ByteArrayContent(manifestBytes),
+            "application/json",
+            manifestBytes.LongLength,
+            cancellationToken);
     }
 
     private async Task<HttpResponseMessage> GetAsync(
@@ -105,6 +170,32 @@ internal sealed class KubernetesArtifactObjectStore : IKubernetesArtifactObjectS
         {
             response.Dispose();
             throw;
+        }
+    }
+
+    private async Task PutAsync(
+        string objectName,
+        HttpContent content,
+        string mediaType,
+        long contentLength,
+        CancellationToken cancellationToken)
+    {
+        using (content)
+        {
+            var url = await _minio.PresignedPutObjectAsync(
+                new PresignedPutObjectArgs()
+                    .WithBucket(ArtifactStorageService.BucketName)
+                    .WithObject(objectName)
+                    .WithExpiry(120));
+            content.Headers.ContentType =
+                new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+            content.Headers.ContentLength = contentLength;
+            using var request = new HttpRequestMessage(HttpMethod.Put, url) { Content = content };
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            response.EnsureSuccessStatusCode();
         }
     }
 
