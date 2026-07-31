@@ -8,5 +8,6 @@ public enum ProjectWebhookStatus
     Ignored = 3,
     Failed = 4,
     PlanReady = 5,
-    Completed = 6
+    Completed = 6,
+    PromotionPending = 7
 }

@@ -108,6 +108,12 @@ enabled. Cut over only by changing both `BUILD_EXECUTOR_TYPE=Kubernetes` and
 `KUBERNETES_ENABLED=true`; the service fails startup instead of falling back to
 Docker if the runner or cluster policy is incomplete.
 
+Keep `REPOSITORY_PROMOTION_ENABLED=false` until the native DNF gate and atomic
+promotion reconciler have both been deployed and verified. Candidate mode is
+fail-closed: enabling it earlier leaves project deliveries in
+`PromotionPending` and does not expose candidate RPMs through production
+metadata.
+
 ## Audit ledger
 
 The gateway records every public API mutation attempt and outcome in

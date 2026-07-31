@@ -20,6 +20,7 @@ public sealed class ProjectDispatchService(
             .Include(item => item.BuildProject)
             .ThenInclude(project => project.Pipelines)
             .Include(item => item.BuildJobs)
+            .ThenInclude(job => job.Artifacts)
             .SingleOrDefaultAsync(item => item.Id == deliveryId, cancellationToken);
         if (delivery is null || delivery.Status is ProjectWebhookStatus.Completed or
             ProjectWebhookStatus.Ignored or ProjectWebhookStatus.Failed)
@@ -66,7 +67,8 @@ public sealed class ProjectDispatchService(
                     await FailAsync(delivery, "project-build-failed", cancellationToken);
                     return;
                 }
-                if (jobs.Values.Any(job => job.Status is BuildStatus.Queued or BuildStatus.Building))
+                if (jobs.Values.Any(job =>
+                        job.Status != BuildStatus.Success && !HasCompleteCandidateAcknowledgement(job)))
                 {
                     delivery.Status = ProjectWebhookStatus.Dispatched;
                     delivery.FailureCode = null;
@@ -74,15 +76,26 @@ public sealed class ProjectDispatchService(
                     await db.SaveChangesAsync(cancellationToken);
                     return;
                 }
-                if (jobs.Values.Any(job => job.Status != BuildStatus.Success))
-                    throw new ValidationException("Project build has an unknown terminal status.");
             }
 
-            delivery.Status = ProjectWebhookStatus.Completed;
+            var candidateJobs = delivery.BuildJobs
+                .Where(HasCompleteCandidateAcknowledgement)
+                .ToList();
+            if (candidateJobs.Count > 0 && candidateJobs.Count != delivery.BuildJobs.Count)
+                throw new ValidationException(
+                    "Project delivery cannot mix direct publication with candidate promotion.");
+
+            delivery.Status = candidateJobs.Count > 0
+                ? ProjectWebhookStatus.PromotionPending
+                : ProjectWebhookStatus.Completed;
             delivery.FailureCode = null;
             delivery.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(cancellationToken);
-            logger.LogInformation("Project delivery {DeliveryId} completed all dependency stages", delivery.Id);
+            logger.LogInformation(
+                candidateJobs.Count > 0
+                    ? "Project delivery {DeliveryId} staged all candidates and is awaiting promotion"
+                    : "Project delivery {DeliveryId} completed all dependency stages",
+                delivery.Id);
         }
         catch (DomainException exception)
         {
@@ -165,6 +178,20 @@ public sealed class ProjectDispatchService(
                 throw new ValidationException($"Build {job.Id} does not match its project dispatch plan.");
             }
         }
+    }
+
+    private static bool HasCompleteCandidateAcknowledgement(BuildJob job)
+    {
+        if (job.Artifacts.Count == 0)
+            return false;
+        var first = job.Artifacts[0];
+        return first.CandidateRepositoryId is not null &&
+               first.PromotionSetId is not null &&
+               job.Artifacts.All(artifact =>
+                   artifact.CandidateRepositoryId == first.CandidateRepositoryId &&
+                   artifact.PromotionSetId == first.PromotionSetId &&
+                   artifact.CandidatePackageId is not null &&
+                   artifact.CandidateStagedAt is not null);
     }
 
     private async Task FailAsync(

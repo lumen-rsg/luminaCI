@@ -231,7 +231,51 @@ public class PipelineRunCoordinatorTests
         Assert.Contains("immutable publication request", job.StepRuns[1].Error);
     }
 
-    private static ServiceProvider BuildProvider(string databaseName, Guid keyId)
+    [Fact]
+    public async Task Candidate_mode_dispatches_private_staging_instead_of_publication()
+    {
+        await using var provider = BuildProvider(
+            nameof(Candidate_mode_dispatches_private_staging_instead_of_publication),
+            Guid.NewGuid(),
+            candidatePromotionEnabled: true);
+        var harness = provider.GetRequiredService<ITestHarness>();
+        await harness.Start();
+        var db = provider.GetRequiredService<BuildDbContext>();
+        var repositoryId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var job = CreateJob(
+            Step(StepType.Build, 1, StepStatus.Success),
+            Step(StepType.Sign, 2, StepStatus.Running),
+            Step(StepType.Publish, 3, configuration:
+                new() { ["repositoryId"] = repositoryId.ToString() }));
+        job.ExecutionBackend = BuildExecutorBackend.Kubernetes;
+        job.ProjectWebhookDeliveryId = deliveryId;
+        job.ProjectPackageId = "kernel-tegra";
+        job.PromotionGroup = "jetson-r39.2";
+        job.TargetArchitecture = "aarch64";
+        job.RunnerImageDigest = $"sha256:{new string('c', 64)}";
+        job.Artifacts[0].SigningKeyFingerprint = "ABC123";
+        job.Artifacts[0].SignedAt = DateTime.UtcNow;
+        db.BuildJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        await provider.GetRequiredService<PipelineRunCoordinator>()
+            .ReportSignedAsync(job.Artifacts[0].Id);
+
+        Assert.True(await harness.Published.Any<PackageCandidateRequested>());
+        Assert.False(await harness.Published.Any<PackagePublishRequested>());
+        var staged = await harness.Published.SelectAsync<PackageCandidateRequested>().First();
+        Assert.Equal(
+            PromotionSetIdentity.Create(deliveryId, "jetson-r39.2"),
+            staged.Context.Message.PromotionSetId);
+        Assert.Equal("kernel-tegra", staged.Context.Message.ProjectPackageId);
+        Assert.Equal(job.RunnerImageDigest, staged.Context.Message.GateRunnerImageDigest);
+    }
+
+    private static ServiceProvider BuildProvider(
+        string databaseName,
+        Guid keyId,
+        bool candidatePromotionEnabled = false)
     {
         var options = new DbContextOptionsBuilder<BuildDbContext>()
             .UseInMemoryDatabase(databaseName)
@@ -240,6 +284,7 @@ public class PipelineRunCoordinatorTests
         var services = new ServiceCollection()
             .AddSingleton<BuildDbContext>(new TestBuildDbContext(options))
             .AddSingleton<PipelineRunCoordinator>()
+            .AddSingleton(new CandidatePromotionSelection(candidatePromotionEnabled))
             .AddSingleton<ILogger<PipelineRunCoordinator>>(NullLogger<PipelineRunCoordinator>.Instance);
 
         services.AddMassTransitTestHarness(configurator =>

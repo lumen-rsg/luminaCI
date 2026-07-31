@@ -31,6 +31,8 @@ try
     var executorSelection = BuildExecutorSelectionPolicy.Resolve(
         builder.Configuration, kubernetesTransportAvailable: true);
     builder.Services.AddSingleton(executorSelection);
+    builder.Services.AddSingleton(CandidatePromotionSelection.Resolve(
+        builder.Configuration, executorSelection.Backend));
 
     builder.Services.AddLuminaOpenTelemetry(
         builder.Configuration, "lumina-build-service");
@@ -126,6 +128,7 @@ try
         x.AddConsumer<PackagePublishedConsumer>();
         x.AddConsumer<PackageCandidateStagedConsumer>();
         x.AddConsumer<PackagePublishFaultConsumer>();
+        x.AddConsumer<PackageCandidateFaultConsumer>();
         x.AddConsumer<GetArtifactSignatureConsumer>();
         x.AddConsumer<GetArtifactLocationConsumer>();
         x.AddConsumer<RepositorySnapshotCompletedConsumer>();
@@ -153,6 +156,7 @@ try
                 e.ConfigureConsumer<PackagePublishedConsumer>(ctx);
                 e.ConfigureConsumer<PackageCandidateStagedConsumer>(ctx);
                 e.ConfigureConsumer<PackagePublishFaultConsumer>(ctx);
+                e.ConfigureConsumer<PackageCandidateFaultConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactSignatureConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactLocationConsumer>(ctx);
                 e.ConfigureConsumer<RepositorySnapshotCompletedConsumer>(ctx);

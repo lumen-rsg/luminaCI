@@ -86,6 +86,37 @@ public sealed class ProjectDispatchServiceTests
     }
 
     [Fact]
+    public async Task AdvanceAsync_ContinuesStagesAfterCandidatesAndWaitsForPromotion()
+    {
+        await using var db = CreateDb(
+            nameof(AdvanceAsync_ContinuesStagesAfterCandidatesAndWaitsForPromotion));
+        var delivery = AddDelivery(db);
+        await db.SaveChangesAsync();
+        var trigger = new RecordingBuildTrigger(db);
+        var dispatcher = NewDispatcher(db, trigger);
+
+        await dispatcher.AdvanceAsync(delivery.Id, default);
+        var firmware = Assert.Single(delivery.BuildJobs);
+        StageCandidate(db, firmware, delivery.Id, "jetson-r39.2");
+        await db.SaveChangesAsync();
+
+        await dispatcher.AdvanceAsync(delivery.Id, default);
+
+        Assert.Equal(["firmware", "driver"],
+            trigger.Launches.Select(item => item.PackageId).ToArray());
+        var driver = delivery.BuildJobs.Single(job => job.ProjectPackageId == "driver");
+        StageCandidate(db, driver, delivery.Id, "jetson-r39.2");
+        await db.SaveChangesAsync();
+
+        await dispatcher.AdvanceAsync(delivery.Id, default);
+
+        Assert.Equal(ProjectWebhookStatus.PromotionPending, delivery.Status);
+        Assert.All(delivery.BuildJobs, job => Assert.Equal(BuildStatus.Building, job.Status));
+        Assert.All(delivery.BuildJobs, job =>
+            Assert.Equal(StepStatus.Running, job.StepRuns.Single().Status));
+    }
+
+    [Fact]
     public async Task AdvanceAsync_FailsClosedWhenBindingChangedAfterPlanning()
     {
         await using var db = CreateDb(nameof(AdvanceAsync_FailsClosedWhenBindingChangedAfterPlanning));
@@ -222,8 +253,45 @@ public sealed class ProjectDispatchServiceTests
         TargetDistribution = "fedora",
         TargetRelease = "44",
         TargetArchitecture = "aarch64",
-        BuildProfile = "fedora-44-aarch64"
+        BuildProfile = "fedora-44-aarch64",
+        StepRuns =
+        [
+            new BuildStepRun
+            {
+                Id = Guid.NewGuid(),
+                BuildJobId = Guid.Empty,
+                PipelineStepId = Guid.NewGuid(),
+                Type = StepType.Publish,
+                Name = "Publish",
+                Order = 1,
+                Status = StepStatus.Running
+            }
+        ]
     };
+
+    private static void StageCandidate(
+        BuildDbContext db,
+        BuildJob job,
+        Guid deliveryId,
+        string promotionGroup)
+    {
+        job.Status = BuildStatus.Building;
+        job.PromotionGroup = promotionGroup;
+        var setId = PromotionSetIdentity.Create(deliveryId, promotionGroup);
+        var artifact = new BuildArtifact
+        {
+            Id = Guid.NewGuid(),
+            BuildJobId = job.Id,
+            FileName = $"{job.ProjectPackageId}.rpm",
+            FilePath = "/tmp/package.rpm",
+            CandidateRepositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            CandidatePackageId = Guid.NewGuid(),
+            PromotionSetId = setId,
+            CandidateStagedAt = DateTime.UtcNow
+        };
+        job.Artifacts.Add(artifact);
+        db.BuildArtifacts.Add(artifact);
+    }
 
     private static BuildDbContext CreateDb(string name)
     {

@@ -17,17 +17,20 @@ public sealed class PipelineRunCoordinator
     private readonly BuildDbContext _db;
     private readonly IPublishEndpoint _publishEndpoint;
     private readonly IBus _bus;
+    private readonly CandidatePromotionSelection _candidatePromotion;
     private readonly ILogger<PipelineRunCoordinator> _logger;
 
     public PipelineRunCoordinator(
         BuildDbContext db,
         IPublishEndpoint publishEndpoint,
         IBus bus,
+        CandidatePromotionSelection candidatePromotion,
         ILogger<PipelineRunCoordinator> logger)
     {
         _db = db;
         _publishEndpoint = publishEndpoint;
         _bus = bus;
+        _candidatePromotion = candidatePromotion;
         _logger = logger;
     }
 
@@ -342,17 +345,46 @@ public sealed class PipelineRunCoordinator
                 var promotionSetId = PromotionSetIdentity.Create(promotionOwner, promotionGroup);
                 foreach (var artifact in job.Artifacts)
                 {
-                    await _publishEndpoint.Publish(new PackagePublishRequested(
-                        artifact.Id,
-                        repositoryId,
-                        artifact.HashSha256
-                            ?? throw new InvalidOperationException($"Artifact {artifact.Id} has no signed SHA-256 digest."),
-                        job.TriggeredBy,
-                        DateTime.UtcNow,
-                        promotionSetId,
-                        promotionGroup,
-                        job.TargetArchitecture,
-                        job.RunnerImageDigest), cancellationToken);
+                    var signedSha256 = artifact.HashSha256
+                        ?? throw new InvalidOperationException($"Artifact {artifact.Id} has no signed SHA-256 digest.");
+                    if (_candidatePromotion.Enabled)
+                    {
+                        if (job.ExecutionBackend != BuildExecutorBackend.Kubernetes ||
+                            job.ProjectWebhookDeliveryId is null ||
+                            string.IsNullOrWhiteSpace(job.ProjectPackageId) ||
+                            string.IsNullOrWhiteSpace(job.PromotionGroup) ||
+                            job.RunnerImageDigest is not { Length: 71 } runnerDigest ||
+                            !runnerDigest.StartsWith("sha256:", StringComparison.Ordinal) ||
+                            runnerDigest[7..].Any(character => !Uri.IsHexDigit(character)))
+                        {
+                            throw new InvalidOperationException(
+                                "Candidate promotion requires a project-owned native Kubernetes build with exact runner provenance.");
+                        }
+                        await _publishEndpoint.Publish(new PackageCandidateRequested(
+                            artifact.Id,
+                            repositoryId,
+                            signedSha256,
+                            job.TriggeredBy,
+                            DateTime.UtcNow,
+                            promotionSetId,
+                            promotionGroup,
+                            job.ProjectPackageId,
+                            job.TargetArchitecture,
+                            runnerDigest), cancellationToken);
+                    }
+                    else
+                    {
+                        await _publishEndpoint.Publish(new PackagePublishRequested(
+                            artifact.Id,
+                            repositoryId,
+                            signedSha256,
+                            job.TriggeredBy,
+                            DateTime.UtcNow,
+                            promotionSetId,
+                            promotionGroup,
+                            job.TargetArchitecture,
+                            job.RunnerImageDigest), cancellationToken);
+                    }
                 }
                 break;
 

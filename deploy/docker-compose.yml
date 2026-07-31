@@ -194,6 +194,7 @@ services:
       - Kubernetes__Network__HttpsPort=443
       - Kubernetes__Network__FedoraRepositoryBaseUrl=${KUBERNETES_FEDORA_BASE_URL:-https://packages.lumina.1t.ru/fedora}
       - BuildExecutor__Type=${BUILD_EXECUTOR_TYPE:-Docker}
+      - RepositoryPromotion__Enabled=${REPOSITORY_PROMOTION_ENABLED:-false}
       - Kubernetes__Enabled=${KUBERNETES_ENABLED:-false}
       - Kubernetes__Namespace=${KUBERNETES_NAMESPACE:-lumina-builds}
       - Kubernetes__RunnerImages__fedora-44-x86_64=${KUBERNETES_RUNNER_IMAGE_X86_64:-registry.lumina.1t.ru/lumina-rpm-build@sha256:bf922922445bdb4cddc0f1feb2dc3fe519335ef59d18b6866d09c5a647f46149}
