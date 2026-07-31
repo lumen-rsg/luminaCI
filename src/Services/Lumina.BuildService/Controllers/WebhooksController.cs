@@ -21,11 +21,16 @@ namespace Lumina.BuildService.Controllers;
 public class WebhooksController : ControllerBase
 {
     private readonly Services.PipelineEngine _engine;
+    private readonly Services.ProjectWebhookService _projectWebhooks;
     private readonly ILogger<WebhooksController> _logger;
 
-    public WebhooksController(Services.PipelineEngine engine, ILogger<WebhooksController> logger)
+    public WebhooksController(
+        Services.PipelineEngine engine,
+        Services.ProjectWebhookService projectWebhooks,
+        ILogger<WebhooksController> logger)
     {
         _engine = engine;
+        _projectWebhooks = projectWebhooks;
         _logger = logger;
     }
 
@@ -35,6 +40,73 @@ public class WebhooksController : ControllerBase
     /// an anonymous caller from OOM-ing the service with a multi-MB JSON blob.
     /// </summary>
     private const int MaxWebhookBodyBytes = 1 * 1024 * 1024; // 1 MiB
+
+    [HttpPost("projects/{projectId:guid}")]
+    [RequestSizeLimit(MaxWebhookBodyBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxWebhookBodyBytes)]
+    public async Task<ActionResult<ApiResponse<ProjectWebhookDeliveryResponse>>> HandleProjectWebhook(
+        Guid projectId)
+    {
+        var project = await _projectWebhooks.GetProjectAsync(projectId, HttpContext.RequestAborted);
+        if (project is null)
+        {
+            return NotFound(new ApiResponse<ProjectWebhookDeliveryResponse>(
+                false, null, "Build project not found", null));
+        }
+
+        var rawBody = await ReadBodyWithCapAsync(
+            Request.Body, MaxWebhookBodyBytes, HttpContext.RequestAborted);
+        if (rawBody is null)
+        {
+            return StatusCode(413, new ApiResponse<ProjectWebhookDeliveryResponse>(
+                false, null, "Webhook payload too large", null));
+        }
+        if (!VerifySignature(project.WebhookSecret, rawBody))
+        {
+            return Unauthorized(new ApiResponse<ProjectWebhookDeliveryResponse>(
+                false, null, "Invalid signature", null));
+        }
+        if (!string.Equals(Request.Headers["X-GitHub-Event"].FirstOrDefault(), "push", StringComparison.Ordinal))
+        {
+            return Ok(new ApiResponse<ProjectWebhookDeliveryResponse>(
+                true, null, null, "GitHub event ignored — only push events are supported"));
+        }
+        var deliveryId = Request.Headers["X-GitHub-Delivery"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(deliveryId))
+        {
+            return BadRequest(new ApiResponse<ProjectWebhookDeliveryResponse>(
+                false, null, "GitHub delivery ID is required", null));
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawBody);
+            var push = Services.ProjectWebhookService.ParseGitHubPush(document.RootElement);
+            var delivery = await _projectWebhooks.QueueSnapshotAsync(
+                project, deliveryId, push, HttpContext.RequestAborted);
+            var response = new ProjectWebhookDeliveryResponse(
+                delivery.Id,
+                delivery.BuildProjectId,
+                delivery.Status,
+                delivery.CommitSha,
+                delivery.Branch,
+                delivery.ChangedPaths.Count,
+                delivery.CreatedAt);
+            return Accepted(new ApiResponse<ProjectWebhookDeliveryResponse>(
+                true, response, null, "Repository snapshot queued"));
+        }
+        catch (JsonException exception)
+        {
+            _logger.LogWarning(exception, "Project webhook {ProjectId} contains invalid JSON", projectId);
+            return BadRequest(new ApiResponse<ProjectWebhookDeliveryResponse>(
+                false, null, "Invalid JSON payload", null));
+        }
+        catch (Exception exception)
+        {
+            return ApiResults.FromException<ProjectWebhookDeliveryResponse>(
+                exception, _logger, "Webhooks.ProjectSnapshot", projectId);
+        }
+    }
 
     /// <summary>
     /// Generic webhook endpoint for Git push events.

@@ -44,6 +44,15 @@ public record BuildProjectPipelineResponse(
     string PipelineName,
     PipelineStatus PipelineStatus);
 
+public record ProjectWebhookDeliveryResponse(
+    Guid RequestId,
+    Guid ProjectId,
+    ProjectWebhookStatus Status,
+    string CommitSha,
+    string Branch,
+    int ChangedPathCount,
+    DateTime CreatedAt);
+
 // Build Responses
 public record BuildJobResponse(Guid Id, Guid PipelineId, BuildStatus Status, string SpecName, string? ContainerId, string Logs, DateTime CreatedAt, DateTime? StartedAt, DateTime? CompletedAt, string TriggeredBy, List<BuildArtifactResponse> Artifacts, string? SourceUrl = null, string? CommitSha = null, string? Branch = null, string? CommitMessage = null, string? CommitAuthor = null, List<BuildStepRunResponse>? StepRuns = null, string? TargetDistribution = null, string? TargetRelease = null, string? TargetArchitecture = null, string? BuildProfile = null, string? RunnerImageReference = null, string? RunnerImageDigest = null);
 

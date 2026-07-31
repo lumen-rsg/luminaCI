@@ -21,6 +21,7 @@ public class BuildDbContext : DbContext
 
     public DbSet<Pipeline> Pipelines => Set<Pipeline>();
     public DbSet<BuildProject> BuildProjects => Set<BuildProject>();
+    public DbSet<ProjectWebhookDelivery> ProjectWebhookDeliveries => Set<ProjectWebhookDelivery>();
     public DbSet<PipelineStep> PipelineSteps => Set<PipelineStep>();
     public DbSet<BuildJob> BuildJobs => Set<BuildJob>();
     public DbSet<BuildArtifact> BuildArtifacts => Set<BuildArtifact>();
@@ -107,6 +108,26 @@ public class BuildDbContext : DbContext
                 .WithMany(e => e.Pipelines)
                 .HasForeignKey(e => e.BuildProjectId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ProjectWebhookDelivery>(entity =>
+        {
+            entity.ToTable("project_webhook_deliveries", "build");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ProviderDeliveryId).IsRequired().HasMaxLength(128);
+            entity.Property(e => e.CommitSha).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.Branch).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.ChangedPaths).HasColumnType("text[]");
+            entity.Property(e => e.CommitAuthor).HasMaxLength(256);
+            entity.Property(e => e.CommitMessage).HasMaxLength(2048);
+            entity.Property(e => e.SnapshotStoragePath).HasMaxLength(1024);
+            entity.Property(e => e.SnapshotSha256).HasMaxLength(64);
+            entity.Property(e => e.FailureCode).HasMaxLength(64);
+            entity.HasIndex(e => new { e.BuildProjectId, e.ProviderDeliveryId }).IsUnique();
+            entity.HasOne(e => e.BuildProject)
+                .WithMany(e => e.WebhookDeliveries)
+                .HasForeignKey(e => e.BuildProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<PipelineStep>(entity =>

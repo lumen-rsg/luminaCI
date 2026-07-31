@@ -28,4 +28,5 @@ public class BuildProject
     public string? GitToken { get; set; }
 
     public List<Pipeline> Pipelines { get; set; } = [];
+    public List<ProjectWebhookDelivery> WebhookDeliveries { get; set; } = [];
 }

@@ -54,6 +54,8 @@ try
     builder.Services.AddScoped<ISigningKeyGate, SigningKeyGate>();
     builder.Services.AddScoped<PipelineEngine>();
     builder.Services.AddScoped<BuildProjectService>();
+    builder.Services.AddScoped<ProjectWebhookService>();
+    builder.Services.AddScoped<IRepositorySnapshotPublisher, RepositorySnapshotPublisher>();
     builder.Services.AddScoped<PipelineRunCoordinator>();
     builder.Services.AddScoped<ArtifactStorageService>();
     builder.Services.AddHttpClient("ArtifactStorage", client =>
@@ -86,6 +88,7 @@ try
         x.AddConsumer<PackagePublishFaultConsumer>();
         x.AddConsumer<GetArtifactSignatureConsumer>();
         x.AddConsumer<GetArtifactLocationConsumer>();
+        x.AddConsumer<RepositorySnapshotCompletedConsumer>();
         x.AddEntityFrameworkOutbox<BuildDbContext>(outbox =>
         {
             outbox.UsePostgres();
@@ -111,6 +114,7 @@ try
                 e.ConfigureConsumer<PackagePublishFaultConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactSignatureConsumer>(ctx);
                 e.ConfigureConsumer<GetArtifactLocationConsumer>(ctx);
+                e.ConfigureConsumer<RepositorySnapshotCompletedConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
