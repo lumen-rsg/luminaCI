@@ -193,6 +193,7 @@ services:
       - Kubernetes__Network__EgressCidr=${KUBERNETES_BUILD_EGRESS_CIDR:-146.120.224.52/32}
       - Kubernetes__Network__HttpsPort=443
       - Kubernetes__Network__FedoraRepositoryBaseUrl=${KUBERNETES_FEDORA_BASE_URL:-https://packages.lumina.1t.ru/fedora}
+      - KUBECONFIG=/run/secrets/kubernetes-build-controller.kubeconfig
       # Docker daemon reached via the socket-proxy container below (not the raw socket).
       - Docker__SocketPath=http://docker-socket-proxy:2375
       # Untrusted build-container isolation knobs (see DockerBuildService.cs).
@@ -223,6 +224,9 @@ services:
       - /opt/lumina/builds:/opt/lumina/builds:z
       - /opt/lumina/sources:/opt/lumina/sources:z
       - /opt/lumina/extra-sources:/opt/lumina/extra-sources:z
+      - ${KUBERNETES_KUBECONFIG_FILE:-./secrets/kubernetes-build-controller.kubeconfig}:/run/secrets/kubernetes-build-controller.kubeconfig:ro,z
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       volume-init:
         condition: service_completed_successfully

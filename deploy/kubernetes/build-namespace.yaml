@@ -59,6 +59,9 @@ subjects:
   - kind: ServiceAccount
     name: lumina-build-controller
     namespace: lumina-builds
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: lumina-build-controller
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

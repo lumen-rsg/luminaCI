@@ -1,6 +1,8 @@
 # The API must be node-reachable for in-cluster clients. The companion nftables
 # service drops public 6443 traffic before this listener is started.
 bind-address: 0.0.0.0
+tls-san:
+  - host.docker.internal
 write-kubeconfig-mode: "0640"
 write-kubeconfig-group: lumina-kube
 secrets-encryption: true
