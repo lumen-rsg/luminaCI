@@ -1,0 +1,152 @@
+using k8s;
+using k8s.Models;
+using Lumina.BuildService.Services;
+using Lumina.Shared.Errors;
+using Lumina.Shared.Models;
+using Microsoft.Extensions.Configuration;
+using Xunit;
+
+namespace Lumina.BuildService.Tests;
+
+public sealed class KubernetesJobFactoryTests
+{
+    private const string Digest =
+        "registry.example/lumina/fedora-runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    [Fact]
+    public void ResolveRunner_RequiresExactAdministratorDigestForTarget()
+    {
+        var job = Job();
+        var configuration = Configuration(
+            ("Kubernetes:RunnerImages:fedora-44-aarch64", Digest));
+
+        var runner = KubernetesBuildPolicy.ResolveRunner(configuration, job, Digest);
+
+        Assert.Equal("arm64", runner.Architecture);
+        Assert.Equal(Digest, runner.Image);
+        Assert.Throws<ValidationException>(() =>
+            KubernetesBuildPolicy.ResolveRunner(configuration, job, "attacker/runner@sha256:" + new string('b', 64)));
+    }
+
+    [Theory]
+    [InlineData("registry.example/runner:latest")]
+    [InlineData("registry.example/runner:f44")]
+    [InlineData("registry.example/runner@sha256:abc")]
+    public void ResolveRunner_RejectsMutableOrTruncatedImage(string image)
+    {
+        var configuration = Configuration(
+            ("Kubernetes:RunnerImages:fedora-44-aarch64", image));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            KubernetesBuildPolicy.ResolveRunner(configuration, Job(), null));
+    }
+
+    [Fact]
+    public void ResolveLimits_UsesBoundedOperatorConfiguration()
+    {
+        var limits = KubernetesBuildPolicy.ResolveLimits(Configuration(
+            ("Kubernetes:Jobs:ActiveDeadlineSeconds", "3600"),
+            ("Kubernetes:Jobs:CpuLimit", "4"),
+            ("Kubernetes:Jobs:MemoryLimit", "8Gi")));
+
+        Assert.Equal(3600, limits.ActiveDeadlineSeconds);
+        Assert.Equal("4", limits.CpuLimit);
+        Assert.Equal("8Gi", limits.MemoryLimit);
+        Assert.Throws<InvalidOperationException>(() => KubernetesBuildPolicy.ResolveLimits(
+            Configuration(("Kubernetes:Jobs:ActiveDeadlineSeconds", "0"))));
+        Assert.Throws<InvalidOperationException>(() => KubernetesBuildPolicy.ResolveLimits(
+            Configuration(("Kubernetes:Jobs:MemoryLimit", "unbounded"))));
+        Assert.Throws<InvalidOperationException>(() => KubernetesBuildPolicy.ResolveLimits(
+            Configuration(("Kubernetes:Jobs:CpuRequest", "4"), ("Kubernetes:Jobs:CpuLimit", "2"))));
+        Assert.Throws<InvalidOperationException>(() => KubernetesBuildPolicy.ResolveLimits(
+            Configuration(("Kubernetes:Jobs:CpuLimit", "4Gi"))));
+    }
+
+    [Fact]
+    public void Create_ProducesHardenedArchitecturePinnedJob()
+    {
+        var job = Job();
+        var runner = new KubernetesRunner(job.BuildProfile, "arm64", Digest);
+        var manifest = KubernetesJobFactory.Create(
+            job, runner, KubernetesBuildPolicy.ResolveLimits(Configuration()));
+        var pod = manifest.Spec.Template.Spec;
+        var container = Assert.Single(pod.Containers);
+
+        Assert.Equal("batch/v1", manifest.ApiVersion);
+        Assert.Equal(0, manifest.Spec.BackoffLimit);
+        Assert.Equal("Never", pod.RestartPolicy);
+        Assert.False(pod.AutomountServiceAccountToken);
+        Assert.False(pod.EnableServiceLinks);
+        Assert.False(pod.HostNetwork);
+        Assert.False(pod.HostPID);
+        Assert.False(pod.HostIPC);
+        Assert.Equal("arm64", pod.NodeSelector["kubernetes.io/arch"]);
+        Assert.Equal("true", pod.NodeSelector[KubernetesJobFactory.WorkerLabel]);
+        Assert.Equal("NoSchedule", Assert.Single(pod.Tolerations).Effect);
+        Assert.Equal(Digest, container.Image);
+        Assert.True(container.SecurityContext.RunAsNonRoot);
+        Assert.False(container.SecurityContext.AllowPrivilegeEscalation);
+        Assert.True(container.SecurityContext.ReadOnlyRootFilesystem);
+        Assert.Equal(["ALL"], container.SecurityContext.Capabilities.Drop);
+        Assert.Equal("RuntimeDefault", container.SecurityContext.SeccompProfile.Type);
+        Assert.Equal("RuntimeDefault", pod.SecurityContext.SeccompProfile.Type);
+        Assert.NotNull(container.Resources.Requests["ephemeral-storage"]);
+        Assert.NotNull(container.Resources.Limits["ephemeral-storage"]);
+        Assert.All(pod.Volumes, volume => Assert.Null(volume.HostPath));
+        Assert.DoesNotContain(container.Env, variable =>
+            variable.Name.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) ||
+            variable.Name.Contains("SECRET", StringComparison.OrdinalIgnoreCase) ||
+            variable.Name.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase));
+        var serialized = KubernetesJson.Serialize(manifest);
+        Assert.Contains("\"automountServiceAccountToken\":false", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("hostPath", serialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CreateDefaultDenyNetworkPolicy_DeniesIngressAndEgressForOnlyThisJob()
+    {
+        var job = Job();
+
+        var policy = KubernetesJobFactory.CreateDefaultDenyNetworkPolicy(job);
+
+        Assert.Equal(["Ingress", "Egress"], policy.Spec.PolicyTypes);
+        Assert.Empty(policy.Spec.Ingress);
+        Assert.Empty(policy.Spec.Egress);
+        Assert.Equal(
+            job.Id.ToString("N"),
+            policy.Spec.PodSelector.MatchLabels["lumina.1t.ru/build-job-id"]);
+    }
+
+    [Fact]
+    public void Create_RejectsUnapprovedRunnerAndUnsafeProvenanceLabels()
+    {
+        var job = Job();
+        var limits = KubernetesBuildPolicy.ResolveLimits(Configuration());
+
+        Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(
+            job, new KubernetesRunner(job.BuildProfile, "amd64", Digest), limits));
+        Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(
+            job, new KubernetesRunner(job.BuildProfile, "arm64", "runner:latest"), limits));
+        job.CommitSha = "bad/label";
+        Assert.Throws<ValidationException>(() => KubernetesJobFactory.Create(
+            job, new KubernetesRunner(job.BuildProfile, "arm64", Digest), limits));
+    }
+
+    private static BuildJob Job() => new()
+    {
+        Id = Guid.NewGuid(),
+        PipelineId = Guid.NewGuid(),
+        SpecName = "kernel-tegra.spec",
+        CommitSha = new string('b', 40),
+        TargetDistribution = "fedora",
+        TargetRelease = "44",
+        TargetArchitecture = "aarch64",
+        BuildProfile = "fedora-44-aarch64"
+    };
+
+    private static IConfiguration Configuration(params (string Key, string Value)[] values) =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(values.Select(item =>
+                new KeyValuePair<string, string?>(item.Key, item.Value)))
+            .Build();
+}

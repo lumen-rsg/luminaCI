@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <PackageReference Include="Docker.DotNet" Version="3.125.15" />
+    <PackageReference Include="KubernetesClient" Version="19.0.2" />
     <PackageReference Include="MassTransit.EntityFrameworkCore" Version="8.3.6" />
     <PackageReference Include="MassTransit.RabbitMQ" Version="8.3.6" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4" />
