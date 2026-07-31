@@ -71,7 +71,14 @@ public sealed class ProjectWebhookService
                         delivery.ProviderDeliveryId == providerDeliveryId,
             cancellationToken);
         if (existing is not null)
+        {
+            if (existing.Status == ProjectWebhookStatus.SnapshotPending)
+            {
+                await _publish.PublishAsync(CreateSnapshotRequest(existing, project), cancellationToken);
+                await _db.SaveChangesAsync(cancellationToken);
+            }
             return existing;
+        }
 
         var now = DateTime.UtcNow;
         var delivery = new ProjectWebhookDelivery
@@ -90,13 +97,7 @@ public sealed class ProjectWebhookService
             UpdatedAt = now
         };
         _db.ProjectWebhookDeliveries.Add(delivery);
-        await _publish.PublishAsync(new RepositorySnapshotRequested(
-            delivery.Id,
-            project.Id,
-            project.GitRepoUrl,
-            push.CommitSha,
-            project.ManifestPath,
-            now), cancellationToken);
+        await _publish.PublishAsync(CreateSnapshotRequest(delivery, project), cancellationToken);
         try
         {
             await _db.SaveChangesAsync(cancellationToken);
@@ -114,6 +115,16 @@ public sealed class ProjectWebhookService
             throw;
         }
     }
+
+    private static RepositorySnapshotRequested CreateSnapshotRequest(
+        ProjectWebhookDelivery delivery,
+        BuildProject project) => new(
+        delivery.Id,
+        project.Id,
+        project.GitRepoUrl,
+        delivery.CommitSha,
+        project.ManifestPath,
+        delivery.CreatedAt);
 
     public static GitHubPush ParseGitHubPush(JsonElement payload)
     {

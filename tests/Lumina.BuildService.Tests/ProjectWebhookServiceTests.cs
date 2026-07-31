@@ -4,6 +4,7 @@ using Lumina.BuildService.Services;
 using Lumina.Shared.Events;
 using Lumina.Shared.Errors;
 using Lumina.Shared.Models;
+using Lumina.Shared.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -48,8 +49,15 @@ public sealed class ProjectWebhookServiceTests
         Assert.Equal(first.Id, second.Id);
         Assert.Equal(project.GitRepoUrl, first.RepositoryUrl);
         Assert.Equal(["a/file", "z/file"], first.ChangedPaths);
-        Assert.Equal(first.Id, Assert.Single(publisher.Requests).RequestId);
+        Assert.Equal(2, publisher.Requests.Count);
+        Assert.All(publisher.Requests, request => Assert.Equal(first.Id, request.RequestId));
         Assert.Equal(1, await db.ProjectWebhookDeliveries.CountAsync());
+
+        first.Status = ProjectWebhookStatus.SnapshotReady;
+        await db.SaveChangesAsync();
+        await service.QueueSnapshotAsync(project, "delivery-1", push, default);
+
+        Assert.Equal(2, publisher.Requests.Count);
     }
 
     [Fact]
