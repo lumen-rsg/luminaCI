@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Lumina.Shared.Errors;
+using Lumina.Shared.Models;
 
 namespace Lumina.BuildService.Services.PackageGraph;
 
@@ -56,7 +57,7 @@ public static partial class PackageGraphPlanner
             }
         }
 
-        AddReverseDependents(packages, reasons);
+        ExpandSelectionClosure(packages, reasons);
 
         var selectedIds = reasons
             .Where(pair => pair.Value.Count > 0)
@@ -146,14 +147,20 @@ public static partial class PackageGraphPlanner
             if (dependencies.Contains(id, StringComparer.Ordinal))
                 throw new ValidationException($"Package '{id}' cannot depend on itself.");
 
+            var promotionGroup = string.IsNullOrWhiteSpace(definition.PromotionGroup)
+                ? null
+                : PromotionSetIdentity.NormalizeGroup(definition.PromotionGroup);
+            var lookasideSources = ProjectLookasideSourcePolicy.Normalize(
+                definition.LookasideSources);
             packages.Add(id, new NormalizedPackage(
                 id,
                 specPath,
                 paths,
                 targets,
                 dependencies,
-                definition.PromotionGroup?.Trim(),
-                definition.RebuildOnDependencyChange));
+                promotionGroup,
+                definition.RebuildOnDependencyChange,
+                lookasideSources));
         }
 
         foreach (var package in packages.Values)
@@ -164,6 +171,15 @@ public static partial class PackageGraphPlanner
         }
 
         EnsureAcyclic(packages);
+        foreach (var group in packages.Values.Where(package => package.PromotionGroup is not null)
+                     .GroupBy(package => package.PromotionGroup!, StringComparer.Ordinal))
+        {
+            var targets = group.Select(package => string.Join('\n', package.Targets))
+                .Distinct(StringComparer.Ordinal).ToList();
+            if (targets.Count != 1)
+                throw new ValidationException(
+                    $"Promotion group '{group.Key}' must use one target profile.");
+        }
         return packages;
     }
 
@@ -221,6 +237,33 @@ public static partial class PackageGraphPlanner
             {
                 if (reasons[dependent.Id].Add($"dependency selected: {changedPackageId}"))
                     queue.Enqueue(dependent.Id);
+            }
+        }
+    }
+
+    private static void ExpandSelectionClosure(
+        IReadOnlyDictionary<string, NormalizedPackage> packages,
+        IDictionary<string, SortedSet<string>> reasons)
+    {
+        var previousCount = -1;
+        while (previousCount != reasons.Count(pair => pair.Value.Count > 0))
+        {
+            previousCount = reasons.Count(pair => pair.Value.Count > 0);
+            AddReverseDependents(packages, reasons);
+            foreach (var group in packages.Values
+                         .Where(package => package.PromotionGroup is not null)
+                         .GroupBy(package => package.PromotionGroup!, StringComparer.Ordinal)
+                         .OrderBy(group => group.Key, StringComparer.Ordinal))
+            {
+                var selected = group.Where(package => reasons[package.Id].Count > 0)
+                    .OrderBy(package => package.Id, StringComparer.Ordinal).FirstOrDefault();
+                if (selected is null)
+                    continue;
+                foreach (var package in group.OrderBy(package => package.Id, StringComparer.Ordinal))
+                {
+                    reasons[package.Id].Add(
+                        $"promotion group selected: {group.Key} via {selected.Id}");
+                }
             }
         }
     }
@@ -309,5 +352,6 @@ public static partial class PackageGraphPlanner
         IReadOnlyList<string> Targets,
         IReadOnlyList<string> DependsOn,
         string? PromotionGroup,
-        bool RebuildOnDependencyChange);
+        bool RebuildOnDependencyChange,
+        IReadOnlyList<ProjectLookasideSource> LookasideSources);
 }

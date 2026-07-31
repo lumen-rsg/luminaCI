@@ -22,6 +22,10 @@ public class PackageGraphManifestLoaderTests
                 targets:
                   - fedora-44-aarch64
                 promotion_group: jetson-r39.2
+                lookaside_sources:
+                  - file: tegra-l4t-firmware-39.2.0.tar.gz
+                    size: 66183345
+                    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
               driver:
                 spec: jetson/specs/driver.spec
                 paths:
@@ -36,6 +40,21 @@ public class PackageGraphManifestLoaderTests
         Assert.Equal(["driver", "firmware"], plan.Selected.Select(item => item.PackageId).ToArray());
         Assert.Equal(["firmware"], plan.Stages[0].PackageIds);
         Assert.Equal(["driver"], plan.Stages[1].PackageIds);
+        var graph = PackageGraphManifestLoader.Load("""
+            version: 1
+            packages:
+              firmware:
+                spec: jetson/specs/firmware.spec
+                paths: [jetson/firmware/**]
+                targets: [fedora-44-aarch64]
+                lookaside_sources:
+                  - file: firmware.tar.gz
+                    size: 42
+                    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            """);
+        var source = Assert.Single(Assert.Single(graph.Packages).LookasideSources!);
+        Assert.Equal("firmware.tar.gz", source.FileName);
+        Assert.Equal(42, source.Size);
     }
 
     [Fact]
@@ -107,5 +126,25 @@ public class PackageGraphManifestLoaderTests
             PackageGraphManifestLoader.Load(oversized));
 
         Assert.Contains("exceeds", error.Message);
+    }
+
+    [Fact]
+    public void LoadAndPlan_RejectsUnsafeLookasideIdentity()
+    {
+        var yaml = """
+            version: 1
+            packages:
+              package:
+                spec: package/package.spec
+                paths: [package/**]
+                targets: [fedora-44-aarch64]
+                lookaside_sources:
+                  - file: ../payload.tar.gz
+                    size: 1
+                    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            """;
+
+        Assert.Throws<ValidationException>(() =>
+            PackageGraphManifestLoader.LoadAndPlan(yaml, ["package/file"], SupportedTargets));
     }
 }

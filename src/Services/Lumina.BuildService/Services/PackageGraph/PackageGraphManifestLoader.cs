@@ -62,7 +62,11 @@ public static class PackageGraphManifestLoader
                 value.Targets ?? [],
                 value.DependsOn,
                 value.PromotionGroup,
-                value.RebuildOnDependencyChange);
+                value.RebuildOnDependencyChange,
+                value.LookasideSources?.Select(source => new RepositoryLookasideSource(
+                    source.File ?? string.Empty,
+                    source.Size,
+                    source.Sha256 ?? string.Empty)).ToList());
         }).ToList();
 
         return new RepositoryPackageGraph(document.Version, packages);
@@ -105,5 +109,13 @@ public static class PackageGraphManifestLoader
         public List<string>? DependsOn { get; init; }
         public string? PromotionGroup { get; init; }
         public bool RebuildOnDependencyChange { get; init; } = true;
+        public List<LookasideSourceDocument>? LookasideSources { get; init; }
+    }
+
+    private sealed class LookasideSourceDocument
+    {
+        public string? File { get; init; }
+        public long Size { get; init; }
+        public string? Sha256 { get; init; }
     }
 }

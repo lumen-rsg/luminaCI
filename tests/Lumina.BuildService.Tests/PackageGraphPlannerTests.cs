@@ -24,20 +24,23 @@ public class PackageGraphPlannerTests
         Assert.False(plan.IsConservative);
         Assert.Equal(
             [
-                ["tegra-l4t-firmware"],
+                ["lumina-jetson-bootconf", "tegra-l4t-firmware"],
                 ["kernel-tegra-l4t"],
                 ["nvidia-l4t-driver"],
                 ["nvidia-l4t-multimedia", "nvidia-l4t-tools"]
             ],
             plan.Stages.Select(stage => stage.PackageIds).ToArray());
-        Assert.Equal(["lumina-jetson-bootconf"], plan.Skipped);
+        Assert.Empty(plan.Skipped);
         Assert.Contains(
             plan.Selected.Single(item => item.PackageId == "kernel-tegra-l4t").Reasons,
             reason => reason == "dependency selected: tegra-l4t-firmware");
+        Assert.Contains(
+            plan.Selected.Single(item => item.PackageId == "lumina-jetson-bootconf").Reasons,
+            reason => reason == "promotion group selected: jetson-r39.2 via kernel-tegra-l4t");
     }
 
     [Fact]
-    public void Plan_DoesNotRebuildDependenciesOfDirectlyChangedPackage()
+    public void Plan_RebuildsCompletePromotionGroupForDirectlyChangedPackage()
     {
         var plan = PackageGraphPlanner.Plan(
             JetsonGraph(),
@@ -45,9 +48,26 @@ public class PackageGraphPlannerTests
             SupportedTargets);
 
         Assert.Equal(
-            ["nvidia-l4t-driver", "nvidia-l4t-multimedia", "nvidia-l4t-tools"],
+            [
+                "kernel-tegra-l4t", "lumina-jetson-bootconf", "nvidia-l4t-driver",
+                "nvidia-l4t-multimedia", "nvidia-l4t-tools", "tegra-l4t-firmware"
+            ],
             plan.Selected.Select(item => item.PackageId).ToArray());
-        Assert.DoesNotContain("kernel-tegra-l4t", plan.Selected.Select(item => item.PackageId));
+        Assert.Empty(plan.Skipped);
+    }
+
+    [Fact]
+    public void Plan_DoesNotRebuildDependenciesWithoutPromotionGroup()
+    {
+        var graph = new RepositoryPackageGraph(1,
+        [
+            Package("library", "library/**", promotionGroup: null),
+            Package("application", "application/**", ["library"], promotionGroup: null)
+        ]);
+
+        var plan = PackageGraphPlanner.Plan(graph, ["application/main.c"], SupportedTargets);
+
+        Assert.Equal(["application"], plan.Selected.Select(item => item.PackageId).ToArray());
     }
 
     [Fact]
@@ -136,6 +156,23 @@ public class PackageGraphPlannerTests
     }
 
     [Fact]
+    public void Plan_RejectsMixedTargetsWithinPromotionGroup()
+    {
+        var graph = new RepositoryPackageGraph(1,
+        [
+            Package("arm", "arm/**", promotionGroup: "jetson-r39.2"),
+            new RepositoryPackageDefinition(
+                "x86", "x86/x86.spec", ["x86/**"], ["fedora-44-x86_64"],
+                PromotionGroup: "jetson-r39.2")
+        ]);
+
+        var error = Assert.Throws<ValidationException>(() =>
+            PackageGraphPlanner.Plan(graph, ["arm/file"], SupportedTargets));
+
+        Assert.Contains("must use one target profile", error.Message);
+    }
+
+    [Fact]
     public void Plan_RejectsUnsafePathAndAmbiguousSpecOwnership()
     {
         var unsafePath = new RepositoryPackageGraph(1,
@@ -156,12 +193,12 @@ public class PackageGraphPlannerTests
 
     private static RepositoryPackageGraph JetsonGraph() => new(1,
     [
-        Package("lumina-jetson-bootconf", "jetson/boot/**"),
-        Package("tegra-l4t-firmware", "jetson/firmware/**"),
-        Package("kernel-tegra-l4t", "jetson/kernel/**", ["tegra-l4t-firmware"]),
-        Package("nvidia-l4t-driver", "jetson/driver/**", ["kernel-tegra-l4t", "tegra-l4t-firmware"]),
-        Package("nvidia-l4t-multimedia", "jetson/multimedia/**", ["nvidia-l4t-driver"]),
-        Package("nvidia-l4t-tools", "jetson/tools/**", ["nvidia-l4t-driver"])
+        Package("lumina-jetson-bootconf", "jetson/boot/**", promotionGroup: "jetson-r39.2"),
+        Package("tegra-l4t-firmware", "jetson/firmware/**", promotionGroup: "jetson-r39.2"),
+        Package("kernel-tegra-l4t", "jetson/kernel/**", ["tegra-l4t-firmware"], promotionGroup: "jetson-r39.2"),
+        Package("nvidia-l4t-driver", "jetson/driver/**", ["kernel-tegra-l4t", "tegra-l4t-firmware"], promotionGroup: "jetson-r39.2"),
+        Package("nvidia-l4t-multimedia", "jetson/multimedia/**", ["nvidia-l4t-driver"], promotionGroup: "jetson-r39.2"),
+        Package("nvidia-l4t-tools", "jetson/tools/**", ["nvidia-l4t-driver"], promotionGroup: "jetson-r39.2")
     ]);
 
     private static RepositoryPackageDefinition Package(
@@ -169,12 +206,13 @@ public class PackageGraphPlannerTests
         string path,
         IReadOnlyList<string>? dependencies = null,
         bool rebuildOnDependencyChange = true,
-        string? specPath = null) => new(
+        string? specPath = null,
+        string? promotionGroup = null) => new(
             id,
             specPath ?? $"{id}/{id}.spec",
             [path],
             ["fedora-44-aarch64"],
             dependencies,
-            "jetson-r39.2",
+            promotionGroup,
             rebuildOnDependencyChange);
 }

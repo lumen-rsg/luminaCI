@@ -19,7 +19,14 @@ public sealed record ProjectDispatchTarget(
     Guid PipelineId,
     string BuildProfile,
     string SpecPath,
-    string? PromotionGroup = null);
+    string? PromotionGroup = null,
+    IReadOnlyList<ProjectLookasideSource>? LookasideSources = null);
+
+public sealed record ProjectLookasideSource(
+    string FileName,
+    string ObjectName,
+    long Size,
+    string Sha256);
 
 public static class ProjectDispatchPlanResolver
 {
@@ -52,7 +59,8 @@ public static class ProjectDispatchPlanResolver
                     pipeline.Id,
                     pipeline.BuildProfile,
                     NormalizePath(pipeline.SpecPath!),
-                    definition.PromotionGroup ?? packageId);
+                    definition.PromotionGroup ?? packageId,
+                    ProjectLookasideSourcePolicy.Normalize(definition.LookasideSources));
             }).ToList())).ToList();
 
         return new ProjectDispatchPlan(

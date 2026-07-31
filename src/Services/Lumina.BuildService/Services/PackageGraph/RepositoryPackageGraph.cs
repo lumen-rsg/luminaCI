@@ -11,7 +11,13 @@ public sealed record RepositoryPackageDefinition(
     IReadOnlyList<string> Targets,
     IReadOnlyList<string>? DependsOn = null,
     string? PromotionGroup = null,
-    bool RebuildOnDependencyChange = true);
+    bool RebuildOnDependencyChange = true,
+    IReadOnlyList<RepositoryLookasideSource>? LookasideSources = null);
+
+public sealed record RepositoryLookasideSource(
+    string FileName,
+    long Size,
+    string Sha256);
 
 public sealed record PackageBuildPlan(
     IReadOnlyList<PackageBuildStage> Stages,
