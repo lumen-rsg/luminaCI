@@ -37,14 +37,15 @@ public class RepositoryDbContext : DbContext
         {
             entity.ToTable("Packages", table => table.HasCheckConstraint(
                 "CK_Packages_candidate_identity",
-                "(\"PromotionSetId\" IS NULL AND \"CandidateObjectName\" IS NULL AND \"Status\" <> 'Candidate') OR " +
-                "(\"PromotionSetId\" IS NOT NULL AND \"CandidateObjectName\" IS NOT NULL AND \"Status\" IN ('Candidate', 'Ready'))"));
+                "(\"PromotionSetId\" IS NULL AND \"PromotionPackageId\" IS NULL AND \"CandidateObjectName\" IS NULL AND \"Status\" <> 'Candidate') OR " +
+                "(\"PromotionSetId\" IS NOT NULL AND \"PromotionPackageId\" IS NOT NULL AND \"CandidateObjectName\" IS NOT NULL AND \"Status\" IN ('Candidate', 'Ready'))"));
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Version).IsRequired().HasMaxLength(50);
             entity.Property(e => e.FileName).IsRequired().HasMaxLength(500);
             entity.Property(e => e.SigningKeyFingerprint).HasMaxLength(64);
             entity.Property(e => e.CandidateObjectName).HasMaxLength(1024);
+            entity.Property(e => e.PromotionPackageId).HasMaxLength(128);
             entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
             entity.HasOne(e => e.PromotionSet)
                 .WithMany(set => set.Packages)

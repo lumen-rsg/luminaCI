@@ -135,6 +135,117 @@ public class MinioStorageService
         string expectedSha256,
         string publishedBy)
     {
+        var prepared = await PrepareSignedArtifactAsync(
+            artifactId, repositoryId, expectedSha256, publishedBy);
+        try
+        {
+            return await CommitPublicationAsync(
+                prepared.Repository,
+                prepared.Package,
+                prepared.StagingDirectory,
+                prepared.StagedRpmPath);
+        }
+        finally
+        {
+            TryCleanupStaging(prepared.StagingDirectory);
+        }
+    }
+
+    public async Task<Package> StageCandidateAsync(PackageCandidateRequested request)
+    {
+        var requestedSet = RepositoryPromotionPolicy.Create(
+            request.PromotionSetId,
+            request.RepositoryId,
+            request.PromotionGroup,
+            request.TargetArchitecture,
+            request.GateRunnerImageDigest,
+            request.StagedBy,
+            DateTime.UtcNow);
+        var promotionPackageId = RepositoryPromotionPolicy.NormalizePackageId(
+            request.ProjectPackageId);
+
+        var prepared = await PrepareSignedArtifactAsync(
+            request.ArtifactId,
+            request.RepositoryId,
+            request.ExpectedSha256,
+            request.StagedBy);
+        try
+        {
+            await using var transaction = await _db.Database.BeginTransactionAsync();
+            await _db.Repositories
+                .FromSqlInterpolated(
+                    $"""SELECT * FROM "Repositories" WHERE "Id" = {request.RepositoryId} FOR UPDATE""")
+                .SingleAsync();
+
+            var promotionSet = await _db.PromotionSets
+                .Include(set => set.Packages)
+                .SingleOrDefaultAsync(set => set.Id == request.PromotionSetId);
+            if (promotionSet is null)
+            {
+                promotionSet = requestedSet;
+                _db.PromotionSets.Add(promotionSet);
+            }
+            else
+            {
+                EnsurePromotionSetMatches(promotionSet, requestedSet);
+            }
+
+            var existing = await _db.Packages.SingleOrDefaultAsync(package =>
+                package.RepositoryId == request.RepositoryId &&
+                package.ArtifactId == request.ArtifactId);
+            if (existing is not null)
+            {
+                EnsureCandidateMatches(
+                    existing, promotionSet, prepared, request, promotionPackageId);
+                await transaction.CommitAsync();
+                return existing;
+            }
+
+            if (promotionSet.Status != Lumina.Shared.Models.Enums.PromotionSetStatus.Candidate)
+            {
+                throw new ConflictException(
+                    $"Promotion set {promotionSet.Id} no longer accepts candidates.");
+            }
+            if (await _db.Packages.AnyAsync(package =>
+                    package.RepositoryId == request.RepositoryId &&
+                    (package.FileName == prepared.Package.FileName ||
+                     (package.Name == prepared.Package.Name &&
+                      package.Version == prepared.Package.Version &&
+                      package.Release == prepared.Package.Release &&
+                      package.Arch == prepared.Package.Arch))))
+            {
+                throw new ConflictException(
+                    $"Package {prepared.Package.Name}-{prepared.Package.Version}-{prepared.Package.Release}.{prepared.Package.Arch} already exists.");
+            }
+
+            prepared.Package.PromotionPackageId = promotionPackageId;
+            prepared.Package.StoragePath = prepared.Artifact.ObjectName;
+            RepositoryPromotionPolicy.AttachCandidate(
+                promotionSet,
+                prepared.Package,
+                prepared.Artifact.ObjectName,
+                DateTime.UtcNow);
+            _db.Packages.Add(prepared.Package);
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            _logger.LogInformation(
+                "Staged artifact {ArtifactId} as candidate {PackageId} in promotion set {PromotionSetId}",
+                request.ArtifactId, prepared.Package.Id, promotionSet.Id);
+            return prepared.Package;
+        }
+        finally
+        {
+            TryCleanupStaging(prepared.StagingDirectory);
+        }
+    }
+
+    private async Task<PreparedSignedArtifact> PrepareSignedArtifactAsync(
+        Guid artifactId,
+        Guid repositoryId,
+        string expectedSha256,
+        string publishedBy)
+    {
         var repo = await _db.Repositories.FindAsync(repositoryId)
             ?? throw new NotFoundException($"Repository {repositoryId} not found");
 
@@ -238,13 +349,56 @@ public class MinioStorageService
                 PublishedBy = publishedBy,
                 Status = "Staging"
             };
-            return await CommitPublicationAsync(repo, package, stagingDirectory, stagedPath);
+            return new PreparedSignedArtifact(
+                repo, artifact, package, stagingDirectory, stagedPath);
         }
-        finally
+        catch
         {
             TryCleanupStaging(stagingDirectory);
+            throw;
         }
     }
+
+    private static void EnsurePromotionSetMatches(
+        RepositoryPromotionSet set,
+        RepositoryPromotionSet requested)
+    {
+        if (set.RepositoryId != requested.RepositoryId ||
+            !string.Equals(set.PromotionGroup, requested.PromotionGroup, StringComparison.Ordinal) ||
+            !string.Equals(set.TargetArchitecture, requested.TargetArchitecture, StringComparison.Ordinal) ||
+            !string.Equals(set.GateRunnerImageDigest, requested.GateRunnerImageDigest, StringComparison.Ordinal) ||
+            !string.Equals(set.CreatedBy, requested.CreatedBy, StringComparison.Ordinal))
+        {
+            throw new ConflictException(
+                $"Promotion set {set.Id} immutable identity does not match the candidate request.");
+        }
+    }
+
+    private static void EnsureCandidateMatches(
+        Package existing,
+        RepositoryPromotionSet set,
+        PreparedSignedArtifact prepared,
+        PackageCandidateRequested request,
+        string promotionPackageId)
+    {
+        if (existing.PromotionSetId != set.Id ||
+            !string.Equals(existing.PromotionPackageId, promotionPackageId, StringComparison.Ordinal) ||
+            !string.Equals(existing.CandidateObjectName, prepared.Artifact.ObjectName, StringComparison.Ordinal) ||
+            !string.Equals(existing.HashSha256, prepared.Package.HashSha256, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(existing.SigningKeyFingerprint, prepared.Package.SigningKeyFingerprint, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(existing.FileName, prepared.Package.FileName, StringComparison.Ordinal))
+        {
+            throw new ConflictException(
+                $"Artifact {request.ArtifactId} candidate identity changed after staging.");
+        }
+    }
+
+    private sealed record PreparedSignedArtifact(
+        PackageRepository Repository,
+        ArtifactLocation Artifact,
+        Package Package,
+        string StagingDirectory,
+        string StagedRpmPath);
 
     /// <summary>
     /// Uploads an RPM file directly to the repository and creates a database record.

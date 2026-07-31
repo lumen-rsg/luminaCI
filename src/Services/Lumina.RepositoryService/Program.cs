@@ -59,6 +59,7 @@ try
     {
         x.ConfigureHealthCheckOptions(options => options.Tags.Add("ready"));
         x.AddConsumer<PackagePublishRequestedConsumer>();
+        x.AddConsumer<PackageCandidateRequestedConsumer>();
         x.AddEntityFrameworkOutbox<RepositoryDbContext>(outbox =>
         {
             outbox.UsePostgres();
@@ -82,6 +83,7 @@ try
                 // publication transaction succeeds instead.
                 endpoint.UseInMemoryOutbox(ctx);
                 endpoint.ConfigureConsumer<PackagePublishRequestedConsumer>(ctx);
+                endpoint.ConfigureConsumer<PackageCandidateRequestedConsumer>(ctx);
             });
 
             cfg.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));

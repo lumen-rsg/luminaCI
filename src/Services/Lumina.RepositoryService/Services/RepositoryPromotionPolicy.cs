@@ -40,6 +40,14 @@ public static partial class RepositoryPromotionPolicy
         };
     }
 
+    public static string NormalizePackageId(string packageId)
+    {
+        var normalized = (packageId ?? string.Empty).Trim();
+        if (!PackageIdPattern().IsMatch(normalized))
+            throw new ValidationException("Promotion package ID is invalid.");
+        return normalized;
+    }
+
     public static void AttachCandidate(
         RepositoryPromotionSet set,
         Package package,
@@ -48,7 +56,8 @@ public static partial class RepositoryPromotionPolicy
     {
         RequireStatus(set, PromotionSetStatus.Candidate);
         if (package.RepositoryId != set.RepositoryId || package.ArtifactId is null ||
-            string.IsNullOrWhiteSpace(package.SigningKeyFingerprint))
+            string.IsNullOrWhiteSpace(package.SigningKeyFingerprint) ||
+            !PackageIdPattern().IsMatch(package.PromotionPackageId ?? string.Empty))
         {
             throw new ValidationException("Candidate package provenance is incomplete.");
         }
@@ -161,4 +170,7 @@ public static partial class RepositoryPromotionPolicy
 
     [GeneratedRegex("^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$")]
     private static partial Regex KubernetesNamePattern();
+
+    [GeneratedRegex("^[a-z0-9][a-z0-9._-]{0,127}$")]
+    private static partial Regex PackageIdPattern();
 }

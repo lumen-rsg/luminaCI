@@ -67,6 +67,16 @@ public sealed class RepositoryPromotionPolicyTests
                 set, package, $"sha256/{new string('b', 64)}/{package.FileName}", Now));
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("Kernel Tegra")]
+    [InlineData("../kernel")]
+    public void PackageMembership_RejectsUnsafeIdentity(string packageId)
+    {
+        Assert.Throws<ValidationException>(() =>
+            RepositoryPromotionPolicy.NormalizePackageId(packageId));
+    }
+
     private static RepositoryPromotionSet CreateSet() =>
         RepositoryPromotionPolicy.Create(
             Guid.NewGuid(), Guid.NewGuid(), "jetson-r39.2", "aarch64",
@@ -77,6 +87,7 @@ public sealed class RepositoryPromotionPolicyTests
         Id = Guid.NewGuid(),
         RepositoryId = repositoryId,
         ArtifactId = Guid.NewGuid(),
+        PromotionPackageId = "tegra-firmware",
         Name = "tegra-firmware",
         Version = "39.2",
         Release = "1.lu26",
