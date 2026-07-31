@@ -13,4 +13,5 @@ public class PackageRepository
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string CreatedBy { get; set; } = string.Empty;
     public List<Package> Packages { get; set; } = [];
+    public List<RepositoryPromotionSet> PromotionSets { get; set; } = [];
 }
