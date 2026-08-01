@@ -3,7 +3,7 @@
 # 18080 when docker-compose.host-nginx.yml is active.
 
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'none';" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none';" always;
 add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 
 location = / {
