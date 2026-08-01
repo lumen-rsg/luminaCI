@@ -10,6 +10,7 @@ namespace Lumina.BuildService.Services.PackageGraph;
 public sealed class ProjectDispatchService(
     BuildDbContext db,
     IProjectBuildTrigger builds,
+    ProjectDeliveryFailureService failures,
     ILogger<ProjectDispatchService> logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -64,7 +65,7 @@ public sealed class ProjectDispatchService(
 
                 if (jobs.Values.Any(job => job.Status is BuildStatus.Failed or BuildStatus.Cancelled))
                 {
-                    await FailAsync(delivery, "project-build-failed", cancellationToken);
+                    await failures.FailAsync(delivery.Id, "project-build-failed", cancellationToken);
                     return;
                 }
                 if (jobs.Values.Any(job =>
@@ -103,12 +104,12 @@ public sealed class ProjectDispatchService(
         catch (DomainException exception)
         {
             logger.LogWarning(exception, "Project delivery {DeliveryId} failed dispatch validation", delivery.Id);
-            await FailAsync(delivery, "dispatch-invalid", cancellationToken);
+            await failures.FailAsync(delivery.Id, "dispatch-invalid", cancellationToken);
         }
         catch (JsonException exception)
         {
             logger.LogWarning(exception, "Project delivery {DeliveryId} contains an invalid persisted plan", delivery.Id);
-            await FailAsync(delivery, "dispatch-invalid", cancellationToken);
+            await failures.FailAsync(delivery.Id, "dispatch-invalid", cancellationToken);
         }
     }
 
@@ -241,17 +242,6 @@ public sealed class ProjectDispatchService(
                 group,
                 DateTime.UtcNow));
         }
-    }
-
-    private async Task FailAsync(
-        ProjectWebhookDelivery delivery,
-        string failureCode,
-        CancellationToken cancellationToken)
-    {
-        delivery.Status = ProjectWebhookStatus.Failed;
-        delivery.FailureCode = failureCode;
-        delivery.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
     }
 
     private static string NormalizePath(string? path) =>

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Lumina.BuildService.Data;
+using Lumina.BuildService.Services;
 using Lumina.BuildService.Services.PackageGraph;
 using Lumina.Shared.Errors;
 using Lumina.Shared.Models;
@@ -65,6 +66,33 @@ public sealed class ProjectDispatchServiceTests
         Assert.Equal(ProjectWebhookStatus.Failed, delivery.Status);
         Assert.Equal("project-build-failed", delivery.FailureCode);
         Assert.Single(delivery.BuildJobs);
+    }
+
+    [Fact]
+    public async Task AdvanceAsync_TerminalizesActiveSiblingWhenParallelStageFails()
+    {
+        await using var db = CreateDb(
+            nameof(AdvanceAsync_TerminalizesActiveSiblingWhenParallelStageFails));
+        var delivery = AddDelivery(db, parallel: true);
+        await db.SaveChangesAsync();
+        var dispatcher = NewDispatcher(db, new RecordingBuildTrigger(db));
+        await dispatcher.AdvanceAsync(delivery.Id, default);
+        var failed = delivery.BuildJobs.Single(job => job.ProjectPackageId == "firmware");
+        var sibling = delivery.BuildJobs.Single(job => job.ProjectPackageId == "driver");
+        failed.Status = BuildStatus.Failed;
+        sibling.Status = BuildStatus.Building;
+        await db.SaveChangesAsync();
+
+        await dispatcher.AdvanceAsync(delivery.Id, default);
+
+        Assert.Equal(ProjectWebhookStatus.Failed, delivery.Status);
+        Assert.Equal("project-build-failed", delivery.FailureCode);
+        Assert.Equal(BuildStatus.Failed, failed.Status);
+        Assert.Equal(BuildStatus.Cancelled, sibling.Status);
+        Assert.NotNull(sibling.CompletedAt);
+        var publish = Assert.Single(sibling.StepRuns);
+        Assert.Equal(StepStatus.Skipped, publish.Status);
+        Assert.Equal("Project delivery failed (project-build-failed).", publish.Error);
     }
 
     [Fact]
@@ -172,8 +200,14 @@ public sealed class ProjectDispatchServiceTests
 
     private static ProjectDispatchService NewDispatcher(
         BuildDbContext db,
-        IProjectBuildTrigger trigger) =>
-        new(db, trigger, NullLogger<ProjectDispatchService>.Instance);
+        IProjectBuildTrigger trigger)
+    {
+        var failures = new ProjectDeliveryFailureService(
+            db,
+            new NoopExecutorResolver(),
+            NullLogger<ProjectDeliveryFailureService>.Instance);
+        return new(db, trigger, failures, NullLogger<ProjectDispatchService>.Instance);
+    }
 
     private static ProjectWebhookDelivery AddDelivery(BuildDbContext db, bool parallel = false)
     {
@@ -333,6 +367,33 @@ public sealed class ProjectDispatchServiceTests
             await db.SaveChangesAsync(cancellationToken);
             return job;
         }
+    }
+
+    private sealed class NoopExecutorResolver : IBuildExecutorResolver
+    {
+        public IBuildExecutor Resolve(BuildExecutorBackend backend) => new NoopExecutor(backend);
+    }
+
+    private sealed class NoopExecutor(BuildExecutorBackend backend) : IBuildExecutor
+    {
+        public BuildExecutorBackend Backend { get; } = backend;
+
+        public Task<BuildJob> StartBuildAsync(
+            BuildJob job,
+            string? specContent,
+            string? sourceUrl,
+            string? buildImage = null,
+            string? gitUsername = null,
+            string? gitToken = null,
+            string? extraSourcesPipelineDir = null) => throw new NotSupportedException();
+
+        public Task MonitorBuildAsync(
+            BuildJob job,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<bool> CancelBuildAsync(
+            Guid jobId,
+            CancellationToken cancellationToken = default) => Task.FromResult(false);
     }
 
     private sealed class TestBuildDbContext(DbContextOptions<BuildDbContext> options)

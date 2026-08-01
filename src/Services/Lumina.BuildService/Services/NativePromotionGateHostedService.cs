@@ -1,4 +1,5 @@
 using Lumina.BuildService.Data;
+using Lumina.BuildService.Services.PackageGraph;
 using Lumina.Shared.Events;
 using Lumina.Shared.Models;
 using Lumina.Shared.Models.Enums;
@@ -61,9 +62,7 @@ internal sealed class NativePromotionGateHostedService(
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
-        var gate = await db.NativePromotionGates
-            .Include(item => item.ProjectWebhookDelivery)
-            .SingleOrDefaultAsync(
+        var gate = await db.NativePromotionGates.SingleOrDefaultAsync(
             item => item.Id == id, cancellationToken);
         if (gate is null || gate.Status is NativePromotionGateStatus.Passed or NativePromotionGateStatus.Failed)
             return;
@@ -175,12 +174,14 @@ internal sealed class NativePromotionGateHostedService(
         gate.FailureReason = failure;
         gate.CompletedAt = completedAt;
         gate.UpdatedAt = completedAt;
-        if (!succeeded && gate.ProjectWebhookDelivery is { } delivery &&
-            delivery.Status == ProjectWebhookStatus.PromotionPending)
+        if (!succeeded)
         {
-            delivery.Status = ProjectWebhookStatus.Failed;
-            delivery.FailureCode = "promotion-gate-failed";
-            delivery.UpdatedAt = completedAt;
+            var failures = scope.ServiceProvider.GetRequiredService<ProjectDeliveryFailureService>();
+            await failures.FailAsync(
+                gate.ProjectWebhookDeliveryId,
+                "promotion-gate-failed",
+                cancellationToken,
+                saveChanges: false);
         }
         var publisher = scope.ServiceProvider.GetRequiredService<IPublishEndpoint>();
         await publisher.Publish(new PromotionGateCompleted(

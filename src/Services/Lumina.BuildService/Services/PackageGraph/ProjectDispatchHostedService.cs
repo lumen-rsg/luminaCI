@@ -26,6 +26,7 @@ public sealed class ProjectDispatchHostedService(
     internal async Task ReconcileAsync(CancellationToken cancellationToken)
     {
         List<Guid> deliveryIds;
+        List<Guid> failedDeliveryIds;
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<BuildDbContext>();
@@ -34,6 +35,14 @@ public sealed class ProjectDispatchHostedService(
                                    delivery.Status == ProjectWebhookStatus.Dispatched)
                 // The dispatcher refreshes UpdatedAt while a stage is active,
                 // so the bounded page rotates instead of starving later work.
+                .OrderBy(delivery => delivery.UpdatedAt)
+                .Select(delivery => delivery.Id)
+                .Take(100)
+                .ToListAsync(cancellationToken);
+            failedDeliveryIds = await db.ProjectWebhookDeliveries.AsNoTracking()
+                .Where(delivery => delivery.Status == ProjectWebhookStatus.Failed &&
+                    delivery.BuildJobs.Any(job =>
+                        job.Status == BuildStatus.Queued || job.Status == BuildStatus.Building))
                 .OrderBy(delivery => delivery.UpdatedAt)
                 .Select(delivery => delivery.Id)
                 .Take(100)
@@ -55,6 +64,30 @@ public sealed class ProjectDispatchHostedService(
             catch (Exception exception)
             {
                 logger.LogError(exception, "Failed to reconcile project delivery {DeliveryId}", deliveryId);
+            }
+        }
+
+        foreach (var deliveryId in failedDeliveryIds)
+        {
+            try
+            {
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var failures = scope.ServiceProvider.GetRequiredService<ProjectDeliveryFailureService>();
+                await failures.FailAsync(
+                    deliveryId,
+                    "project-delivery-failed",
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(
+                    exception,
+                    "Failed to terminalize builds for failed project delivery {DeliveryId}",
+                    deliveryId);
             }
         }
     }
