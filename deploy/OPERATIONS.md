@@ -5,7 +5,7 @@
 Run `./scripts/init-env.sh` from the repository root. The terminal wizard
 creates `deploy/.env`, generates independent strong secrets, and writes the GPG
 passphrase and secrets-master-key fingerprint under `deploy/secrets/`. Choose
-the production profile to enter the seven immutable image references required
+the production profile to enter the eight immutable image references required
 by the production preflight. The initializer never silently overwrites an
 existing deployment; confirmed replacements receive timestamped backups.
 Replacement generates a completely new credential set and is only appropriate
@@ -24,7 +24,7 @@ Stop application writes first:
 
 ```bash
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml \
-  stop nginx webapp api-gateway build-service security-service \
+  stop nginx packages-web webapp api-gateway build-service security-service \
   scanner-service repository-service source-service
 ```
 
@@ -114,6 +114,27 @@ fail-closed: enabling it earlier leaves project deliveries in
 `PromotionPending` and does not expose candidate RPMs through production
 metadata.
 
+## Public packages portal
+
+The standalone source in `src/Websites/Lumina.Packages` builds the public
+`packages-web` container. The bundled nginx owns the application surface and a
+read-only JSON package index; direct RPM and metadata responses remain nginx
+file transfers under `/lumen/`.
+
+When the bundled stack runs behind the host nginx overlay, mount the same
+repository bind path into both RepositoryService and nginx. Install
+`deploy/nginx/host-packages-portal.inc` as a host-nginx snippet and include it
+inside the `packages.lumina.1t.ru` HTTPS server. Remove the old exact-root 403
+location before including the snippet, then validate with `nginx -t` before a
+reload. Keep the existing `/lumen/`, `/core/`, `/extra/`, `/releases/`,
+`/updates/`, Fedora, source-capability, and artifact-capability locations.
+
+The portal publishes `/lumina.repo` and `/RPM-GPG-KEY-lumina`. Before every key
+rotation, update the exported public key and displayed fingerprint in the same
+release that changes the RPM signing key. Verify the key fingerprint, repository
+file, JSON index, one noarch RPM, and one architecture-specific RPM through the
+public HTTPS boundary after deployment.
+
 ## Audit ledger
 
 The gateway records every public API mutation attempt and outcome in
@@ -138,7 +159,7 @@ Backups must continue to include the entire audit schema.
 
 ## Rollback
 
-Every release record must contain the seven application image references pinned
+Every release record must contain the eight application image references pinned
 by digest, the Git revision, migration inventory, backup identifier, and smoke
 result. Preserve the previous known-good release environment file.
 
@@ -148,21 +169,21 @@ If the new release fails:
    manifest.
 2. If the release applied a migration that the previous application does not
    support, restore the pre-deployment backup before starting old containers.
-3. Replace the seven `*_IMAGE` values with the previous digest-pinned manifest.
+3. Replace the eight `*_IMAGE` values with the previous digest-pinned manifest.
 4. Run `production-preflight.sh`, then:
 
    ```bash
    docker compose --env-file deploy/.env -f deploy/docker-compose.yml \
      up --detach --no-build --no-deps --force-recreate --wait \
      api-gateway build-service security-service scanner-service \
-     repository-service source-service webapp nginx
+     repository-service source-service webapp packages-web nginx
    ./scripts/smoke-test.sh
    ```
 
 5. Re-enable traffic only after probes, smoke tests, and the canary pass. Record
    recovery time, data-loss window, cause, and follow-up owner.
 
-The complete Compose CI job rehearses this path by switching all seven
+The complete Compose CI job rehearses this path by switching all eight
 application services to a preserved image manifest without rebuilding and
 rerunning the end-to-end smoke suite.
 

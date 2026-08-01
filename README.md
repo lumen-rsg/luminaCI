@@ -50,7 +50,10 @@ Lumina CI automates the RPM release pipeline end to end:
 
 Everything is fronted by a YARP **API gateway** that owns authentication and
 fans requests out to the individual services. A React **single-page app** is the
-primary UI; a REST API is available for automation and integrations.
+primary UI; a REST API is available for automation and integrations. A separate
+public React portal at `packages.lumina.1t.ru` provides package discovery,
+repository setup, and direct signed RPM downloads without exposing authenticated
+LuminaCI APIs.
 
 ---
 
@@ -106,6 +109,7 @@ primary UI; a REST API is available for automation and integrations.
 | `repository-service` | 5004 | RPM repository management & publishing |
 | `source-service` | 5006 | Revisioned package catalog and pinned HTTPS source fetching |
 | `webapp` | 5005 | React + TypeScript UI |
+| `packages-web` | 80 (internal) | Public React package browser and repository setup assets |
 | `docker-socket-proxy` | 2375 (internal) | Least-privilege Docker API for build-service |
 | `trivy` | 8080 (internal) | CVE database & scan server |
 
@@ -719,6 +723,8 @@ src/
     Lumina.RepositoryService/ RPM repo management
     Lumina.SourceService/     source fetching
     Lumina.WebApp/            React + TypeScript UI
+  Websites/
+    Lumina.Packages/          public package browser + repository setup
   Shared/
     Lumina.Shared/            shared models, DTOs, JWT/auth wiring
     Lumina.Web.Shared/        shared web concerns (authorization policies)

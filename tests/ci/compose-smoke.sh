@@ -78,6 +78,32 @@ compose() {
 
 compose up --detach --build --wait --wait-timeout 900
 
+portal_html="$(curl --fail --silent --show-error --insecure \
+    --resolve packages.lumina.1t.ru:443:127.0.0.1 \
+    https://packages.lumina.1t.ru/)"
+if [[ "$portal_html" != *"Lumina Packages — Signed RPM repository"* ]]; then
+    printf '%s\n' "Packages portal did not return its public entry document." >&2
+    exit 1
+fi
+
+package_index="$(curl --fail --silent --show-error --insecure \
+    --resolve packages.lumina.1t.ru:443:127.0.0.1 \
+    https://packages.lumina.1t.ru/api/package-index/)"
+if ! jq -e 'type == "array"' <<<"$package_index" >/dev/null; then
+    printf '%s\n' "Packages portal index is not a JSON array." >&2
+    exit 1
+fi
+
+repo_definition="$(curl --fail --silent --show-error --insecure \
+    --resolve packages.lumina.1t.ru:443:127.0.0.1 \
+    https://packages.lumina.1t.ru/lumina.repo)"
+if [[ "$repo_definition" != *"gpgcheck=1"* ]]; then
+    printf '%s\n' "Packages portal repository definition does not enforce signature checks." >&2
+    exit 1
+fi
+
+printf '%s\n' "Packages portal, JSON index, and signed repository definition are reachable."
+
 BASE_URL=https://localhost \
 CHECK_CONTAINERS=1 \
 CURL_INSECURE=1 \
@@ -120,6 +146,7 @@ docker tag lumina-scanner-service:local lumina-scanner-service:rollback-rehearsa
 docker tag lumina-repository-service:local lumina-repository-service:rollback-rehearsal
 docker tag lumina-source-service:local lumina-source-service:rollback-rehearsal
 docker tag lumina-webapp:local lumina-webapp:rollback-rehearsal
+docker tag lumina-packages-web:local lumina-packages-web:rollback-rehearsal
 
 cat >> "$environment_file" <<'EOF'
 API_GATEWAY_IMAGE=lumina-api-gateway:rollback-rehearsal
@@ -129,6 +156,7 @@ SCANNER_SERVICE_IMAGE=lumina-scanner-service:rollback-rehearsal
 REPOSITORY_SERVICE_IMAGE=lumina-repository-service:rollback-rehearsal
 SOURCE_SERVICE_IMAGE=lumina-source-service:rollback-rehearsal
 WEBAPP_IMAGE=lumina-webapp:rollback-rehearsal
+PACKAGES_WEB_IMAGE=lumina-packages-web:rollback-rehearsal
 EOF
 
 compose up \
@@ -145,6 +173,7 @@ compose up \
     repository-service \
     source-service \
     webapp \
+    packages-web \
     nginx
 
 BASE_URL=https://localhost \

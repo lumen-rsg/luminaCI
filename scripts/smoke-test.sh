@@ -135,6 +135,7 @@ if [[ "$CHECK_CONTAINERS" == "1" ]]; then
             lumina-repository-service
             lumina-source-service
             lumina-webapp
+            lumina-packages-web
             lumina-nginx
         )
         for container_name in "${REQUIRED_CONTAINERS[@]}"; do

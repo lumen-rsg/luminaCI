@@ -31,7 +31,7 @@ Non-interactive overrides:
   LUMINA_INIT_HOST_DATA_ROOT
   LUMINA_INIT_LDAP_HOST, LUMINA_INIT_LDAP_PORT, LUMINA_INIT_LDAP_BASE_DN
   LUMINA_INIT_LDAP_BIND_DN, LUMINA_INIT_LDAP_BIND_PASSWORD
-  LUMINA_INIT_<IMAGE_VARIABLE> for each of the seven production image variables
+  LUMINA_INIT_<IMAGE_VARIABLE> for each of the eight production image variables
 EOF
 }
 
@@ -223,6 +223,7 @@ fi
 config[ADMIN_USERNAME]="${LUMINA_INIT_ADMIN_USERNAME:-admin}"
 config[DEVELOPER_USERNAME]="${LUMINA_INIT_DEVELOPER_USERNAME:-developer}"
 config[DEVELOPER_PASSWORD]=""
+config[GRAFANA_ADMIN_USER]="admin"
 config[LDAP_HOST]="${LUMINA_INIT_LDAP_HOST:-}"
 config[LDAP_PORT]="${LUMINA_INIT_LDAP_PORT:-389}"
 config[LDAP_BASE_DN]="${LUMINA_INIT_LDAP_BASE_DN:-}"
@@ -329,6 +330,7 @@ config[MINIO_PASSWORD]="$(generate_secret)"
 config[JWT_SECRET]="$(generate_secret)"
 config[SECRETS_MASTER_KEY]="$(generate_secret)"
 config[ADMIN_PASSWORD]="$(generate_secret)"
+config[GRAFANA_ADMIN_PASSWORD]="$(generate_secret)"
 gpg_passphrase="$(generate_secret)"
 if $create_developer; then
     config[DEVELOPER_PASSWORD]="$(generate_secret)"
@@ -342,6 +344,7 @@ readonly -a image_variables=(
     REPOSITORY_SERVICE_IMAGE
     SOURCE_SERVICE_IMAGE
     WEBAPP_IMAGE
+    PACKAGES_WEB_IMAGE
 )
 readonly -a local_images=(
     lumina-api-gateway:local
@@ -351,6 +354,7 @@ readonly -a local_images=(
     lumina-repository-service:local
     lumina-source-service:local
     lumina-webapp:local
+    lumina-packages-web:local
 )
 
 for index in "${!image_variables[@]}"; do

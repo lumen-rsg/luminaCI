@@ -569,6 +569,20 @@ services:
     networks:
       - lumina-network
 
+  packages-web:
+    image: ${PACKAGES_WEB_IMAGE:-lumina-packages-web:local}
+    build:
+      context: ../
+      dockerfile: deploy/docker/Lumina.Packages.Dockerfile
+    container_name: lumina-packages-web
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lumina-network
+
   # === Build Images (pre-built, used by build-service for RPM containers) ===
   # These build the Docker images and exit — the images are then used by build-service
   # to spin up ephemeral build containers.
@@ -620,6 +634,8 @@ services:
       api-gateway:
         condition: service_healthy
       webapp:
+        condition: service_healthy
+      packages-web:
         condition: service_healthy
     networks:
       - lumina-network

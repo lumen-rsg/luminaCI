@@ -43,6 +43,7 @@ release_images=(
     REPOSITORY_SERVICE_IMAGE
     SOURCE_SERVICE_IMAGE
     WEBAPP_IMAGE
+    PACKAGES_WEB_IMAGE
 )
 
 for key in "${required_secrets[@]}"; do

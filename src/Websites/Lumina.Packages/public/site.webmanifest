@@ -1,0 +1,9 @@
+{
+  "name": "Lumina Packages",
+  "short_name": "Packages",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070c11",
+  "theme_color": "#280046",
+  "icons": []
+}

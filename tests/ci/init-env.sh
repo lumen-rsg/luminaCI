@@ -108,6 +108,7 @@ image_variables=(
     REPOSITORY_SERVICE_IMAGE
     SOURCE_SERVICE_IMAGE
     WEBAPP_IMAGE
+    PACKAGES_WEB_IMAGE
 )
 for index in "${!image_variables[@]}"; do
     variable_name="${image_variables[$index]}"
