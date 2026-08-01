@@ -52,8 +52,12 @@ public class RepositoryDbContext : DbContext
                 .HasForeignKey(e => new { e.PromotionSetId, e.RepositoryId })
                 .HasPrincipalKey(set => new { set.Id, set.RepositoryId })
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => new { e.RepositoryId, e.Name, e.Version, e.Release, e.Arch }).IsUnique();
-            entity.HasIndex(e => new { e.RepositoryId, e.FileName }).IsUnique();
+            entity.HasIndex(e => new { e.RepositoryId, e.Name, e.Version, e.Release, e.Arch })
+                .IsUnique()
+                .HasFilter("\"Status\" = 'Ready'");
+            entity.HasIndex(e => new { e.RepositoryId, e.FileName })
+                .IsUnique()
+                .HasFilter("\"Status\" = 'Ready'");
             entity.HasIndex(e => new { e.RepositoryId, e.ArtifactId })
                 .IsUnique()
                 .HasFilter("\"ArtifactId\" IS NOT NULL");

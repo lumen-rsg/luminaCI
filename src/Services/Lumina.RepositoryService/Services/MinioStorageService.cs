@@ -206,13 +206,10 @@ public class MinioStorageService
                 throw new ConflictException(
                     $"Promotion set {promotionSet.Id} no longer accepts candidates.");
             }
-            if (await _db.Packages.AnyAsync(package =>
-                    package.RepositoryId == request.RepositoryId &&
-                    (package.FileName == prepared.Package.FileName ||
-                     (package.Name == prepared.Package.Name &&
-                      package.Version == prepared.Package.Version &&
-                      package.Release == prepared.Package.Release &&
-                      package.Arch == prepared.Package.Arch))))
+            if (await _db.Packages.AnyAsync(CandidateIdentityPolicy.Conflicts(
+                    request.RepositoryId,
+                    request.PromotionSetId,
+                    prepared.Package)))
             {
                 throw new ConflictException(
                     $"Package {prepared.Package.Name}-{prepared.Package.Version}-{prepared.Package.Release}.{prepared.Package.Arch} already exists.");
