@@ -294,15 +294,7 @@ public class TrivyScannerService
                 _scanTimeout);
             await RunProcessCheckedAsync(
                 "rpm",
-                [
-                    "--root", scanDirectory,
-                    "--dbpath", "/var/lib/rpm",
-                    "--install",
-                    "--nodeps",
-                    "--noscripts",
-                    "--notriggers",
-                    artifactPath
-                ],
+                BuildRpmInstallArguments(scanDirectory, artifactPath),
                 _scanTimeout);
 
             var psi = new ProcessStartInfo
@@ -373,6 +365,20 @@ public class TrivyScannerService
                 try { Directory.Delete(scanDirectory, recursive: true); } catch { }
         }
     }
+
+    internal static IReadOnlyList<string> BuildRpmInstallArguments(
+        string scanDirectory,
+        string artifactPath) =>
+    [
+        "--root", scanDirectory,
+        "--dbpath", "/var/lib/rpm",
+        "--install",
+        "--nodeps",
+        "--noscripts",
+        "--notriggers",
+        "--ignorearch",
+        artifactPath
+    ];
 
     private static async Task RunProcessCheckedAsync(
         string fileName,

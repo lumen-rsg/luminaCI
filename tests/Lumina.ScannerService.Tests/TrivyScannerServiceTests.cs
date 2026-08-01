@@ -7,6 +7,20 @@ namespace Lumina.ScannerService.Tests;
 public class TrivyScannerServiceTests
 {
     [Fact]
+    public void RpmExtraction_AllowsForeignArchitectureWithoutRunningScripts()
+    {
+        var arguments = TrivyScannerService.BuildRpmInstallArguments(
+            "/tmp/lumina-rootfs/test",
+            "/tmp/kernel-tegra-l4t.aarch64.rpm");
+
+        Assert.Contains("--ignorearch", arguments);
+        Assert.Contains("--nodeps", arguments);
+        Assert.Contains("--noscripts", arguments);
+        Assert.Contains("--notriggers", arguments);
+        Assert.Equal("/tmp/kernel-tegra-l4t.aarch64.rpm", arguments[^1]);
+    }
+
+    [Fact]
     public async Task WaitForExitOrKillAsync_TerminatesHungProcess()
     {
         using var process = Process.Start(new ProcessStartInfo
