@@ -6,6 +6,15 @@ add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none';" always;
 add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 
+# The bundled nginx applies the same policy at its standalone boundary. Hide
+# those upstream copies so the public host emits one unambiguous header set.
+proxy_hide_header X-Frame-Options;
+proxy_hide_header X-Content-Type-Options;
+proxy_hide_header X-XSS-Protection;
+proxy_hide_header Referrer-Policy;
+proxy_hide_header Content-Security-Policy;
+proxy_hide_header Permissions-Policy;
+
 location = / {
     proxy_pass http://127.0.0.1:18080;
     proxy_set_header Host packages.lumina.1t.ru;
