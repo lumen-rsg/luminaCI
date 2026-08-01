@@ -34,6 +34,26 @@ public sealed class NativePromotionGateTests
     }
 
     [Fact]
+    public void Manifest_IdentitySurvivesJsonbPropertyReordering()
+    {
+        var resource = Resources("firmware");
+        var gate = CreateGate(resource);
+        var properties = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            gate.CandidateManifestJson)!;
+
+        gate.CandidateManifestJson = JsonSerializer.Serialize(
+            properties.OrderByDescending(item => item.Key, StringComparer.Ordinal)
+                .ToDictionary(item => item.Key, item => item.Value));
+
+        var manifest = NativePromotionGateManifestPolicy.Read(gate);
+
+        Assert.Equal(gate.Id, manifest.PromotionSetId);
+        gate.CandidateManifestJson = gate.CandidateManifestJson.Replace(
+            "jetson-r39.2", "jetson-r39.3", StringComparison.Ordinal);
+        Assert.Throws<ValidationException>(() => NativePromotionGateManifestPolicy.Read(gate));
+    }
+
+    [Fact]
     public async Task JobAndTransport_UseNativeRestrictedWorkloadAndExactCapabilities()
     {
         var resource = Resources("firmware");

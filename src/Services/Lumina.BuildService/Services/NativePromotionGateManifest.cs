@@ -102,8 +102,12 @@ public static class NativePromotionGateManifestPolicy
         {
             throw new ValidationException("Native promotion gate manifest is invalid.", exception);
         }
+        // PostgreSQL jsonb normalizes property order and whitespace. Recreate the
+        // typed canonical form before hashing so a database round trip preserves
+        // identity while semantic changes still fail closed.
+        var canonicalJson = JsonSerializer.Serialize(manifest, Json);
         var expected = Convert.ToHexString(SHA256.HashData(
-            Encoding.UTF8.GetBytes(gate.CandidateManifestJson))).ToLowerInvariant();
+            Encoding.UTF8.GetBytes(canonicalJson))).ToLowerInvariant();
         if (!CryptographicOperations.FixedTimeEquals(
                 Encoding.ASCII.GetBytes(expected),
                 Encoding.ASCII.GetBytes(gate.CandidateManifestSha256 ?? string.Empty)) ||
