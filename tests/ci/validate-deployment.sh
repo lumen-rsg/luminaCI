@@ -31,6 +31,10 @@ docker compose \
     --file "$COMPOSE_FILE" \
     config --quiet
 
+docker compose \
+    --file "${REPOSITORY_ROOT}/deploy/docker-compose.linux.yml" \
+    config --quiet
+
 for dockerfile in "${REPOSITORY_ROOT}"/deploy/docker/*.Dockerfile; do
     docker buildx build \
         --check \

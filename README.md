@@ -724,6 +724,7 @@ src/
     Lumina.SourceService/     source fetching
     Lumina.WebApp/            React + TypeScript UI
   Websites/
+    Lumina.Linux/             bilingual 1T Lumina product site
     Lumina.Packages/          public package browser + repository setup
   Shared/
     Lumina.Shared/            shared models, DTOs, JWT/auth wiring

@@ -1,0 +1,9 @@
+{
+  "name": "1T Lumina",
+  "short_name": "Lumina",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09071a",
+  "theme_color": "#4f46e5",
+  "icons": []
+}

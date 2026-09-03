@@ -1,0 +1,16 @@
+services:
+  linux-web:
+    image: ${LINUX_WEB_IMAGE:-lumina-linux-web:local}
+    build:
+      context: ../
+      dockerfile: deploy/docker/Lumina.Linux.Dockerfile
+    container_name: lumina-linux-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${LINUX_WEB_PORT:-18081}:80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

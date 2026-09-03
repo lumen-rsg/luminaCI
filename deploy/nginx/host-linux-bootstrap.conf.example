@@ -1,0 +1,27 @@
+# First-certificate bootstrap for linux.1t.ru.
+#
+# Install this file as /etc/nginx/sites-available/linux.1t.ru, enable it,
+# validate and reload nginx, then request the certificate with:
+#
+#   certbot certonly --webroot --webroot-path /var/www/letsencrypt \
+#     --domain linux.1t.ru
+#
+# Replace this bootstrap file with host-linux.conf.example immediately after
+# the certificate has been issued.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name linux.1t.ru;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:18081;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto http;
+    }
+}

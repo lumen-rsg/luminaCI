@@ -83,6 +83,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             src/Services/Lumina.WebApp/package-lock.json
+            src/Websites/Lumina.Linux/package-lock.json
             src/Websites/Lumina.Packages/package-lock.json
             tests/Lumina.WebApp.E2E/package-lock.json
 
@@ -132,6 +133,14 @@ jobs:
 
       - name: Test, build, and audit packages portal
         working-directory: src/Websites/Lumina.Packages
+        run: |
+          npm ci
+          npm test
+          npm run build
+          npm audit --omit=dev
+
+      - name: Test, build, and audit Lumina Linux site
+        working-directory: src/Websites/Lumina.Linux
         run: |
           npm ci
           npm test
@@ -195,6 +204,9 @@ jobs:
             trivy: true
           - name: packages-web
             dockerfile: deploy/docker/Lumina.Packages.Dockerfile
+            trivy: true
+          - name: linux-web
+            dockerfile: deploy/docker/Lumina.Linux.Dockerfile
             trivy: true
           - name: dotnet-build-runner
             dockerfile: deploy/docker/dotnet-build.Dockerfile
