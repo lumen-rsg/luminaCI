@@ -76,10 +76,10 @@ export async function loadPackageIndex(signal?: AbortSignal): Promise<PackageEnt
   return listings.flatMap(listing => collectPackages(listing.architecture, listing.entries));
 }
 
-export function formatBytes(bytes: number): string {
-  if (bytes <= 0) return "0 B";
-  const units = ["B", "KiB", "MiB", "GiB"];
+export function formatBytes(bytes: number, locale: "en" | "ru" = "en"): string {
+  const units = locale === "ru" ? ["Б", "КиБ", "МиБ", "ГиБ"] : ["B", "KiB", "MiB", "GiB"];
+  if (bytes <= 0) return `0 ${units[0]}`;
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const value = bytes / 1024 ** index;
-  return `${new Intl.NumberFormat("en", { maximumFractionDigits: index === 0 ? 0 : 1 }).format(value)} ${units[index]}`;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: index === 0 ? 0 : 1 }).format(value)} ${units[index]}`;
 }

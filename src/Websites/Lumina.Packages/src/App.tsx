@@ -20,6 +20,13 @@ import {
   TerminalSquare
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  formatPackageCount,
+  resolveLanguage,
+  translations,
+  type Copy,
+  type Language
+} from "./localization";
 import { formatBytes, loadPackageIndex, type PackageEntry } from "./repository";
 
 type Theme = "dark" | "light";
@@ -34,7 +41,12 @@ function preferredTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
+function preferredLanguage(): Language {
+  const browserLanguages = navigator.languages.length > 0 ? navigator.languages : [navigator.language];
+  return resolveLanguage(window.localStorage.getItem("lumina-packages-language"), browserLanguages);
+}
+
+function CopyButton({ value, label, copiedLabel }: { value: string; label: string; copiedLabel: string }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -46,25 +58,56 @@ function CopyButton({ value, label = "Copy" }: { value: string; label?: string }
   return (
     <button className="copy-button" type="button" onClick={copy} aria-label={`${label}: ${value}`}>
       {copied ? <Check aria-hidden="true" /> : <Clipboard aria-hidden="true" />}
-      <span>{copied ? "Copied" : label}</span>
+      <span>{copied ? copiedLabel : label}</span>
     </button>
   );
 }
 
-function Brand() {
+function Brand({ copy }: { copy: Copy }) {
   return (
-    <a className="brand" href="#top" aria-label="Lumina Packages home">
+    <a className="brand" href="#top" aria-label={copy.brandHome}>
       <span className="brand__mark"><Boxes aria-hidden="true" /></span>
-      <span className="brand__copy"><strong>Lumina</strong><small>Package network</small></span>
+      <span className="brand__copy"><strong>Lumina</strong><small>{copy.brandTagline}</small></span>
     </a>
   );
 }
 
-function PackageExplorer({ packages, loading, error, onRetry }: {
+function LanguageSwitcher({ language, copy, onChange }: {
+  language: Language;
+  copy: Copy;
+  onChange: (language: Language) => void;
+}) {
+  return (
+    <div className="language-switcher" role="group" aria-label={copy.languageSelector}>
+      <button
+        type="button"
+        lang="en"
+        aria-label={copy.selectEnglish}
+        aria-pressed={language === "en"}
+        onClick={() => onChange("en")}
+      >
+        EN
+      </button>
+      <button
+        type="button"
+        lang="ru"
+        aria-label={copy.selectRussian}
+        aria-pressed={language === "ru"}
+        onClick={() => onChange("ru")}
+      >
+        RU
+      </button>
+    </div>
+  );
+}
+
+function PackageExplorer({ packages, loading, error, onRetry, language, copy }: {
   packages: PackageEntry[];
   loading: boolean;
-  error: string | null;
+  error: boolean;
   onRetry: () => void;
+  language: Language;
+  copy: Copy;
 }) {
   const [query, setQuery] = useState("");
   const [architecture, setArchitecture] = useState("all");
@@ -97,40 +140,42 @@ function PackageExplorer({ packages, loading, error, onRetry }: {
     <section className="packages-section section-shell" id="packages" aria-labelledby="packages-title">
       <div className="section-heading">
         <div>
-          <span className="eyebrow">Repository explorer</span>
-          <h2 id="packages-title">Find the exact build you need.</h2>
-          <p>Every link is a direct, cache-friendly RPM download from the public repository.</p>
+          <span className="eyebrow">{copy.explorerEyebrow}</span>
+          <h2 id="packages-title">{copy.explorerTitle}</h2>
+          <p>{copy.explorerDescription}</p>
         </div>
-        {!loading && !error && <span className="result-count" aria-live="polite">{visiblePackages.length} packages</span>}
+        {!loading && !error && (
+          <span className="result-count" aria-live="polite">{formatPackageCount(visiblePackages.length, language)}</span>
+        )}
       </div>
 
       <div className="explorer-toolbar" role="search">
         <label className="search-field">
           <Search aria-hidden="true" />
-          <span className="sr-only">Search packages</span>
+          <span className="sr-only">{copy.searchPackages}</span>
           <input
             value={query}
             onChange={event => setQuery(event.target.value)}
-            placeholder="Search name, version, or architecture"
+            placeholder={copy.searchPlaceholder}
             type="search"
           />
         </label>
         <label className="select-field">
-          <span className="sr-only">Filter by architecture</span>
+          <span className="sr-only">{copy.filterArchitecture}</span>
           <Cpu aria-hidden="true" />
           <select value={architecture} onChange={event => setArchitecture(event.target.value)}>
-            <option value="all">All architectures</option>
+            <option value="all">{copy.allArchitectures}</option>
             {architectures.map(item => <option key={item} value={item}>{item}</option>)}
           </select>
           <ChevronDown aria-hidden="true" />
         </label>
         <label className="select-field">
-          <span className="sr-only">Sort packages</span>
+          <span className="sr-only">{copy.sortPackages}</span>
           <ArrowDownToLine aria-hidden="true" />
           <select value={sort} onChange={event => setSort(event.target.value as SortMode)}>
-            <option value="name">Sort by name</option>
-            <option value="newest">Newest first</option>
-            <option value="size">Largest first</option>
+            <option value="name">{copy.sortByName}</option>
+            <option value="newest">{copy.newestFirst}</option>
+            <option value="size">{copy.largestFirst}</option>
           </select>
           <ChevronDown aria-hidden="true" />
         </label>
@@ -140,23 +185,23 @@ function PackageExplorer({ packages, loading, error, onRetry }: {
         {loading && (
           <div className="loading-state" role="status">
             <span className="loading-mark"><RefreshCw aria-hidden="true" /></span>
-            <div><strong>Reading repository metadata</strong><span>Discovering published architectures and RPMs…</span></div>
+            <div><strong>{copy.loadingTitle}</strong><span>{copy.loadingDescription}</span></div>
           </div>
         )}
         {error && (
           <div className="error-state" role="alert">
-            <div><strong>Repository index unavailable</strong><span>{error}</span></div>
-            <button className="button button--secondary" type="button" onClick={onRetry}><RefreshCw aria-hidden="true" />Retry</button>
+            <div><strong>{copy.errorTitle}</strong><span>{copy.errorDescription}</span></div>
+            <button className="button button--secondary" type="button" onClick={onRetry}><RefreshCw aria-hidden="true" />{copy.retry}</button>
           </div>
         )}
         {!loading && !error && visiblePackages.length === 0 && (
-          <div className="empty-state"><PackageCheck aria-hidden="true" /><strong>No matching packages</strong><span>Try another name or architecture.</span></div>
+          <div className="empty-state"><PackageCheck aria-hidden="true" /><strong>{copy.emptyTitle}</strong><span>{copy.emptyDescription}</span></div>
         )}
         {!loading && !error && visiblePackages.length > 0 && (
           <div className="package-table-wrap">
             <table>
               <thead>
-                <tr><th scope="col">Package</th><th scope="col">Version</th><th scope="col">Architecture</th><th scope="col">Size</th><th scope="col"><span className="sr-only">Download</span></th></tr>
+                <tr><th scope="col">{copy.columnPackage}</th><th scope="col">{copy.columnVersion}</th><th scope="col">{copy.columnArchitecture}</th><th scope="col">{copy.columnSize}</th><th scope="col"><span className="sr-only">{copy.download}</span></th></tr>
               </thead>
               <tbody>
                 {visiblePackages.map(item => (
@@ -166,8 +211,8 @@ function PackageExplorer({ packages, loading, error, onRetry }: {
                     </th>
                     <td><strong className="version">{item.version}</strong><small className="release">{item.release}</small></td>
                     <td><span className="arch-badge">{item.architecture}</span></td>
-                    <td>{formatBytes(item.size)}</td>
-                    <td className="download-cell"><a className="download-button" href={item.url} download aria-label={`Download ${item.fileName}`}><Download aria-hidden="true" /><span>Download</span></a></td>
+                    <td>{formatBytes(item.size, language)}</td>
+                    <td className="download-cell"><a className="download-button" href={item.url} download aria-label={`${copy.download}: ${item.fileName}`}><Download aria-hidden="true" /><span>{copy.download}</span></a></td>
                   </tr>
                 ))}
               </tbody>
@@ -181,19 +226,21 @@ function PackageExplorer({ packages, loading, error, onRetry }: {
 
 export default function App() {
   const [theme, setTheme] = useState<Theme>(preferredTheme);
+  const [language, setLanguage] = useState<Language>(preferredLanguage);
   const [packages, setPackages] = useState<PackageEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+  const copy = translations[language];
 
   const load = useCallback(() => {
     const controller = new AbortController();
     setLoading(true);
-    setError(null);
+    setError(false);
     loadPackageIndex(controller.signal)
       .then(setPackages)
       .catch(reason => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
-        setError(reason instanceof Error ? reason.message : "The repository index could not be loaded.");
+        setError(true);
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
@@ -204,6 +251,12 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("lumina-packages-theme", theme);
   }, [theme]);
+  useEffect(() => {
+    document.documentElement.lang = language;
+    document.title = copy.metaTitle;
+    document.querySelector('meta[name="description"]')?.setAttribute("content", copy.metaDescription);
+    window.localStorage.setItem("lumina-packages-language", language);
+  }, [copy, language]);
 
   const stats = useMemo(() => ({
     architectures: new Set(packages.map(item => item.architecture)).size,
@@ -213,18 +266,24 @@ export default function App() {
 
   return (
     <>
-      <a className="skip-link" href="#main-content">Skip to package explorer</a>
+      <a className="skip-link" href="#packages">{copy.skipToPackages}</a>
       <header className="site-header" id="top">
         <div className="header-inner">
-          <Brand />
-          <nav aria-label="Primary navigation">
-            <a href="#repositories">Repositories</a>
-            <a href="#packages">Packages</a>
-            <a href="#setup">Set up DNF</a>
+          <Brand copy={copy} />
+          <nav aria-label={copy.primaryNavigation}>
+            <a href="#repositories">{copy.navRepositories}</a>
+            <a href="#packages">{copy.navPackages}</a>
+            <a href="#setup">{copy.navSetup}</a>
           </nav>
           <div className="header-actions">
             <a className="console-link" href="https://console.lumina.1t.ru" target="_blank" rel="noreferrer">LuminaCI <ExternalLink aria-hidden="true" /></a>
-            <button className="theme-button" type="button" onClick={() => setTheme(value => value === "dark" ? "light" : "dark")} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
+            <LanguageSwitcher language={language} copy={copy} onChange={setLanguage} />
+            <button
+              className="theme-button"
+              type="button"
+              onClick={() => setTheme(value => value === "dark" ? "light" : "dark")}
+              aria-label={theme === "dark" ? copy.switchToLight : copy.switchToDark}
+            >
               {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
             </button>
           </div>
@@ -234,80 +293,87 @@ export default function App() {
       <main id="main-content">
         <section className="hero section-shell" aria-labelledby="hero-title">
           <div className="hero__content">
-            <span className="availability"><i aria-hidden="true" />Public repository online</span>
-            <h1 id="hero-title">Packages, signed<br />and ready.</h1>
-            <p>Production RPMs for Lumina Linux—built by LuminaCI, verified on native Fedora workers, and delivered directly over HTTPS.</p>
+            <span className="availability"><i aria-hidden="true" />{copy.repositoryOnline}</span>
+            <h1 id="hero-title">{copy.heroLineOne}<br />{copy.heroLineTwo}</h1>
+            <p>{copy.heroDescription}</p>
             <div className="hero__actions">
-              <a className="button button--primary" href="#packages">Browse packages <ArrowRight aria-hidden="true" /></a>
-              <a className="button button--ghost" href="/lumina.repo" download><Download aria-hidden="true" />Download repo file</a>
+              <a className="button button--primary" href="#packages">{copy.browsePackages} <ArrowRight aria-hidden="true" /></a>
+              <a className="button button--ghost" href="/lumina.repo" download><Download aria-hidden="true" />{copy.downloadRepoFile}</a>
             </div>
-            <div className="trust-row" aria-label="Repository guarantees">
-              <span><ShieldCheck aria-hidden="true" />GPG-signed RPMs</span>
-              <span><Cpu aria-hidden="true" />Native architecture builds</span>
-              <span><PackageCheck aria-hidden="true" />Atomic publishing</span>
+            <div className="trust-row" aria-label={copy.repositoryGuarantees}>
+              <span><ShieldCheck aria-hidden="true" />{copy.signedRpms}</span>
+              <span><Cpu aria-hidden="true" />{copy.nativeBuilds}</span>
+              <span><PackageCheck aria-hidden="true" />{copy.atomicPublishing}</span>
             </div>
           </div>
           <div className="hero__visual" aria-hidden="true">
             <div className="orbit orbit--outer"><span /><span /><span /></div>
             <div className="orbit orbit--inner"><span /><span /></div>
             <div className="package-core"><Boxes /><small>RPM</small></div>
-            <div className="signal-card signal-card--top"><ShieldCheck /><span><strong>Verified</strong><small>signature gate</small></span></div>
-            <div className="signal-card signal-card--bottom"><HardDrive /><span><strong>Immutable</strong><small>artifact delivery</small></span></div>
+            <div className="signal-card signal-card--top"><ShieldCheck /><span><strong>{copy.verified}</strong><small>{copy.signatureGate}</small></span></div>
+            <div className="signal-card signal-card--bottom"><HardDrive /><span><strong>{copy.immutable}</strong><small>{copy.artifactDelivery}</small></span></div>
           </div>
         </section>
 
-        <section className="stats-ribbon section-shell" aria-label="Repository statistics">
-          <article><PackageCheck aria-hidden="true" /><span><strong>{loading ? "—" : stats.count}</strong><small>Published RPMs</small></span></article>
-          <article><Cpu aria-hidden="true" /><span><strong>{loading ? "—" : stats.architectures}</strong><small>Architectures</small></span></article>
-          <article><HardDrive aria-hidden="true" /><span><strong>{loading ? "—" : formatBytes(stats.size)}</strong><small>Package payload</small></span></article>
-          <article><ShieldCheck aria-hidden="true" /><span><strong>RSA 4096</strong><small>Release signing</small></span></article>
+        <section className="stats-ribbon section-shell" aria-label={copy.repositoryStatistics}>
+          <article><PackageCheck aria-hidden="true" /><span><strong>{loading ? "—" : stats.count}</strong><small>{copy.publishedRpms}</small></span></article>
+          <article><Cpu aria-hidden="true" /><span><strong>{loading ? "—" : stats.architectures}</strong><small>{copy.architectures}</small></span></article>
+          <article><HardDrive aria-hidden="true" /><span><strong>{loading ? "—" : formatBytes(stats.size, language)}</strong><small>{copy.packagePayload}</small></span></article>
+          <article><ShieldCheck aria-hidden="true" /><span><strong>RSA 4096</strong><small>{copy.releaseSigning}</small></span></article>
         </section>
 
         <section className="repositories section-shell" id="repositories" aria-labelledby="repositories-title">
           <div className="section-heading">
-            <div><span className="eyebrow">Package network</span><h2 id="repositories-title">One reliable origin.</h2><p>Stable paths for current Lumina releases and compatibility mirrors.</p></div>
+            <div><span className="eyebrow">{copy.packageNetwork}</span><h2 id="repositories-title">{copy.repositoriesTitle}</h2><p>{copy.repositoriesDescription}</p></div>
           </div>
           <div className="repository-grid">
             <article className="repository-card repository-card--featured">
-              <header><span className="repository-icon"><Boxes aria-hidden="true" /></span><span className="status-pill"><i />Recommended</span></header>
-              <h3>Lumen</h3><p>Signed LuminaCI releases for Jetson R39.2.1, Orange Pi 5 Ultra, Orange Pi Zero 3, and supported Lumina architectures.</p>
-              <footer><code>/lumen/$basearch</code><a href="/lumen/">Open index <ArrowRight aria-hidden="true" /></a></footer>
+              <header><span className="repository-icon"><Boxes aria-hidden="true" /></span><span className="status-pill"><i />{copy.recommended}</span></header>
+              <h3>Lumen</h3><p>{copy.lumenDescription}</p>
+              <footer><code>/lumen/$basearch</code><a href="/lumen/">{copy.openIndex} <ArrowRight aria-hidden="true" /></a></footer>
             </article>
             <article className="repository-card">
-              <header><span className="repository-icon repository-icon--blue"><Code2 aria-hidden="true" /></span><span className="status-pill status-pill--quiet">Compatibility</span></header>
-              <h3>Core &amp; extra</h3><p>Established package trees retained for existing Lumina systems and package consumers.</p>
-              <footer><code>/core · /extra</code><a href="/core/">Browse core <ArrowRight aria-hidden="true" /></a></footer>
+              <header><span className="repository-icon repository-icon--blue"><Code2 aria-hidden="true" /></span><span className="status-pill status-pill--quiet">{copy.compatibility}</span></header>
+              <h3>{copy.coreExtraTitle}</h3><p>{copy.coreExtraDescription}</p>
+              <footer><code>/core · /extra</code><a href="/core/">{copy.browseCore} <ArrowRight aria-hidden="true" /></a></footer>
             </article>
             <article className="repository-card">
-              <header><span className="repository-icon repository-icon--amber"><RefreshCw aria-hidden="true" /></span><span className="status-pill status-pill--quiet">Archive</span></header>
-              <h3>Releases &amp; updates</h3><p>Versioned release trees and update channels for reproducible system provisioning.</p>
-              <footer><code>/releases · /updates</code><a href="/releases/">Browse releases <ArrowRight aria-hidden="true" /></a></footer>
+              <header><span className="repository-icon repository-icon--amber"><RefreshCw aria-hidden="true" /></span><span className="status-pill status-pill--quiet">{copy.archive}</span></header>
+              <h3>{copy.releasesUpdatesTitle}</h3><p>{copy.releasesUpdatesDescription}</p>
+              <footer><code>/releases · /updates</code><a href="/releases/">{copy.browseReleases} <ArrowRight aria-hidden="true" /></a></footer>
             </article>
           </div>
         </section>
 
-        <PackageExplorer packages={packages} loading={loading} error={error} onRetry={load} />
+        <PackageExplorer
+          packages={packages}
+          loading={loading}
+          error={error}
+          onRetry={load}
+          language={language}
+          copy={copy}
+        />
 
         <section className="setup-section section-shell" id="setup" aria-labelledby="setup-title">
           <div className="setup-copy">
-            <span className="eyebrow">Fedora setup</span>
-            <h2 id="setup-title">Connect in one command.</h2>
-            <p>Install the repository definition, then use DNF normally. Package signature checks stay enabled by default.</p>
+            <span className="eyebrow">{copy.setupEyebrow}</span>
+            <h2 id="setup-title">{copy.setupTitle}</h2>
+            <p>{copy.setupDescription}</p>
             <div className="setup-links">
-              <a href="/lumina.repo" download><TerminalSquare aria-hidden="true" />Repository file</a>
-              <a href="/RPM-GPG-KEY-lumina" download><FileKey2 aria-hidden="true" />Public signing key</a>
+              <a href="/lumina.repo" download><TerminalSquare aria-hidden="true" />{copy.repositoryFile}</a>
+              <a href="/RPM-GPG-KEY-lumina" download><FileKey2 aria-hidden="true" />{copy.publicSigningKey}</a>
             </div>
           </div>
           <div className="terminal-card">
-            <header><span><i /><i /><i /></span><small>terminal</small></header>
-            <div className="terminal-line"><span>$</span><code>{setupCommand}</code><CopyButton value={setupCommand} /></div>
-            <div className="fingerprint"><ShieldCheck aria-hidden="true" /><span><small>Signing fingerprint</small><code>{signingFingerprint}</code></span></div>
+            <header><span><i /><i /><i /></span><small>{copy.terminal}</small></header>
+            <div className="terminal-line"><span>$</span><code>{setupCommand}</code><CopyButton value={setupCommand} label={copy.copy} copiedLabel={copy.copied} /></div>
+            <div className="fingerprint"><ShieldCheck aria-hidden="true" /><span><small>{copy.signingFingerprint}</small><code>{signingFingerprint}</code></span></div>
           </div>
         </section>
       </main>
 
       <footer className="site-footer">
-        <div className="section-shell"><Brand /><p>Public package infrastructure for Lumina Linux.</p><span>Built and verified by <a href="https://console.lumina.1t.ru">LuminaCI</a>.</span></div>
+        <div className="section-shell"><Brand copy={copy} /><p>{copy.footerDescription}</p><span>{copy.builtBy} <a href="https://console.lumina.1t.ru">LuminaCI</a>.</span></div>
       </footer>
     </>
   );

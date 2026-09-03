@@ -38,5 +38,6 @@ describe("repository index", () => {
   it("formats package sizes", () => {
     expect(formatBytes(0)).toBe("0 B");
     expect(formatBytes(1_048_576)).toBe("1 MiB");
+    expect(formatBytes(1_572_864, "ru")).toBe("1,5 МиБ");
   });
 });
