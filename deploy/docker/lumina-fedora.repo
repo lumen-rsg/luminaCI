@@ -7,3 +7,13 @@ repo_gpgcheck=0
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-$releasever-$basearch
 metadata_expire=1h
 skip_if_unavailable=0
+
+[lumina-fedora-updates]
+name=Lumina controlled Fedora $releasever updates - $basearch
+baseurl=https://invalid.invalid/fedora/updates/$releasever/Everything/$basearch/
+enabled=0
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-$releasever-$basearch
+metadata_expire=1h
+skip_if_unavailable=0

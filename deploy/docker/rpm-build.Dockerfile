@@ -1,9 +1,9 @@
-# Pin the multi-platform Fedora 44 release image by OCI index digest. Package
-# installation below is restricted to Fedora's immutable release repository;
-# the mutable updates repository is deliberately excluded.
-FROM fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+# Pin the multi-platform Fedora 44 image by OCI index digest. Bootstrap against
+# the signed release and updates repositories so the toolchain remains aligned
+# with the package versions already present in the current base image.
+FROM fedora:44@sha256:b3c47a22ef314698c276cf84a47aef414fb96d87d9587bd0808c93d1d44cb28b
 
-LABEL org.opencontainers.image.version="fedora-44-v1" \
+LABEL org.opencontainers.image.version="fedora-44-v2" \
       io.lumina.build.distribution="fedora" \
       io.lumina.build.release="44"
 
@@ -19,7 +19,7 @@ LABEL org.opencontainers.image.version="fedora-44-v1" \
 # entrypoint (it must, to install into /usr/lib and write /var/lib/rpm); the
 # untrusted %build/%install shell then runs as the `rpmbuilder` user. See the
 # privilege-split comment at the ENTRYPOINT below and in build-rpm.sh.
-RUN dnf --disablerepo='*' --enablerepo=fedora \
+RUN dnf --disablerepo='*' --enablerepo=fedora --enablerepo=updates \
     --setopt=install_weak_deps=False install -y \
     rpm-build \
     rpmdevtools \

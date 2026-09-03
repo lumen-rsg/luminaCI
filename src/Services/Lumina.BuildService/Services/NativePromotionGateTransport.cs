@@ -296,8 +296,9 @@ mapfile -d '' candidate_paths < <(find "${rpms}" -maxdepth 1 -type f -name '*.rp
   || fail "candidate file set is incomplete"
 
 mapfile -t baseline_names < <(jq -r '.baselinePackageNames[]' "${manifest}")
-dnf_common=(--disablerepo='*' --enablerepo=lumina-fedora \
+dnf_common=(--disablerepo='*' --enablerepo=lumina-fedora --enablerepo=lumina-fedora-updates \
   --setopt="lumina-fedora.baseurl=${FEDORA_REPOSITORY_BASE_URL}/releases/44/Everything/${target_arch}/os/" \
+  --setopt="lumina-fedora-updates.baseurl=${FEDORA_REPOSITORY_BASE_URL}/updates/44/Everything/${target_arch}/" \
   --setopt=install_weak_deps=False --setopt=keepcache=False)
 if ((${#baseline_names[@]} > 0)); then
   dnf "${dnf_common[@]}" --repofrompath="lumina-baseline,file://${bundle}/baseline" \

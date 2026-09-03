@@ -702,8 +702,11 @@ external_build_requirements="$({
 
 if [ -n "${external_build_requirements}" ]; then
     echo "Installing build dependencies from SRPM metadata (as root)..."
-    if ! dnf --disablerepo='*' --enablerepo=lumina-fedora \
+    if ! dnf --disablerepo='*' \
+        --enablerepo=lumina-fedora \
+        --enablerepo=lumina-fedora-updates \
         --setopt="lumina-fedora.baseurl=${FEDORA_REPOSITORY_BASE_URL}/releases/${TARGET_RELEASE}/Everything/${TARGET_ARCHITECTURE}/os/" \
+        --setopt="lumina-fedora-updates.baseurl=${FEDORA_REPOSITORY_BASE_URL}/updates/${TARGET_RELEASE}/Everything/${TARGET_ARCHITECTURE}/" \
         builddep -y \
         "${SOURCE_RPM}"; then
         echo "ERROR: dnf builddep failed — see stderr above for the unresolvable/missing dependencies."
