@@ -3,7 +3,7 @@
 # with the package versions already present in the current base image.
 FROM fedora:44@sha256:b3c47a22ef314698c276cf84a47aef414fb96d87d9587bd0808c93d1d44cb28b
 
-LABEL org.opencontainers.image.version="fedora-44-v2" \
+LABEL org.opencontainers.image.version="fedora-44-v3" \
       io.lumina.build.distribution="fedora" \
       io.lumina.build.release="44"
 

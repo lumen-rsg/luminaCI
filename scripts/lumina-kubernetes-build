@@ -11,7 +11,7 @@ readonly MAX_ARTIFACT_BYTES=$((8 * 1024 * 1024 * 1024))
 readonly MAX_TOTAL_BYTES=$((32 * 1024 * 1024 * 1024))
 readonly MAX_ARTIFACTS=256
 readonly MAX_LOOKASIDE_SOURCES=32
-readonly MAX_LOOKASIDE_SOURCE_BYTES=$((1024 * 1024 * 1024))
+readonly MAX_LOOKASIDE_SOURCE_BYTES=$((2 * 1024 * 1024 * 1024))
 readonly MAX_LOOKASIDE_TOTAL_BYTES=$((4 * 1024 * 1024 * 1024))
 
 fail() {
@@ -41,7 +41,7 @@ transport_is_valid='type == "object" and
       (keys | sort) == (["downloadUrl","fileName","objectName","sha256","size"] | sort) and
       (.fileName | type == "string" and test("^[A-Za-z0-9._+-]{1,256}$") and . != "." and . != "..") and
       (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
-      (.size | type == "number" and . > 0 and . <= 1073741824 and floor == .) and
+      (.size | type == "number" and . > 0 and . <= 2147483648 and floor == .) and
       (.objectName == ("lookaside/sha256/" + .sha256 + "/" + .fileName)) and
       (.downloadUrl | type == "string" and test("^https?://[^[:space:]]+\\?[^[:space:]]+$")))) and
   (.artifactBundleObjectName | type == "string") and

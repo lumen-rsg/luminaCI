@@ -198,7 +198,7 @@ services:
       - Kubernetes__Enabled=${KUBERNETES_ENABLED:-false}
       - Kubernetes__Namespace=${KUBERNETES_NAMESPACE:-lumina-builds}
       - Kubernetes__RunnerImages__fedora-44-x86_64=${KUBERNETES_RUNNER_IMAGE_X86_64:-registry.lumina.1t.ru/lumina-rpm-build@sha256:7d1b3de3f30585099fd8d2b89765d8816cf86293ffe11c7c523ddb08d2afc8e9}
-      - Kubernetes__RunnerImages__fedora-44-aarch64=${KUBERNETES_RUNNER_IMAGE_AARCH64:-registry.lumina.1t.ru/lumina-rpm-build@sha256:bce1e634b3ab3fa8587f7af7d341ac5e9ad65973d5d2066489f27e078d948582}
+      - Kubernetes__RunnerImages__fedora-44-aarch64=${KUBERNETES_RUNNER_IMAGE_AARCH64:-registry.lumina.1t.ru/lumina-rpm-build@sha256:6c214c5199609f02b987a9aff877bf0ca3bd54bc7113b4f059753e6443969568}
       - KUBECONFIG=/run/secrets/kubernetes-build-controller.kubeconfig
       # Docker daemon reached via the socket-proxy container below (not the raw socket).
       - Docker__SocketPath=http://docker-socket-proxy:2375
