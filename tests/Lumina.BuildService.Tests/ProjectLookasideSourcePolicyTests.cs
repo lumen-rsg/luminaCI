@@ -31,4 +31,30 @@ public sealed class ProjectLookasideSourcePolicyTests
         Assert.Throws<ValidationException>(() => ProjectLookasideSourcePolicy.Normalize(
             [new RepositoryLookasideSource(fileName, size, hash)]));
     }
+
+    [Fact]
+    public void Normalize_AcceptsCudaSizedArchiveWithinLimit()
+    {
+        var source = Assert.Single(ProjectLookasideSourcePolicy.Normalize(
+        [
+            new RepositoryLookasideSource(
+                "cuda.tar.gz",
+                1_709_448_019,
+                new string('a', 64))
+        ]));
+
+        Assert.Equal(1_709_448_019, source.Size);
+    }
+
+    [Fact]
+    public void Normalize_RejectsArchiveAboveLimit()
+    {
+        Assert.Throws<ValidationException>(() => ProjectLookasideSourcePolicy.Normalize(
+        [
+            new RepositoryLookasideSource(
+                "oversized.tar.gz",
+                ProjectLookasideSourcePolicy.MaximumSourceBytes + 1,
+                new string('a', 64))
+        ]));
+    }
 }

@@ -5,7 +5,7 @@ namespace Lumina.BuildService.Services.PackageGraph;
 public static class ProjectLookasideSourcePolicy
 {
     public const int MaximumSourcesPerPackage = 32;
-    public const long MaximumSourceBytes = 1024L * 1024 * 1024;
+    public const long MaximumSourceBytes = 2L * 1024 * 1024 * 1024;
     public const long MaximumPackageSourceBytes = 4L * 1024 * 1024 * 1024;
 
     public static IReadOnlyList<ProjectLookasideSource> Normalize(

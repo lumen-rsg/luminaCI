@@ -1,4 +1,5 @@
 using Lumina.BuildService.Data;
+using Lumina.BuildService.Services.PackageGraph;
 using Lumina.Shared.DTOs;
 using Lumina.Shared.Extensions;
 using Lumina.Shared.Models.Enums;
@@ -54,7 +55,10 @@ public class ExtraSourcesController : ControllerBase
     {
         _db = db;
         _logger = logger;
-        _maxFileSizeBytes = ParseLongConfig(config, "ExtraSources:MaxFileSizeBytes", 1024L * 1024 * 1024); // 1 GiB default
+        _maxFileSizeBytes = ParseLongConfig(
+            config,
+            "ExtraSources:MaxFileSizeBytes",
+            ProjectLookasideSourcePolicy.MaximumSourceBytes);
     }
 
     private static long ParseLongConfig(IConfiguration config, string key, long defaultValue)
