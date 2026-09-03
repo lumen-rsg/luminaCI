@@ -26,7 +26,7 @@ type Theme = "dark" | "light";
 type SortMode = "name" | "newest" | "size";
 
 const setupCommand = "sudo curl -fsSL https://packages.lumina.1t.ru/lumina.repo -o /etc/yum.repos.d/lumina.repo";
-const signingFingerprint = "B70C 524E C6DE A9BB 5267 6D26 A6B2 7089 9D90 3626";
+const signingFingerprint = "EBE3 9C73 6CAC 92CE C213 9DC7 6206 7582 4776 D3D7";
 
 function preferredTheme(): Theme {
   const saved = window.localStorage.getItem("lumina-packages-theme");
@@ -270,7 +270,7 @@ export default function App() {
           <div className="repository-grid">
             <article className="repository-card repository-card--featured">
               <header><span className="repository-icon"><Boxes aria-hidden="true" /></span><span className="status-pill"><i />Recommended</span></header>
-              <h3>Lumen</h3><p>Signed LuminaCI releases for supported architectures, including the coherent Jetson R39.2 stack.</p>
+              <h3>Lumen</h3><p>Signed LuminaCI releases for Jetson R39.2.1, Orange Pi 5 Ultra, Orange Pi Zero 3, and supported Lumina architectures.</p>
               <footer><code>/lumen/$basearch</code><a href="/lumen/">Open index <ArrowRight aria-hidden="true" /></a></footer>
             </article>
             <article className="repository-card">
