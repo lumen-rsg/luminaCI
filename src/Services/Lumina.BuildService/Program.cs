@@ -157,6 +157,12 @@ try
 
             cfg.ReceiveEndpoint("lumina-build-service", e =>
             {
+                // Completion events for different artifacts in one build update
+                // shared step state. Process them serially so each transaction
+                // observes the previous artifact's committed result before it
+                // decides whether the step can advance.
+                e.PrefetchCount = 1;
+                e.ConcurrentMessageLimit = 1;
                 e.UseEntityFrameworkOutbox<BuildDbContext>(ctx);
                 e.ConfigureConsumer<CveScanCompletedConsumer>(ctx);
                 e.ConfigureConsumer<PackageSignedConsumer>(ctx);
