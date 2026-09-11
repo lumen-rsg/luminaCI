@@ -9,6 +9,31 @@ namespace Lumina.BuildService.Tests;
 
 public sealed class NativePromotionGateTests
 {
+    [Theory]
+    [InlineData("quickshell-0.3.1^20260911git2d3b3e9-2.lu26.aarch64.rpm", true)]
+    [InlineData("chroma-compositor-0.2.0~rc1-1.lu26.x86_64.rpm", true)]
+    [InlineData("../escape.rpm", false)]
+    [InlineData("nested/package.rpm", false)]
+    [InlineData("package^snapshot\\escape.rpm", false)]
+    [InlineData("package;touch.rpm", false)]
+    [InlineData("package%2fescape.rpm", false)]
+    [InlineData("package.rpm\nextra", false)]
+    public async Task Runner_AcceptsRpmVersionsButRejectsUnsafeCandidateNames(string fileName, bool accepted)
+    {
+        // Execute the actual gate condition with Bash: its regex dialect differs
+        // from .NET, and an ingestion-only check misses this later boundary.
+        var condition = NativePromotionGateTransportPolicy.RunnerScript.Split('\n')
+            .Single(line => line.Contains("candidate filename is invalid", StringComparison.Ordinal))
+            .Split(" || fail", StringSplitOptions.None)[0];
+        var start = new System.Diagnostics.ProcessStartInfo("/bin/bash") { UseShellExecute = false };
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add(condition);
+        start.Environment["file"] = fileName;
+        using var process = System.Diagnostics.Process.Start(start)!;
+        await process.WaitForExitAsync();
+        Assert.Equal(accepted ? 0 : 1, process.ExitCode);
+    }
+
     private static readonly string Hash = new('b', 64);
     private static readonly string Digest = $"sha256:{new string('a', 64)}";
 

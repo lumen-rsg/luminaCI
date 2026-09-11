@@ -278,7 +278,7 @@ while IFS= read -r encoded; do
   file=$(jq -r '.fileName' <<<"${item}")
   size=$(jq -r '.size' <<<"${item}")
   hash=$(jq -r '.sha256' <<<"${item}")
-  [[ "${file}" =~ ^[A-Za-z0-9][A-Za-z0-9._+~-]{0,510}\.rpm$ ]] || fail "candidate filename is invalid"
+  [[ "${file}" =~ ^[A-Za-z0-9][A-Za-z0-9._+~^-]{0,510}\.rpm$ ]] || fail "candidate filename is invalid"
   [[ "${size}" =~ ^[1-9][0-9]*$ && "${hash}" =~ ^[0-9a-f]{64}$ ]] || fail "candidate integrity metadata is invalid"
   path=${rpms}/${file}
   [[ -f "${path}" ]] || fail "candidate RPM is missing from the gate bundle"
