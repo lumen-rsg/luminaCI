@@ -165,10 +165,12 @@ public static class KubernetesArtifactManifestPolicy
         value is { Length: >= 1 and <= 128 } &&
         value.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
-    private static bool IsSafeRpmFileName(string value) =>
+    // RPM uses tilde for prereleases and caret for post-release snapshots.
+    // Keep archive extraction and content-addressed object validation identical.
+    internal static bool IsSafeRpmFileName(string value) =>
         value is { Length: >= 5 and <= 512 } &&
         string.Equals(Path.GetFileName(value), value, StringComparison.Ordinal) &&
         value.EndsWith(".rpm", StringComparison.Ordinal) &&
         value.All(character =>
-            character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '+' or '-');
+            character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '+' or '-' or '~' or '^');
 }

@@ -64,7 +64,7 @@ internal static class KubernetesArtifactBundleReader
             if (!entry.Name.StartsWith(prefix, StringComparison.Ordinal))
                 throw new ValidationException("Kubernetes artifact bundle contains an unknown entry.");
             var fileName = entry.Name[prefix.Length..];
-            if (!IsSafeRpmFileName(fileName) ||
+            if (!KubernetesArtifactManifestPolicy.IsSafeRpmFileName(fileName) ||
                 artifacts.Count >= KubernetesArtifactManifestPolicy.MaximumArtifacts ||
                 entry.Length is < 1 or > KubernetesArtifactManifestPolicy.MaximumArtifactBytes)
             {
@@ -105,10 +105,4 @@ internal static class KubernetesArtifactBundleReader
         return new KubernetesArtifactBundle(manifest, artifacts);
     }
 
-    private static bool IsSafeRpmFileName(string value) =>
-        value is { Length: >= 5 and <= 512 } &&
-        string.Equals(Path.GetFileName(value), value, StringComparison.Ordinal) &&
-        value.EndsWith(".rpm", StringComparison.Ordinal) &&
-        value.All(character =>
-            character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '+' or '-');
 }

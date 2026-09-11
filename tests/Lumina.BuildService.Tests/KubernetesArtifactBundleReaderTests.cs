@@ -8,6 +8,26 @@ namespace Lumina.BuildService.Tests;
 
 public sealed class KubernetesArtifactBundleReaderTests
 {
+    [Theory]
+    [InlineData("quickshell-0.3.1^20260911git2d3b3e9-2.lu26.aarch64.rpm")]
+    [InlineData("chroma-0.2.0~rc1-1.lu26.x86_64.rpm")]
+    public async Task ExtractAsync_PreservesRpmVersionOperators(string fileName)
+    {
+        var root = TemporaryRoot();
+        try
+        {
+            await using var bundle = Bundle(("manifest.json", "{}"),
+                ($"artifacts/{fileName}", "payload"));
+            var extracted = await KubernetesArtifactBundleReader.ExtractAsync(
+                bundle, root, CancellationToken.None);
+            Assert.Equal("payload", await File.ReadAllTextAsync(extracted.ArtifactPaths[fileName]));
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
     [Fact]
     public async Task ExtractAsync_AcceptsOnlyManifestAndPlainRpmEntries()
     {
@@ -42,6 +62,10 @@ public sealed class KubernetesArtifactBundleReaderTests
     [InlineData("nested/pkg.rpm")]
     [InlineData("artifacts/nested/pkg.rpm")]
     [InlineData("artifacts/pkg.txt")]
+    [InlineData("artifacts/pkg~rc1/../escape.rpm")]
+    [InlineData("artifacts/pkg^snapshot\\escape.rpm")]
+    [InlineData("artifacts/pkg;touch.rpm")]
+    [InlineData("artifacts/pkg%2fescape.rpm")]
     public async Task ExtractAsync_RejectsUnsafeOrUnknownPaths(string path)
     {
         var root = TemporaryRoot();

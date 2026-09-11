@@ -8,6 +8,18 @@ namespace Lumina.BuildService.Tests;
 
 public sealed class KubernetesArtifactManifestPolicyTests
 {
+    [Theory]
+    [InlineData("quickshell-0.3.1^20260911git2d3b3e9-2.lu26.aarch64.rpm")]
+    [InlineData("chroma-0.2.0~rc1-1.lu26.x86_64.rpm")]
+    public void Validate_PreservesRpmVersionOperators(string fileName)
+    {
+        var job = Job();
+        var entry = Entry(job, fileName, 'a');
+        var validated = KubernetesArtifactManifestPolicy.Validate(Manifest(job, [entry]), job);
+        Assert.Equal(fileName, Assert.Single(validated.Artifacts).FileName);
+        Assert.EndsWith("/" + fileName, entry.ObjectName);
+    }
+
     [Fact]
     public void Validate_NormalizesSortsAndHashesCanonicalManifest()
     {
@@ -56,6 +68,10 @@ public sealed class KubernetesArtifactManifestPolicyTests
     [InlineData("nested/pkg.rpm")]
     [InlineData("pkg RPM.rpm")]
     [InlineData("pkg.txt")]
+    [InlineData("pkg~rc1/../escape.rpm")]
+    [InlineData("pkg^snapshot\\escape.rpm")]
+    [InlineData("pkg;touch.rpm")]
+    [InlineData("pkg%2fescape.rpm")]
     public void Validate_RejectsUnsafeArtifactFilename(string fileName)
     {
         var job = Job();
